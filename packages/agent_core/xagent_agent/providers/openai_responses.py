@@ -77,6 +77,8 @@ class ResponsesProvider(OpenAICompatProvider):
         }
         if system.strip():
             body["instructions"] = system
+        if req.effort and req.model.lower().startswith(("o1", "o3", "o4", "gpt-5", "gpt-6")):
+            body["reasoning"] = {"effort": req.effort}
         if req.tools:
             body["tools"] = [{
                 "type": "function",
