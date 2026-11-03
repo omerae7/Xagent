@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# X Agent
+node_modules/
+apps/web/dist/
+data/
+.env.local

@@ -27,6 +27,18 @@ from xagent_core.text import normalize_fa, truncate
 from ..deps import current_user, get_session, parse_uuid, ser
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+
+def ser_approval(a: Approval, extra: dict | None = None) -> dict:
+    from xagent_agent.harness import CATEGORIES
+    from xagent_tools.registry import BUILTIN_BY_NAME
+
+    tool = BUILTIN_BY_NAME.get(a.tool_name)
+    return ser(a, extra={
+        "category_label": CATEGORIES.get(a.category, {}).get("label", a.category),
+        "tool_label": tool.label if tool else a.tool_name,
+        **(extra or {}),
+    })
 MAX_UPLOAD = 50 * 1024 * 1024
 
 
@@ -144,7 +156,7 @@ async def list_messages(cid: str, before: str | None = None, limit: int = Query(
     ).scalar_one_or_none()
     pending = []
     if active is not None:
-        pending = [ser(a) for a in (await session.execute(
+        pending = [ser_approval(a) for a in (await session.execute(
             select(Approval).where(Approval.run_id == active.id, Approval.status == "pending"))).scalars()]
     return {
         "conversation": ser(conv),
@@ -331,8 +343,8 @@ async def list_approvals(status: str = "pending", _: User = Depends(current_user
     out = []
     for a in rows:
         run = await session.get(Run, a.run_id)
-        out.append(ser(a, extra={"conversation_id": run.conversation_id if run else None,
-                                 "run_input": truncate(run.input, 200) if run else ""}))
+        out.append(ser_approval(a, extra={"conversation_id": run.conversation_id if run else None,
+                                          "run_input": truncate(run.input, 200) if run else ""}))
     return {"items": out}
 
 

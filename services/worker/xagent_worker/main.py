@@ -85,7 +85,7 @@ class Worker:
                 log.exception("خطای پس‌پردازش %s", run_id)
 
     async def consume_runs(self) -> None:
-        r = bus.get_redis()
+        r = bus.get_blocking_redis()
         while not self.stopping.is_set():
             try:
                 # بازپس‌گیری پیام‌های بی‌پاسخ Workerهای ازکارافتاده
@@ -123,7 +123,7 @@ class Worker:
         t.add_done_callback(self.active.discard)
 
     async def consume_inbox(self) -> None:
-        r = bus.get_redis()
+        r = bus.get_blocking_redis()
         while not self.stopping.is_set():
             try:
                 resp = await r.xreadgroup(bus.RUN_GROUP, self.id, {bus.INBOX_STREAM: ">"}, count=20, block=5000)
@@ -141,7 +141,7 @@ class Worker:
                 await asyncio.sleep(2)
 
     async def consume_control(self) -> None:
-        r = bus.get_redis()
+        r = bus.get_blocking_redis()
         with contextlib.suppress(Exception):
             await r.xgroup_create(CONTROL_STREAM, bus.RUN_GROUP, id="$", mkstream=True)
         while not self.stopping.is_set():

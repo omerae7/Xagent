@@ -26,6 +26,7 @@ TAKEOVER_KEY = "xagent:desktop:takeover"
 RUN_CANCEL_PREFIX = "xagent:run:cancel:"
 
 _redis: aioredis.Redis | None = None
+_blocking: aioredis.Redis | None = None
 
 _RELEASE_LUA = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -44,17 +45,34 @@ end
 
 
 def get_redis() -> aioredis.Redis:
+    """اتصال عادی با مهلت معقول برای عملیات کوتاه."""
     global _redis
     if _redis is None:
-        _redis = aioredis.from_url(get_settings().redis_url, decode_responses=True, health_check_interval=30)
+        _redis = aioredis.from_url(
+            get_settings().redis_url, decode_responses=True, health_check_interval=30,
+            socket_timeout=15, socket_connect_timeout=5,
+        )
     return _redis
 
 
+def get_blocking_redis() -> aioredis.Redis:
+    """اتصال جداگانه بدون مهلت خواندن برای XREADGROUP مسدودکننده و Pub/Sub طولانی."""
+    global _blocking
+    if _blocking is None:
+        _blocking = aioredis.from_url(
+            get_settings().redis_url, decode_responses=True, health_check_interval=30,
+            socket_timeout=None, socket_connect_timeout=5, socket_keepalive=True,
+        )
+    return _blocking
+
+
 async def close_redis() -> None:
-    global _redis
-    if _redis is not None:
-        await _redis.aclose()
+    global _redis, _blocking
+    for c in (_redis, _blocking):
+        if c is not None:
+            await c.aclose()
     _redis = None
+    _blocking = None
 
 
 def _dumps(obj: Any) -> str:
@@ -70,7 +88,7 @@ async def publish(event_type: str, data: dict[str, Any]) -> None:
 
 
 async def subscribe() -> AsyncIterator[dict[str, Any]]:
-    pubsub = get_redis().pubsub()
+    pubsub = get_blocking_redis().pubsub()
     await pubsub.subscribe(EVENTS_CHANNEL)
     try:
         async for msg in pubsub.listen():

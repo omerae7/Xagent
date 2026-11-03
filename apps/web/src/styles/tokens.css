@@ -1,0 +1,64 @@
+/*
+ * توکن‌های طراحی X Agent (Design Tokens)
+ * ---------------------------------------
+ * کل ظاهر پنل (رنگ‌ها، سطوح، شعاع‌ها، سایه‌ها، شیشه‌ای بودن، درخشش) از همین متغیرها تغذیه می‌شود.
+ * برای تطبیق دقیق با تصاویر مرجع کارفرما کافی است مقادیر این فایل تغییر کند؛ هیچ منطق Backend یا
+ * کامپوننتی نیاز به تغییر ندارد. رنگ‌ها به شکل سه‌تایی RGB هستند تا شفافیت Tailwind کار کند.
+ */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: 5 9 20;
+  --bg-2: 9 15 32;
+  --surface: 14 22 46;
+  --surface-2: 20 30 60;
+  --border: 96 130 210;
+  --text: 232 238 255;
+  --muted: 138 152 190;
+  --primary: 79 140 255;
+  --accent: 139 92 246;
+  --cyan: 34 211 238;
+  --success: 34 197 94;
+  --warning: 245 158 11;
+  --danger: 244 63 94;
+
+  --glass-alpha: 0.55;
+  --glass-blur: 18px;
+  --border-alpha: 0.16;
+  --radius-lg: 18px;
+  --radius-card: 22px;
+  --shadow-card: 0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 20px 50px -24px rgb(0 0 0 / 0.75);
+  --grid-dot: 120 150 230;
+  --grid-alpha: 0.09;
+  --glow-1: 79 140 255;
+  --glow-2: 139 92 246;
+  --glow-strength: 0.22;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: 238 243 255;
+  --bg-2: 248 250 255;
+  --surface: 255 255 255;
+  --surface-2: 243 246 255;
+  --border: 110 130 190;
+  --text: 14 22 44;
+  --muted: 88 102 138;
+  --primary: 37 99 235;
+  --accent: 124 58 237;
+  --cyan: 8 145 178;
+  --success: 22 163 74;
+  --warning: 217 119 6;
+  --danger: 225 29 72;
+
+  --glass-alpha: 0.72;
+  --glass-blur: 16px;
+  --border-alpha: 0.18;
+  --shadow-card: 0 1px 0 0 rgb(255 255 255 / 0.8) inset, 0 18px 40px -26px rgb(30 50 110 / 0.35);
+  --grid-dot: 70 90 160;
+  --grid-alpha: 0.12;
+  --glow-1: 59 130 246;
+  --glow-2: 168 85 247;
+  --glow-strength: 0.14;
+}
