@@ -1,0 +1,9 @@
+[Unit]
+Description=X Agent — پایش درخواست به‌روزرسانی از پنل
+
+[Path]
+PathExists=/opt/xagent/data/control/update.request
+Unit=xagent-updater.service
+
+[Install]
+WantedBy=multi-user.target

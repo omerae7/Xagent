@@ -1,0 +1,75 @@
+name: X Agent verification
+
+on:
+  push:
+    branches: ["fix/**", "feat/**"]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: xagent_test
+          POSTGRES_USER: xagent
+          POSTGRES_PASSWORD: xagent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U xagent -d xagent_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install application and test dependencies
+        run: |
+          python -m pip install uv==0.4.30
+          uv pip install --system -r pyproject.toml
+          uv pip install --system pytest pytest-asyncio ruff aiohttp
+      - name: Python compilation
+        run: python -m compileall -q packages services infra/desktop/agentd.py tests
+      - name: Shell syntax
+        run: bash -n install.sh infra/updater/xagent-update.sh infra/docker/entrypoint.sh infra/desktop/start-chromium.sh
+      - name: Verify update-script permissions
+        run: test -x infra/updater/xagent-update.sh && test -x infra/scripts/xagentctl
+      - name: Lint
+        run: ruff check packages services tests
+      - name: Pytest with live PostgreSQL and Redis
+        run: pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Frontend build and type-check
+        working-directory: apps/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+  containers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare deployment configuration
+        run: |
+          cp .env.example .env
+          sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=desktop/' .env
+          echo 'RUNNER_TOKEN=test-runner-token' >> .env
+          echo 'DESKTOP_TOKEN=test-desktop-token' >> .env
+          echo 'POSTGRES_PASSWORD=test-password' >> .env
+      - name: Validate compose
+        run: docker compose config -q
+      - name: Build all images
+        run: docker compose --profile desktop build

@@ -1,0 +1,152 @@
+@import "vazirmatn/Vazirmatn-Variable-font-face.css";
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: Vazirmatn, Tahoma, system-ui, sans-serif;
+    font-feature-settings: "ss01";
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-bg text-ink antialiased;
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: rgb(var(--primary) / 0.35);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--border) / 0.35) transparent;
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--primary) / 0.7);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .glass {
+    background: rgb(var(--surface) / var(--glass-alpha));
+    border: 1px solid rgb(var(--border) / var(--border-alpha));
+    box-shadow: var(--shadow-card);
+    backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  }
+  .glass-strong {
+    background: rgb(var(--surface-2) / 0.85);
+    border: 1px solid rgb(var(--border) / calc(var(--border-alpha) + 0.06));
+    backdrop-filter: blur(var(--glass-blur));
+  }
+  .hairline {
+    border-color: rgb(var(--border) / var(--border-alpha));
+  }
+  .text-gradient {
+    background: linear-gradient(90deg, rgb(var(--cyan)), rgb(var(--primary)) 45%, rgb(var(--accent)));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .btn-glow {
+    box-shadow: 0 0 0 1px rgb(var(--primary) / 0.45), 0 6px 26px -6px rgb(var(--primary) / 0.7),
+      inset 0 1px 0 rgb(255 255 255 / 0.25);
+  }
+  .skeleton {
+    background: linear-gradient(90deg, rgb(var(--border) / 0.08), rgb(var(--border) / 0.2), rgb(var(--border) / 0.08));
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded-lg;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .ltr {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+}
+
+/* پس‌زمینه زنده: شبکه نقطه‌ای + درخشش‌های رنگی */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 85% -10%, rgb(var(--glow-1) / var(--glow-strength)), transparent 60%),
+    radial-gradient(50rem 36rem at 0% 110%, rgb(var(--glow-2) / var(--glow-strength)), transparent 60%),
+    radial-gradient(circle at 1px 1px, rgb(var(--grid-dot) / var(--grid-alpha)) 1px, transparent 0) 0 0 / 22px 22px,
+    linear-gradient(180deg, rgb(var(--bg-2)), rgb(var(--bg)));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.prose-chat p {
+  margin: 0.25rem 0;
+}
+.prose-chat code {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-size: 0.85em;
+  background: rgb(var(--border) / 0.14);
+  border-radius: 6px;
+  padding: 0.1rem 0.35rem;
+}
+.prose-chat pre {
+  direction: ltr;
+  text-align: left;
+  overflow-x: auto;
+  background: rgb(var(--bg) / 0.7);
+  border: 1px solid rgb(var(--border) / 0.15);
+  border-radius: 12px;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  font-size: 0.8rem;
+}
+.prose-chat pre code {
+  background: none;
+  padding: 0;
+}
+.prose-chat ul {
+  list-style: disc;
+  padding-inline-start: 1.25rem;
+}
+.prose-chat ol {
+  list-style: decimal;
+  padding-inline-start: 1.25rem;
+}
+.prose-chat a {
+  color: rgb(var(--primary));
+  text-decoration: underline;
+}
+.prose-chat strong {
+  font-weight: 700;
+}
