@@ -224,3 +224,4 @@ node_modules/
 apps/web/dist/
 data/
 .env.local
+dump.rdb

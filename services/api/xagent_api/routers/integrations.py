@@ -231,6 +231,11 @@ async def desktop_status(_: User = Depends(current_user)):
 @router.post("/desktop/takeover")
 async def takeover(body: TakeoverIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     await bus.set_takeover(body.on, user.username)
+    # اطلاع به دیمن دسکتاپ (لایه دوم اعمال قطعی Takeover)
+    sb = get_sandbox()
+    if hasattr(sb, "_post"):
+        with contextlib.suppress(Exception):
+            await sb._post("/takeover", {"on": body.on})
     await audit(session, user.username, "desktop.takeover" if body.on else "desktop.release")
     await bus.publish("desktop.takeover", {"on": body.on, "by": user.username})
     return {"takeover": body.on}

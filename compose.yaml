@@ -1,0 +1,174 @@
+# X Agent — استقرار کامل روی یک VPS
+# همه مقادیر از فایل .env (ساخته‌شده توسط install.sh) خوانده می‌شوند.
+# فقط پورت‌های 80 و 443 (Caddy) منتشر می‌شوند؛ دیتابیس، Redis، API و دسکتاپ روی شبکه داخلی هستند.
+
+name: xagent
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: infra/docker/backend.Dockerfile
+    args:
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+  image: xagent/backend:${XAGENT_IMAGE_TAG:-latest}
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    XAGENT_DATABASE_URL: postgresql+asyncpg://xagent:${POSTGRES_PASSWORD}@postgres:5432/xagent
+    XAGENT_REDIS_URL: redis://redis:6379/0
+    XAGENT_DATA_DIR: /data
+    XAGENT_DESKTOP_URL: http://desktop:7000
+    XAGENT_DESKTOP_VNC_WS_VIEW: ws://desktop:6080/websockify
+    XAGENT_DESKTOP_VNC_WS_CONTROL: ws://desktop:6081/websockify
+    XAGENT_DESKTOP_CDP_URL: http://desktop:9222
+    XAGENT_DESKTOP_TOKEN: ${DESKTOP_TOKEN}
+    XAGENT_SANDBOX: ${XAGENT_SANDBOX:-desktop}
+    TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
+  volumes:
+    - ${XAGENT_HOME:-/opt/xagent}/data:/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xagent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: xagent
+      TZ: UTC
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-512MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE:-2GB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_MEM:-128MB}
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-100}
+      - -c
+      - wal_compression=on
+      - -c
+      - random_page_cost=1.1
+    volumes:
+      - ${XAGENT_HOME:-/opt/xagent}/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xagent -d xagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+    mem_limit: ${PG_MEM_LIMIT:-1536m}
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes --appendfsync everysec
+      --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy noeviction
+    volumes:
+      - ${XAGENT_HOME:-/opt/xagent}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+    mem_limit: ${REDIS_MEM_LIMIT:-384m}
+
+  api:
+    <<: *backend
+    command: ["api"]
+    environment:
+      XAGENT_DATABASE_URL: postgresql+asyncpg://xagent:${POSTGRES_PASSWORD}@postgres:5432/xagent
+      XAGENT_REDIS_URL: redis://redis:6379/0
+      XAGENT_DATA_DIR: /data
+      XAGENT_DESKTOP_URL: http://desktop:7000
+      XAGENT_DESKTOP_VNC_WS_VIEW: ws://desktop:6080/websockify
+      XAGENT_DESKTOP_VNC_WS_CONTROL: ws://desktop:6081/websockify
+      XAGENT_DESKTOP_CDP_URL: http://desktop:9222
+      XAGENT_DESKTOP_TOKEN: ${DESKTOP_TOKEN}
+      XAGENT_SANDBOX: ${XAGENT_SANDBOX:-desktop}
+      XAGENT_API_WORKERS: ${XAGENT_API_WORKERS:-1}
+      TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+      start_period: 40s
+    networks: [internal, public]
+    mem_limit: ${API_MEM_LIMIT:-768m}
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    networks: [internal, public]
+    mem_limit: ${WORKER_MEM_LIMIT:-1536m}
+    stop_grace_period: 40s
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    image: xagent/web:${XAGENT_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      XAGENT_SITE_ADDRESS: ${XAGENT_SITE_ADDRESS:-localhost}
+      XAGENT_TLS: ${XAGENT_TLS:-internal}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ${XAGENT_HOME:-/opt/xagent}/caddy/data:/data
+      - ${XAGENT_HOME:-/opt/xagent}/caddy/config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [public]
+    mem_limit: 256m
+
+  # کامپیوتر اختصاصی ایجنت (در پروفایل lite می‌تواند غیرفعال شود: COMPOSE_PROFILES بدون desktop)
+  desktop:
+    build:
+      context: infra/desktop
+    image: xagent/desktop:${XAGENT_IMAGE_TAG:-latest}
+    profiles: ["desktop"]
+    restart: unless-stopped
+    environment:
+      DESKTOP_TOKEN: ${DESKTOP_TOKEN}
+      SCREEN_GEOMETRY: ${DESKTOP_GEOMETRY:-1600x900x24}
+      TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
+    volumes:
+      - ${XAGENT_HOME:-/opt/xagent}/desktop-home:/home/agent
+    shm_size: 1gb
+    networks: [internal, public]
+    mem_limit: ${DESKTOP_MEM_LIMIT:-2560m}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+networks:
+  internal:
+    internal: true
+  public:
+    driver: bridge
