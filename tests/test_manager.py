@@ -8,7 +8,7 @@ import uuid
 from sqlalchemy import select
 
 from xagent_core.db import session_scope
-from xagent_core.models import AIModel, Approval, ConfigChange, Employee, Run, RunStep, SettingKV, Task
+from xagent_core.models import AIModel, ConfigChange, Employee, Run, RunStep, SettingKV, Task
 
 
 async def _send(client, text: str) -> dict:
