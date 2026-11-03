@@ -80,6 +80,7 @@ async def build_context(
     budget: ContextBudget,
     conversation_id: uuid.UUID | None = None,
     routine_id: uuid.UUID | None = None,
+    exclude_run_id: uuid.UUID | None = None,
 ) -> BuiltContext:
     sections: list[str] = []
     stats: dict[str, int] = {}
@@ -151,7 +152,7 @@ async def build_context(
 
     history: list[dict[str, str]] = []
     if plan.working and conversation_id:
-        summary, msgs = await load_window(session, conversation_id, budget.working)
+        summary, msgs = await load_window(session, conversation_id, budget.working, exclude_run_id=exclude_run_id)
         if summary:
             sections.append("## خلاصه گفتگوی قبلی\n" + truncate(summary, 2000))
             used_total += estimate_tokens(summary)

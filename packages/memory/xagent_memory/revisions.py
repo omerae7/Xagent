@@ -217,7 +217,9 @@ def is_regression(baseline: dict[str, Any], observed: dict[str, Any], token_rati
         return f"خطای پیاپی پس از یادگیری ({observed.get('failures')} از {runs})"
     base_tokens = baseline.get("avg_tokens")
     avg_tokens = observed.get("tokens", 0) / runs
-    if base_tokens and avg_tokens > base_tokens * token_ratio:
+    # Token regressions are meaningful only against comparable task/routine baselines.
+    comparable = baseline.get("comparison_scope") in ("routine", "signature")
+    if comparable and runs >= 2 and base_tokens and avg_tokens > base_tokens * token_ratio:
         return f"افزایش مصرف توکن از {base_tokens:.0f} به {avg_tokens:.0f}"
     return None
 

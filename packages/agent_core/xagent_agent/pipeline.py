@@ -413,7 +413,7 @@ class AgentRunner:
         )
         budget = ContextBudget.for_window(primary.context_window, complex_task)
         built: BuiltContext = await build_context(
-            rc.session, run.input, mplan, budget, conversation_id=run.conversation_id, routine_id=run.routine_id
+            rc.session, run.input, mplan, budget, conversation_id=run.conversation_id, routine_id=run.routine_id, exclude_run_id=run.id
         )
         if "memory_logged" not in s:
             await self._step(rc, "memory", f"بازیابی حافظه (~{built.used_tokens} توکن)", detail=built.stats)
@@ -451,8 +451,6 @@ class AgentRunner:
 
         # تاریخچه + پیام فعلی
         history = [LLMMessage(h["role"], h["content"]) for h in built.history]
-        if history and history[-1].role == "user" and history[-1].content.strip() == run.input.strip():
-            history.pop()
         user_msg = LLMMessage("user", self._wrap_input(rc))
         if images:
             if primary.has("vision"):

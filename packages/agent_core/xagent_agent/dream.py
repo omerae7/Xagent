@@ -14,7 +14,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
@@ -75,20 +75,28 @@ async def run_dream(session: AsyncSession, force: bool = False) -> DreamReport:
         )
     ).scalar_one_or_none()
     checkpoint = last.checkpoint_to if last and last.checkpoint_to else utcnow() - timedelta(days=1)
+    cursor_id = (last.cleanup or {}).get("checkpoint_episode_id") if last else None
     now = utcnow()
     report = DreamReport(checkpoint_from=checkpoint, checkpoint_to=now, status="running")
     session.add(report)
     await session.flush()
     await bus.publish("dream.started", {"id": str(report.id)})
 
+    # Stable keyset cursor: ties on timestamp must not lose events between batches.
+    after = Episode.ts > checkpoint
+    if cursor_id:
+        after = or_(after, and_(Episode.ts == checkpoint, Episode.id > uuid.UUID(cursor_id)))
     episodes = (
         await session.execute(
-            select(Episode).where(Episode.ts > checkpoint, Episode.ts <= now, Episode.kind != "system")
-            .order_by(Episode.ts).limit(400)
+            select(Episode).where(after, Episode.ts <= now, Episode.kind != "system")
+            .order_by(Episode.ts, Episode.id).limit(400)
         )
     ).scalars().all()
     report.events_reviewed = len(episodes)
     report.cleanup = _cleanup_temp()
+    if len(episodes) == 400:
+        report.checkpoint_to = episodes[-1].ts
+        report.cleanup["checkpoint_episode_id"] = str(episodes[-1].id)
 
     meaningful = [e for e in episodes if e.tools or e.status == "failed" or e.kind == "routine"]
     if len(meaningful) < cfg.min_events_for_llm and not force:

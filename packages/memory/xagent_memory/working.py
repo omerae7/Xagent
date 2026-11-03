@@ -75,7 +75,8 @@ def detect_candidates(text: str) -> list[Detected]:
 
 
 async def load_window(
-    session: AsyncSession, conversation_id: uuid.UUID, budget_tokens: int = 3000, max_messages: int = 30
+    session: AsyncSession, conversation_id: uuid.UUID, budget_tokens: int = 3000, max_messages: int = 30,
+    exclude_run_id: uuid.UUID | None = None,
 ) -> tuple[str | None, list[Message]]:
     """خلاصه فشرده + آخرین پیام‌ها تا سقف بودجه توکن (جدیدترین‌ها اولویت دارند)."""
     conv = await session.get(Conversation, conversation_id)
@@ -94,6 +95,8 @@ async def load_window(
     picked: list[Message] = []
     used = estimate_tokens(conv.summary or "") if conv else 0
     for m in rows:
+        if exclude_run_id is not None and m.run_id == exclude_run_id:
+            continue
         if conv and conv.summary_upto and m.created_at <= conv.summary_upto:
             break
         cost = estimate_tokens(m.content)

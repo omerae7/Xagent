@@ -39,7 +39,7 @@ async def bootstrap() -> None:
                     path.chmod(0o600)
                 except OSError:
                     pass
-                log.warning("حساب کارفرما ساخته شد: %s / %s", s.owner_username, password)
+                log.warning("حساب کارفرما ساخته شد: %s؛ رمز اولیه فقط در فایل /data/initial_password.txt ذخیره شد", s.owner_username)
         await ensure_defaults(session)
         for key, model in DEFAULTS.items():
             if await session.get(SettingKV, key) is None:
