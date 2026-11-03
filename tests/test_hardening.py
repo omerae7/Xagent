@@ -40,3 +40,12 @@ def test_initial_password_never_in_bootstrap_log():
     root = Path(__file__).resolve().parents[1]
     source = (root / "services/api/xagent_api/bootstrap.py").read_text()
     assert 's.owner_username, password)' not in source
+
+
+def test_desktop_network_does_not_include_db_or_redis_network():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "compose.yaml").read_text()
+    desktop = compose.split("\n  desktop:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+    assert "networks: [desktop_link]" in desktop
+    assert "networks: [internal, public]" not in desktop

@@ -114,13 +114,13 @@ services:
       timeout: 6s
       retries: 10
       start_period: 40s
-    networks: [internal, public]
+    networks: [internal, public, desktop_link]
     mem_limit: ${API_MEM_LIMIT:-768m}
 
   worker:
     <<: *backend
     command: ["worker"]
-    networks: [internal, public, runner_link]
+    networks: [internal, public, runner_link, desktop_link]
     mem_limit: ${WORKER_MEM_LIMIT:-1536m}
     stop_grace_period: 40s
 
@@ -186,7 +186,7 @@ services:
     volumes:
       - ${XAGENT_HOME:-/opt/xagent}/desktop-home:/home/agent
     shm_size: ${DESKTOP_SHM_SIZE:-512m}
-    networks: [internal, public]
+    networks: [desktop_link]
     mem_limit: ${DESKTOP_MEM_LIMIT:-2560m}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7000/health"]
@@ -201,4 +201,6 @@ networks:
   public:
     driver: bridge
   runner_link:
+    driver: bridge
+  desktop_link:
     driver: bridge
