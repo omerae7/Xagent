@@ -33,6 +33,9 @@ INSTALL_TOOL = Tool(
 BUILTIN: list[Tool] = [*core.TOOLS, *work.TOOLS, *web.TOOLS, *computer.TOOLS, *telegram.TOOLS, INSTALL_TOOL]
 BUILTIN_BY_NAME = {t.name: t for t in BUILTIN}
 ALWAYS_GROUPS = {"core", "memory"}
+# Read-only internet search works through HTTP, independent of Chromium/XFCE.
+# Always make these tools discoverable even for ambiguous follow-up prompts.
+ALWAYS_WEB_READ_TOOLS = {"web_search", "web_fetch"}
 
 GROUP_LABELS = {
     "core": "پایه",
@@ -93,7 +96,7 @@ async def select_tools(session: AsyncSession, groups: list[str], query: str = ""
     wanted = set(groups) | ALWAYS_GROUPS
     if "browser" in wanted:
         wanted.add("web")
-    chosen = [t for t in BUILTIN if t.group in wanted]
+    chosen = [t for t in BUILTIN if t.group in wanted or t.name in ALWAYS_WEB_READ_TOOLS]
     inst = await installed_tools(session)
     if inst:
         q = normalize_fa(query)

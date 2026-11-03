@@ -77,7 +77,7 @@ _TOOL_GROUP_MARKERS = {
     "routines": r"(روتین|هر (روز|هفته|ساعت|ماه)|زمان ?بندی|cron|routine|schedule)",
     "crm": r"(همکار|مخاطب|مشتری|پروژه|crm|contact)",
     "telegram": r"(تلگرام|telegram|پیام|چت)",
-    "web": r"(سایت|وب|لینک|http|www\.|جست ?و ?جو|اینترنت|خبر|قیمت)",
+    "web": r"(سایت|وب|لینک|http|www\.|جست ?و ?جو|اینترنت|خبر|قیمت|بگرد|سرچ|پیدا کن|بررسی آنلاین|نرخ ارز|دلار|یورو|بورس)",
     "browser": r"(مرورگر|کروم|browser|chrome|صفحه|کلیک)",
     "desktop": r"(دسکتاپ|صفحه نمایش|اسکرین ?شات|screenshot|desktop)",
     "files": r"(فایل|پوشه|سند|file|folder|csv|pdf|excel)",

@@ -424,6 +424,17 @@ class AgentRunner:
         # ── ۶) ابزارها ──
         tools = await select_tools(rc.session, plan.get("tool_groups", []), run.input)
         if not primary.has("tools"):
+            # Do not ask a text-only model to perform actions without tool schemas.
+            # A clear capability error avoids false claims such as "web search is unavailable".
+            action_groups = set(plan.get("tool_groups", [])) & {
+                "web", "telegram", "browser", "desktop", "tasks", "routines", "crm", "files", "system",
+            }
+            if action_groups:
+                raise NoModelError(
+                    f"مدل «{primary.label}» در X Agent قابلیت اجرای ابزار (Tools) ندارد. "
+                    "در تنظیمات ← هوش مصنوعی ← ویرایش مدل، قابلیت «ابزار» را پس از تأیید پشتیبانی مدل فعال کنید "
+                    "و دوباره درخواست بدهید. جست‌وجوی وب بدون دسکتاپ هم قابل اجراست."
+                )
             tools = []
         tool_map = {t.name: t for t in tools}
         specs = [ToolSpec(t.name, t.description, t.parameters) for t in tools]

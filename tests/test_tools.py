@@ -156,3 +156,15 @@ async def test_event_driven_inbox_no_llm(app_client, configured_model, mock_llm)
         run = (await s.execute(select(Run).where(Run.trigger == "event").order_by(Run.created_at.desc()))).scalars().first()
         assert run.state["trusted"] is False and run.state["event_payload"]["text"] == "یک سفارش جدید دارم"
     await bus.get_redis().delete("xagent:stop_all")
+
+
+async def test_web_search_tools_available_without_desktop_or_routing(database):
+    """Plain chat and follow-up questions should always receive browser-free web tools."""
+    from xagent_tools.registry import select_tools
+    async with session_scope() as session:
+        chosen = await select_tools(session, [], "خودت بگرد")
+        names = {tool.name for tool in chosen}
+        assert "web_search" in names
+        assert "web_fetch" in names
+        # Arbitrary API mutation calls must not be enabled implicitly.
+        assert "http_request" not in names

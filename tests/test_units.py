@@ -34,6 +34,12 @@ def test_commands_detected_without_llm():
     assert detect_command("یه تسک بساز") is None
 
 
+def test_search_intent_without_desktop():
+    for message in ("خودت بگرد جواب بده", "نرخ دلار امروز چنده؟", "توی اینترنت سرچ کن"):
+        route = classify(message)
+        assert "web" in route.tool_groups, (message, route.tool_groups)
+
+
 def test_classifier_routes():
     assert classify("سلام").complexity == "trivial"
     r = classify("یه تسک برای فردا بساز")
