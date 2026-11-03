@@ -1,14 +1,14 @@
 """initial schema
 
 Revision ID: 0001
-Revises: 
+Revises:
 Create Date: 2026-11-03 18:20:18.338594
 """
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 import pgvector.sqlalchemy
+import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 

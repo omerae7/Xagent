@@ -133,3 +133,5 @@ async def select_models(
         rows = (await session.execute(select(AIModel.id).where(AIModel.enabled.is_(True)).limit(3))).scalars().all()
         chain = _filter(await _bind_many(session, [str(r) for r in rows]))
     return Selection(chain, tier)
+
+PRO_ROLE_CAPS_DOC = {"vision": "بینایی", "stt": "گفتار به متن", "tts": "تولید صدا", "tools": "فراخوانی ابزار"}

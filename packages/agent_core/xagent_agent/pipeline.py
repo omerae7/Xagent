@@ -49,6 +49,10 @@ TOOL_TIMEOUT = 300
 TERMINAL = {"succeeded", "failed", "stopped", "cancelled"}
 
 
+class LoopAbort(Exception):
+    """توقف کنترل‌شده توسط کنترلر حلقه (نه خطای داخلی)."""
+
+
 class Paused(Exception):
     def __init__(self, status: str, reason: str, code: str):
         super().__init__(reason)
@@ -295,6 +299,10 @@ class AgentRunner:
                              link=f"/chat/{run.conversation_id}" if run.conversation_id else "/tasks")
             await self._checkpoint(rc)
             return run.status
+        except LoopAbort as e:
+            await self._step(rc, "recover", "توقف توسط کنترلر حلقه", status="blocked", detail={"reason": str(e)})
+            await self._finalize(rc, "failed", f"⛔ {e}\nبرای جلوگیری از هدر رفتن هزینه، کار متوقف شد. "
+                                 "می‌توانید با توضیح بیشتر دوباره درخواست دهید.", error=str(e), stop_reason="loop")
         except (ProviderError, NoModelError) as e:
             await self._finalize(rc, "failed", f"❌ خطا در ارتباط با مدل هوش مصنوعی:\n{e}", error=str(e))
         except Exception as e:  # noqa: BLE001
@@ -471,6 +479,8 @@ class AgentRunner:
         max_tokens = 8192 if complex_task else 4096
         final_text = ""
         while True:
+            # سقف گام تطبیقی: پس از ارتقا به مدیر، سقف کارهای پیچیده اعمال می‌شود
+            enforcer.complexity = "complex" if s.get("escalated") else route["complexity"]
             await self._guard(rc, enforcer)
             pending = s.get("pending_calls", [])
             if pending:
@@ -481,7 +491,7 @@ class AgentRunner:
                     s["transcript"] = [m.to_json() for m in transcript]
                 s["pending_calls"] = []
                 if s.get("abort_reason"):
-                    raise RuntimeError(s["abort_reason"])
+                    raise LoopAbort(s["abort_reason"])
                 if s.get("escalate_now"):
                     s["escalated"] = True
                     s.pop("escalate_now")
@@ -496,7 +506,6 @@ class AgentRunner:
                 [*history, user_msg, *transcript], tools=specs or None, max_tokens=max_tokens, effort=effort,
                 title="اجرا" if not s.get("escalated") else "اجرا (مدیر)",
             )
-            run.steps_count += 1
             r = res.response
             if r.tool_calls:
                 transcript.append(LLMMessage("assistant", r.text, tool_calls=r.tool_calls, raw=r.raw))
@@ -551,8 +560,13 @@ class AgentRunner:
                 continue
             tool = tool_map.get(name)
             if tool is None:
-                transcript.append(LLMMessage("tool", f"ابزار «{name}» وجود ندارد یا در این کار فعال نیست.",
+                transcript.append(LLMMessage("tool", f"ابزار «{name}» وجود ندارد یا در این کار فعال نیست. "
+                                             f"ابزارهای موجود: {', '.join(sorted(tool_map))[:600]}",
                                              tool_call_id=cid, tool_name=name, is_error=True))
+                await self._step(rc, "tool", f"ابزار ناموجود: {name}", status="error", tool_name=name)
+                if loop.observe(name, args, False) == "abort":
+                    s["abort_reason"] = "کنترلر حلقه: درخواست مکرر ابزار ناموجود؛ اجرا متوقف شد."
+                    return
                 continue
             cats = approved.get(cid, [])
             category = tool.category_for(args)

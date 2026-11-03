@@ -57,6 +57,8 @@ def parse_source(source: str) -> tuple[str, str]:
         return "mcp_http", s
     if GIT_URL.match(s):
         return "git", s
+    if s.startswith("/"):
+        return "local", s
     raise ValueError("منبع نامعتبر است. نمونه: https://github.com/owner/repo یا npm:package یا pypi:package")
 
 
@@ -147,6 +149,8 @@ async def install(
     env: dict[str, str] | None = None,
 ) -> InstallOutcome:
     kind, target = parse_source(source)
+    if kind == "local" and actor == "agent":
+        return InstallOutcome(False, "نصب از مسیر محلی فقط توسط کارفرما مجاز است.")
     name = NAME_RE.sub("-", (name or _derive_name(target)).lower()).strip("-")
     tool = (await session.execute(select(InstalledTool).where(InstalledTool.name == name))).scalar_one_or_none()
     before = snapshot("tool", tool) if tool else None
@@ -191,7 +195,8 @@ async def install(
         else:
             tmp = sb.tool_path(name, f"tmp-{uuid.uuid4().hex[:8]}")
             branch = f"--branch {shlex.quote(ref)} " if ref else ""
-            if not await _run(log, f"git clone --depth 1 {branch}{shlex.quote(target)} {shlex.quote(tmp)}", timeout=300):
+            src = f"file://{target}" if kind == "local" else target
+            if not await _run(log, f"git clone --depth 1 {branch}{shlex.quote(src)} {shlex.quote(tmp)}", timeout=300):
                 raise RuntimeError("دریافت مخزن ناموفق بود")
             sha = (await sb.exec("git rev-parse HEAD", cwd=tmp)).stdout.strip()[:12] or uuid.uuid4().hex[:12]
             version = sha

@@ -146,11 +146,11 @@ async def process_owner_message(
                 sim = cosine(vec, hash_embed(r.content))
                 if sim > best_sim:
                     best, best_sim = r, sim
-            if best is not None and best_sim > 0.86:
-                cand.status, cand.conflict_with, cand.note = "rejected", best.id, "تکراری — قبلاً ثبت شده است"
-            elif best is not None and best_sim > 0.55 and _negated(best.content) != _negated(d.content):
+            if best is not None and best_sim > 0.55 and _negated(best.content) != _negated(d.content):
                 cand.status, cand.conflict_with = "conflict", best.id
                 cand.note = f"در تعارض با قانون «{best.title}» — نیازمند تایید کارفرما"
+            elif best is not None and best_sim > 0.86:
+                cand.status, cand.conflict_with, cand.note = "rejected", best.id, "تکراری — قبلاً ثبت شده است"
             else:
                 title = d.content.strip()[:80]
                 await add_rule(

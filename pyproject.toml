@@ -61,4 +61,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
-ignore = ["E501", "B008", "UP040", "B904"]
+ignore = ["E501", "B008", "UP040", "B904", "ASYNC109", "ASYNC240", "ASYNC230"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["xagent_core", "xagent_agent", "xagent_memory", "xagent_tools", "xagent_crm", "xagent_api", "xagent_worker"]

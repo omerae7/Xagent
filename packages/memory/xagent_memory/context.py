@@ -9,13 +9,11 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from xagent_core.text import estimate_tokens, truncate
-
-from sqlalchemy import select
-
 from xagent_core.models import Skill
+from xagent_core.text import estimate_tokens, truncate
 
 from .embeddings import cosine, hash_embed
 from .store import active_rules, best_experiences, facts_for_context
