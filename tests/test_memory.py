@@ -74,8 +74,11 @@ async def test_experience_probation_auto_rollback(database):
         assert rev_id is not None and exp.status == "probationary"
         good, _ = await best_experiences(s, "گزارش هفتگی فروش برای مدیر در تلگرام")
         assert good and good[0].id == exp.id
-        # اجرای بعدی پرمصرف‌تر (پسرفت) → Undo خودکار
-        purged = await observe_probation(s, [rev_id], success=True, tokens=5000, probation_runs=3, token_ratio=1.3)
+        # صرف افزایش توکن یک کار سنگین‌تر نباید باعث پاک‌شدن یادگیری شود.
+        assert await observe_probation(s, [rev_id], success=True, tokens=5000, probation_runs=3) == []
+        assert await observe_probation(s, [rev_id], success=False, tokens=5000, probation_runs=3) == []
+        # دو شکست از سه اجرا به‌اندازه کافی نشانه پسرفت است.
+        purged = await observe_probation(s, [rev_id], success=False, tokens=5000, probation_runs=3)
         assert purged == [str(rev_id)]
         e = await s.get(Experience, exp.id)
         assert e.status == "purged"

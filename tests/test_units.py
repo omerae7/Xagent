@@ -104,3 +104,13 @@ def test_routine_schedule():
     assert (nxt.hour, nxt.minute) == (5, 30)
     bad = Routine(name="t", instruction="x", trigger_type="interval", interval_seconds=10)
     assert validate_routine(bad)
+
+
+def test_token_regression_requires_comparable_baseline_and_two_runs():
+    # Regression tokens must be compared only within a comparable workload.
+    assert is_regression({"avg_tokens": 100}, {"runs": 3, "tokens": 1500, "failures": 0}) is None
+    assert is_regression({"avg_tokens": 100, "comparison_scope": "routine"},
+                         {"runs": 1, "tokens": 500, "failures": 0}) is None
+    assert is_regression({"avg_tokens": 100, "comparison_scope": "routine"},
+                         {"runs": 2, "tokens": 500, "failures": 0}) is not None
+    assert is_regression({}, {"runs": 3, "tokens": 300, "failures": 2}) is not None

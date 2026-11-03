@@ -57,6 +57,8 @@ async def test_mcp_bridge_through_desktop_sandbox(agentd, monkeypatch):
     s = get_settings()
     monkeypatch.setattr(s, "desktop_url", agentd)
     monkeypatch.setattr(s, "desktop_token", "tok-123")
+    monkeypatch.setenv("XAGENT_RUNNER_URL", agentd)
+    monkeypatch.setenv("XAGENT_RUNNER_TOKEN", "tok-123")
     monkeypatch.setattr(sandbox, "_sandbox", sandbox.DesktopSandbox())
     try:
         cfg = {"transport": "stdio", "command": sys.executable, "args": ["server.py"], "cwd": str(repo)}
