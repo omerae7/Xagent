@@ -34,7 +34,9 @@ class OpenAICompatProvider:
     def __init__(self, kind: str, api_key: str | None, base_url: str | None = None, timeout: float = 120):
         self.kind = kind
         self.base_url = (base_url or DEFAULT_BASES.get(kind) or DEFAULT_BASES["openai"]).rstrip("/")
-        headers = {"Content-Type": "application/json"}
+        # httpx sets Content-Type per request: JSON for json= and multipart for files=.
+        # A client-wide JSON header breaks Whisper/STT file uploads (HTTP 400).
+        headers: dict[str, str] = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         if kind == "openrouter":
@@ -150,9 +152,8 @@ class OpenAICompatProvider:
     async def transcribe(self, model: str, audio: bytes, mime: str, language: str = "fa") -> str:
         ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/mp4": "m4a"}
         files = {"file": (f"audio.{ext.get(mime.split(';')[0], 'webm')}", audio, mime.split(";")[0])}
-        headers = {k: v for k, v in self._client.headers.items() if k.lower() != "content-type"}
         r = await self._client.post(
-            "/audio/transcriptions", data={"model": model, "language": language}, files=files, headers=headers
+            "/audio/transcriptions", data={"model": model, "language": language}, files=files
         )
         if r.status_code >= 400:
             raise ProviderError(f"STT HTTP {r.status_code}: {r.text[:300]}", status=r.status_code)

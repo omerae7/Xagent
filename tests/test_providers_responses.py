@@ -91,3 +91,51 @@ async def test_responses_error_is_reported_without_silent_legacy_fallback():
         assert exc.value.status == 404
     finally:
         await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_whisper_upload_uses_multipart_not_json_content_type():
+    """An actual provider client must not override httpx multipart headers."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/audio/transcriptions"):
+            content_type = request.headers["content-type"]
+            assert content_type.startswith("multipart/form-data; boundary=")
+            assert b'name="model"' in request.content
+            assert b"whisper-1" in request.content
+            assert b'name="file"; filename="audio.webm"' in request.content
+            assert b"voice bytes" in request.content
+            assert request.headers.get("authorization") == "Bearer testing-key"
+            return httpx.Response(200, json={"text": "سلام"})
+        assert request.url.path.endswith("/responses")
+        assert request.headers["content-type"].startswith("application/json")
+        return httpx.Response(200, json={"status": "completed", "output": []})
+
+    provider = ResponsesProvider("openai", "testing-key")
+    await provider._client.aclose()
+    # Keep the real provider headers to catch regressions in client configuration.
+    provider._client = httpx.AsyncClient(
+        base_url=provider.base_url,
+        headers={"Authorization": "Bearer testing-key"},
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert await provider.transcribe("whisper-1", b"voice bytes", "audio/webm") == "سلام"
+        await provider.chat(ChatRequest(
+            model="gpt-6-luna", system_stable="", system_dynamic="",
+            messages=[LLMMessage(role="user", content="hi")],
+        ))
+        assert len(requests) == 2
+    finally:
+        await provider.aclose()
+
+
+def test_provider_client_does_not_set_global_json_content_type():
+    provider = ResponsesProvider("openai", "test-key")
+    try:
+        assert "content-type" not in provider._client.headers
+    finally:
+        import asyncio
+        asyncio.run(provider.aclose())
