@@ -18,6 +18,7 @@ from .anthropic_provider import AnthropicProvider
 from .base import ChatRequest, LLMMessage, Provider, ProviderError
 from .google import GoogleProvider
 from .openai_compat import DEFAULT_BASES, OpenAICompatProvider
+from .openai_responses import ResponsesProvider
 
 # کاتالوگ برای فرم ساده «افزودن مدل» — کاربر می‌تواند هر نام مدل دیگری را هم وارد کند.
 # قیمت‌ها به دلار برای هر یک میلیون توکن و قابل ویرایش در پنل هستند.
@@ -37,7 +38,7 @@ CATALOG: dict[str, dict[str, Any]] = {
         ],
     },
     "openai": {
-        "label": "OpenAI",
+        "label": "OpenAI — Responses API (مدل‌های جدید)",
         "base_url": DEFAULT_BASES["openai"],
         "models": [
             {"name": "gpt-4.1-mini", "label": "GPT-4.1 mini", "caps": ["vision", "tools"], "ctx": 1_000_000,
@@ -49,6 +50,16 @@ CATALOG: dict[str, dict[str, Any]] = {
             {"name": "text-embedding-3-small", "label": "Embedding کوچک", "caps": ["embedding"], "ctx": 8191,
              "price": [0.02, 0, 0, 0]},
         ],
+    },
+    "openai_chat": {
+        "label": "OpenAI — Chat Completions (قدیمی/سازگاری)",
+        "base_url": DEFAULT_BASES["openai"],
+        "models": [],
+    },
+    "custom_responses": {
+        "label": "Responses API (آدرس سفارشی)",
+        "base_url": None,
+        "models": [],
     },
     "google": {
         "label": "Google Gemini",
@@ -82,7 +93,9 @@ def build_provider(kind: str, api_key: str | None, base_url: str | None) -> Prov
         return AnthropicProvider(api_key, base_url)
     if kind == "google":
         return GoogleProvider(api_key, base_url)
-    compat_kind = "openai" if kind == "custom" else kind
+    if kind in ("openai", "custom_responses"):
+        return ResponsesProvider(kind, api_key, base_url)
+    compat_kind = "openai" if kind in ("custom", "openai_chat") else kind
     return OpenAICompatProvider(compat_kind, api_key, base_url)
 
 

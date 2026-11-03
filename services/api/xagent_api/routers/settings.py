@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+
+import httpx
 from decimal import Decimal
 from typing import Any
 from zoneinfo import available_timezones
@@ -163,6 +165,78 @@ async def delete_provider(pid: str, user: User = Depends(owner_user), session: A
     return {"ok": True}
 
 
+
+@router.get("/ai/providers/{pid}/discover")
+async def discover_models(
+    pid: str, cursor: str | None = None,
+    _: User = Depends(owner_user), session: AsyncSession = Depends(get_session),
+):
+    """List models visible to this API key. Listing does NOT assert tool, audio or vision support."""
+    p = await session.get(AIProvider, parse_uuid(pid))
+    if p is None:
+        raise HTTPException(404, "ارائه‌دهنده یافت نشد")
+    key = decrypt_secret(p.api_key_enc)
+    if not key and p.kind != "ollama":
+        raise HTTPException(400, "کلید API ثبت نشده است")
+    if cursor and len(cursor) > 256:
+        raise HTTPException(400, "شناسه صفحه نامعتبر است")
+    if p.kind == "anthropic":
+        url = (p.base_url or "https://api.anthropic.com/v1").rstrip("/") + "/models"
+        headers = {"x-api-key": key or "", "anthropic-version": "2023-06-01"}
+        params: dict[str, str | int] = {"limit": 100}
+        if cursor:
+            params["after_id"] = cursor
+    elif p.kind == "google":
+        url = (p.base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/") + "/models"
+        headers = {"x-goog-api-key": key or ""}
+        params = {"pageSize": 100}
+        if cursor:
+            params["pageToken"] = cursor
+    else:
+        from xagent_agent.providers.openai_compat import DEFAULT_BASES
+
+        kind = "openai" if p.kind in ("openai", "openai_chat") else p.kind
+        base = p.base_url or DEFAULT_BASES.get(kind)
+        if not base:
+            raise HTTPException(400, "برای دریافت فهرست مدل‌ها Base URL را مشخص کنید")
+        url = base.rstrip("/") + "/models"
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        params = {}
+        if cursor:
+            params["after"] = cursor
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+            response = await client.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+    except (httpx.HTTPError, ValueError) as e:
+        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+        raise HTTPException(502, f"دریافت مدل‌ها از شرکت ناموفق بود (HTTP {status or 'network'})") from e
+    raw_items = data.get("models") if p.kind == "google" else data.get("data")
+    if not isinstance(raw_items, list):
+        raise HTTPException(502, "پاسخ فهرست مدل‌ها ساختار شناخته‌شده ندارد")
+    items = []
+    for item in raw_items[:200]:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id") or item.get("name")
+        if not isinstance(model_id, str):
+            continue
+        if p.kind == "google":
+            model_id = model_id.removeprefix("models/")
+            allowed = item.get("supportedGenerationMethods") or []
+            if "generateContent" not in allowed:
+                continue
+        items.append({"id": model_id, "label": item.get("displayName") or item.get("display_name") or model_id})
+    next_cursor = (
+        data.get("nextPageToken") if p.kind == "google"
+        else data.get("last_id") if p.kind == "anthropic" and data.get("has_more")
+        else None
+    )
+    if p.kind not in ("google", "anthropic") and data.get("has_more") and items:
+        next_cursor = items[-1]["id"]
+    return {"items": items, "next_cursor": next_cursor}
+
 def _apply_model(m: AIModel, body: ModelIn) -> None:
     for f in ("model_name", "display_name", "enabled", "capabilities", "context_window"):
         v = getattr(body, f)
@@ -189,7 +263,8 @@ async def create_model(body: ModelIn, user: User = Depends(owner_user), session:
         m.context_window = preset["ctx"] or 128000
         m.price_in, m.price_out, m.price_cache_read, m.price_cache_write = (Decimal(str(x)) for x in preset["price"])
     else:
-        m.capabilities = {"tools": True}
+        # Unknown providers/models must not inherit unverified capabilities.
+        m.capabilities = {}
     _apply_model(m, body)
     session.add(m)
     await session.flush()

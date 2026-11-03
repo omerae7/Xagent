@@ -68,7 +68,7 @@ function General() {
 }
 
 // ───────────── هوش مصنوعی ─────────────
-const KIND_ICON: Record<string, string> = { anthropic: "A", openai: "◎", google: "G", openrouter: "⇄", deepseek: "D", groq: "⚡", xai: "X", mistral: "M", ollama: "🦙", custom: "⚙" };
+const KIND_ICON: Record<string, string> = { anthropic: "A", openai: "◎", openai_chat: "◎", custom_responses: "↗", google: "G", openrouter: "⇄", deepseek: "D", groq: "⚡", xai: "X", mistral: "M", ollama: "🦙", custom: "⚙" };
 const CAPS: [string, string][] = [["tools", "ابزار"], ["vision", "بینایی"], ["stt", "گفتار→متن"], ["tts", "متن→گفتار"], ["embedding", "Embedding"], ["audio_in", "صوت"]];
 
 function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }) {
@@ -127,7 +127,7 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
           <Field label={`کلید API ${preset?.label || ""}`} hint="کلید به‌صورت رمزنگاری‌شده (Fernet) در دیتابیس شما ذخیره می‌شود و هرگز نمایش داده نمی‌شود.">
             <Input type="password" value={key} onChange={(e) => setKey(e.target.value)} className="ltr" placeholder="sk-..." autoFocus />
           </Field>
-          {(kind === "custom" || kind === "ollama" || kind === "openrouter") && (
+          {(kind === "custom" || kind === "custom_responses" || kind === "ollama" || kind === "openrouter") && (
             <Field label="نشانی پایه (Base URL)"><Input value={base} onChange={(e) => setBase(e.target.value)} className="ltr" placeholder="https://.../v1" /></Field>
           )}
         </div>
@@ -156,6 +156,52 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
       )}
     </Modal>
   );
+}
+
+
+function DiscoverModels({ provider, refresh }: { provider: any; refresh: () => void }) {
+  const [items, setItems] = useState<any[]>([]);
+  const [search, setSearch] = useState("");
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState("");
+  const load = async (next?: string | null) => {
+    setBusy(true);
+    try {
+      const url = "/api/settings/ai/providers/" + provider.id + "/discover" + (next ? "?cursor=" + encodeURIComponent(next) : "");
+      const r = await get(url);
+      setItems((old) => next ? [...old, ...(r.items || [])] : (r.items || []));
+      setCursor(r.next_cursor || null);
+    } catch (e) { toastError(e); } finally { setBusy(false); }
+  };
+  const existing = new Set((provider.models || []).map((m: any) => m.model_name));
+  const filtered = items.filter((m) => m.id.toLowerCase().includes(search.toLowerCase())).slice(0, 100);
+  return <>
+    <Button size="sm" variant="soft" onClick={() => { setOpen(true); if (!items.length) load(); }}>
+      دریافت مدل‌های حساب
+    </Button>
+    {open && <Modal open wide title={"مدل‌های قابل‌دسترسی: " + provider.name} onClose={() => setOpen(false)}>
+      <p className="text-xs text-muted mb-3">این فهرست از API شرکت خوانده می‌شود. قیمت، ظرفیت و قابلیت ابزار/تصویر برای مدل‌های ناشناخته باید جداگانه بررسی و تنظیم شود.</p>
+      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="جستجوی نام مدل" />
+      <div className="mt-3 max-h-80 space-y-2 overflow-y-auto">
+        {filtered.map((m) => <div key={m.id} className="flex items-center justify-between gap-2 rounded-lg border hairline p-2">
+          <div className="min-w-0"><div className="text-sm">{m.label}</div><div className="text-[11px] ltr text-end">{m.id}</div></div>
+          <Button size="sm" disabled={existing.has(m.id) || adding === m.id} loading={adding === m.id}
+            onClick={async () => {
+              setAdding(m.id);
+              try {
+                await post("/api/settings/ai/models", { provider_id: provider.id, model_name: m.id });
+                toast("مدل ثبت شد؛ قابلیت‌ها و قیمت آن را بررسی و تست کنید", "success");
+                refresh();
+              } catch (e) { toastError(e); } finally { setAdding(""); }
+            }}>{existing.has(m.id) ? "ثبت‌شده" : "افزودن"}</Button>
+        </div>)}
+      </div>
+      {busy && <p className="text-sm mt-3">در حال دریافت…</p>}
+      {cursor && <div className="mt-3"><Button size="sm" onClick={() => load(cursor)} disabled={busy}>مدل‌های بیشتر</Button></div>}
+    </Modal>}
+  </>;
 }
 
 function ModelRow({ m }: { m: any }) {
@@ -269,7 +315,11 @@ function AI() {
               </div>
               <div className="space-y-2">
                 {(providers.data?.models || []).filter((m: any) => m.provider_id === p.id).map((m: any) => <ModelRow key={m.id} m={m} />)}
-                <Button size="sm" variant="ghost" icon={<Plus className="h-3.5 w-3.5" />} onClick={async () => { const name = prompt("نام مدل:"); if (name) { try { await post("/api/settings/ai/models", { provider_id: p.id, model_name: name }); qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); } catch (e) { toastError(e); } } }}>مدل دیگر از همین ارائه‌دهنده</Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <DiscoverModels provider={{ ...p, models: (providers.data?.models || []).filter((m: any) => m.provider_id === p.id) }}
+                    refresh={() => { qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); }} />
+                  <Button size="sm" variant="ghost" icon={<Plus className="h-3.5 w-3.5" />} onClick={async () => { const name = prompt("نام مدل:"); if (name) { try { await post("/api/settings/ai/models", { provider_id: p.id, model_name: name }); qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); } catch (e) { toastError(e); } } }}>مدل دیگر از همین ارائه‌دهنده</Button>
+                </div>
               </div>
             </div>
           ))}
