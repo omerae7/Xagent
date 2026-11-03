@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
-from xagent_core.models import UsageEvent
+from xagent_core.models import AIModel, UsageEvent
 
 from .providers.base import ChatRequest, LLMMessage, LLMResponse, ProviderError, ToolSpec
 from .providers.registry import BoundModel
@@ -50,7 +50,18 @@ async def call_llm(
             "هیچ مدل هوش مصنوعی فعالی تنظیم نشده است. از «تنظیمات ← هوش مصنوعی» یک مدل اضافه و فعال کنید."
         )
     last_err: Exception | None = None
-    for model in chain:
+    from .control import health
+
+    # مدل‌های در دوره خنک‌شدن (خطای کلید/سهمیه/نبود مدل) به انتهای زنجیره می‌روند
+    healthy, cooling = [], []
+    for b in chain:
+        row = await session.get(AIModel, b.id)
+        (cooling if row is not None and health.in_cooldown(row) else healthy).append(b)
+    ordered = healthy + cooling
+    for idx, model in enumerate(ordered):
+        if idx > 0:
+            await bus.publish("model.fallback", {"run_id": str(run_id) if run_id else None, "to": model.label,
+                                                 "reason": str(last_err)[:200] if last_err else ""})
         req = ChatRequest(
             model=model.model_name,
             system_stable=system_stable,
@@ -96,9 +107,11 @@ async def call_llm(
                         "cost": float(cost),
                     },
                 )
+                await health.record_success(session, model.id)
                 return CallResult(resp, model, cost)
             except ProviderError as e:
                 last_err = e
+                ec = await health.record_failure(session, model.id, str(e), e.status)
                 session.add(
                     UsageEvent(
                         run_id=run_id,
@@ -111,7 +124,7 @@ async def call_llm(
                     )
                 )
                 await session.flush()
-                if e.retryable and attempt < 2:
+                if e.retryable and ec.retryable and attempt < 2:
                     await asyncio.sleep(1.5 * (2**attempt))
                     continue
                 break  # مدل بعدی در زنجیره

@@ -18,7 +18,7 @@ from xagent_core.config import get_settings
 from xagent_core.db import dispose_engine, get_engine
 
 from .bootstrap import bootstrap
-from .routers import auth, chat, integrations, live, memory, settings, work
+from .routers import auth, chat, control, integrations, live, memory, settings, work
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("xagent.api")
@@ -52,7 +52,7 @@ async def validation_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": "داده نامعتبر: " + "؛ ".join(errors)})
 
 
-for r in (auth, chat, live, work, memory, settings, integrations):
+for r in (auth, chat, live, work, memory, settings, integrations, control):
     app.include_router(r.router)
 
 

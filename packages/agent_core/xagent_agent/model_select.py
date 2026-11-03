@@ -93,7 +93,8 @@ async def select_models(
         if cap in ("vision", "stt", "tts"):
             return [m for m in ms if m.has(cap)]
         if cap == "tools":
-            return [m for m in ms if m.has("tools")] or ms
+            # مدل‌های آزمون‌نشده حذف نمی‌شوند تا چرخه اجرا آن‌ها را خودکار آزمون کند
+            return [m for m in ms if m.has("tools") or "tools" not in (m.capability_meta or {})] or ms
         return ms
 
     if override_model_id and override_model_id != "auto" and role not in ("stt", "tts"):

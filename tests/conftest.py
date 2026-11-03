@@ -47,6 +47,7 @@ def _free_port() -> int:
 class MockLLM:
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.scenarios: dict[str, list[tuple[str, dict]]] = {}
         self.port = _free_port()
 
     @property
@@ -79,6 +80,23 @@ class MockLLM:
                           "prompt_tokens_details": {"cached_tokens": prompt_tokens // 2}},
             }
 
+        # آزمون عملی قابلیت‌ها (probe)
+        if "report_status" in tools:
+            return reply(None, ("report_status", {"status": "ok"}))
+        last_user = next((m for m in reversed(msgs) if m["role"] == "user"), {})
+        if isinstance(last_user.get("content"), list) and any(
+                isinstance(p, dict) and p.get("type") == "image_url" for p in last_user["content"]):
+            return reply("red")
+        # سناریوهای چندمرحله‌ای: اولین گامی که ابزارش هنوز صدا زده نشده اجرا می‌شود
+        called = [c["function"]["name"] for m in msgs if m["role"] == "assistant" for c in (m.get("tool_calls") or [])]
+        for trigger, steps in self.scenarios.items():
+            if trigger in task_text and tools:
+                for name, args in steps:
+                    if name not in called or (name == "tools_load" and name not in called):
+                        if name != "tools_load" and name not in tools and "tools_load" in tools and "tools_load" not in called:
+                            return reply(None, ("tools_load", {"groups": ["admin"]}))
+                        return reply(None, (name, args))
+                return reply("انجام شد: " + str(tool_msgs[-1].get("content", "") if tool_msgs else "")[:400])
         if body.get("response_format", {}).get("type") == "json_object":
             if "هدف واقعی" in content:
                 return reply(json.dumps({"goal": "انجام درخواست کارفرما", "success_criteria": ["نتیجه واقعی ثبت شود"],
@@ -120,6 +138,19 @@ def mock_llm():
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
         return llm.respond(await request.json())
+
+    @app.get("/v1/models")
+    async def models():
+        return {"object": "list", "data": [{"id": "mock-model"}, {"id": "mock-discovered-1"},
+                                            {"id": "text-embedding-mock"}]}
+
+    @app.post("/fail/v1/chat/completions")
+    async def fail(request: Request):
+        llm.calls.append({"failed": True})
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse({"error": {"message": "Incorrect API key provided", "type": "invalid_request_error",
+                                       "code": "invalid_api_key"}}, status_code=401)
 
     config = uvicorn.Config(app, host="127.0.0.1", port=llm.port, log_level="warning")
     server = uvicorn.Server(config)

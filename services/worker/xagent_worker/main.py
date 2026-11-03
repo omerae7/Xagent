@@ -49,6 +49,7 @@ class Worker:
         self.runner = AgentRunner(self.id, telegram=self.telegram)
         self.sem = asyncio.Semaphore(self.settings.max_concurrent_runs)
         self.stopping = asyncio.Event()
+        self.heal_now = asyncio.Event()
         self.active: set[asyncio.Task] = set()
 
     async def recover(self) -> None:
@@ -177,6 +178,29 @@ class Worker:
         except Exception:  # noqa: BLE001
             log.exception("خطای فرمان کنترلی %s", cmd)
 
+    async def selfheal_loop(self) -> None:
+        """خوددرمانی دوره‌ای (قطعی و بدون LLM): هر ۱۰ دقیقه یا بلافاصله پس از رخداد سلامت مدل."""
+        from xagent_agent.control.selfheal import heal
+
+        while not self.stopping.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self.heal_now.wait(), timeout=600)
+            self.heal_now.clear()
+            if await bus.is_stop_all():
+                continue
+            lease = await bus.acquire_lease("selfheal", 120_000)
+            if not lease:
+                continue
+            try:
+                async with session_scope() as session:
+                    rep = await heal(session)
+                    if rep.get("applied"):
+                        log.info("خوددرمانی: %s", rep["applied"])
+            except Exception:  # noqa: BLE001
+                log.exception("خطای خوددرمانی")
+            finally:
+                await bus.release_lease("selfheal", lease)
+
     async def scheduler_loop(self) -> None:
         last_dream_check = 0.0
         loop = asyncio.get_running_loop()
@@ -241,13 +265,16 @@ class Worker:
                 break
             if ev.get("type") == "settings.changed" and (ev.get("data") or {}).get("key") == "telegram":
                 await self.telegram.start()
+            if ev.get("type") == "model.health" and (ev.get("data") or {}).get("health") == "failing":
+                self.heal_now.set()
 
     async def run(self) -> None:
         await bus.ensure_groups()
         await self.recover()
         await self.telegram.start()
         tasks = [asyncio.create_task(c()) for c in (self.consume_runs, self.consume_inbox, self.consume_control,
-                                                     self.scheduler_loop, self.metrics_loop, self.settings_watch)]
+                                                     self.scheduler_loop, self.metrics_loop, self.settings_watch,
+                                                     self.selfheal_loop)]
         log.info("Worker %s آماده است (هم‌زمانی: %d)", self.id, self.settings.max_concurrent_runs)
         await self.stopping.wait()
         for t in tasks:

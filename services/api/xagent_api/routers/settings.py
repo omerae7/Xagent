@@ -24,7 +24,7 @@ from xagent_core.config import get_settings
 from xagent_core.db import utcnow
 from xagent_core.models import AIModel, AIProvider, HarnessRule, User
 from xagent_core.security import decrypt_secret, encrypt_secret, mask_secret
-from xagent_core.settings_store import DEFAULTS, AISettings, all_settings, set_setting
+from xagent_core.settings_store import DEFAULTS, AISettings, all_settings
 
 from ..deps import current_user, get_session, owner_user, parse_uuid, ser
 
@@ -51,9 +51,13 @@ async def put(key: str, body: dict[str, Any], user: User = Depends(owner_user), 
         raise HTTPException(422, "منطقه زمانی نامعتبر است")
     if key == "ai":
         await _validate_ai(session, value)
-    await set_setting(session, key, value)
-    await audit(session, user.username, f"settings.{key}", None, value.model_dump(mode="json"))
-    await bus.publish("settings.changed", {"key": key})
+    from xagent_agent.control import changes as _changes
+
+    try:
+        await _changes.change_setting(session, key, value.model_dump(mode="json"), actor="owner", reason="ویرایش از پنل")
+    except _changes.ChangeError as e:
+        if e.decision != "noop":
+            raise HTTPException(422, str(e)) from e
     return {"ok": True, "value": value.model_dump(mode="json")}
 
 

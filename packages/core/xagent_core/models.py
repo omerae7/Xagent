@@ -97,6 +97,18 @@ class AIModel(IdMixin, TimestampMixin, Base):
     price_out: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0)
     price_cache_read: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0)
     price_cache_write: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0)
+    # منبع هر قابلیت: {"tools": {"value": true, "source": "probe|provider|catalog|manual|heuristic", "at": "..."}}
+    capability_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")  # manual|catalog|discovered
+    pricing_source: Mapped[str] = mapped_column(String(24), default="unknown", server_default="unknown")
+    pricing_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # سلامت عملیاتی: unknown | ok | degraded | failing
+    health: Mapped[str] = mapped_column(String(12), default="unknown", server_default="unknown")
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error_class: Mapped[str | None] = mapped_column(String(32))
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (UniqueConstraint("provider_id", "model_name"),)
 
 
@@ -166,7 +178,8 @@ class Run(IdMixin, Base):
     routine_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("routines.id", ondelete="SET NULL"), index=True
     )
-    parent_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    parent_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
     trigger: Mapped[str] = mapped_column(String(16), default="chat")  # chat|routine|telegram|voice|api|event
     # queued | running | waiting_approval | paused | succeeded | failed | stopped | cancelled
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
@@ -575,3 +588,65 @@ class AuditLog(IdMixin, Base):
     target: Mapped[str | None] = mapped_column(String(256))
     detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     ip: Mapped[str | None] = mapped_column(String(64))
+
+
+# ───────────────────────────── مدیر، کارمندان و خوددرمانی ─────────────────────────────
+
+
+class Employee(IdMixin, TimestampMixin, Base):
+    """کارمند هوش مصنوعی: نقش مستقل، مدل و ابزار اختصاصی، گزارش به مدیر."""
+
+    __tablename__ = "employees"
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    title: Mapped[str] = mapped_column(String(128), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    model_ids: Mapped[list[str]] = mapped_column(ARRAY(String(36)), default=list)
+    tool_groups: Mapped[list[str]] = mapped_column(ARRAY(String(32)), default=list)
+    memory_scope: Mapped[str] = mapped_column(String(16), default="shared")  # shared | private
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(16), default="idle")  # idle | working | error
+    max_steps: Mapped[int] = mapped_column(Integer, default=12)
+    max_cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0.2"))
+    created_by: Mapped[str] = mapped_column(String(32), default="owner")
+    stats: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
+class ConfigChange(IdMixin, Base):
+    """هر تغییر تنظیمات (توسط مدیر، کارمند، خوددرمانی یا کارفرما) با قبل/بعد برای Audit و Rollback."""
+
+    __tablename__ = "config_changes"
+    created_at: Mapped[datetime] = _ts(index=True)
+    actor: Mapped[str] = mapped_column(String(48))  # owner | manager | employee:<name> | self_heal | system
+    run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    target_type: Mapped[str] = mapped_column(String(24), index=True)  # setting|model|provider|tool|employee|routing
+    target_id: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(24))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    risk: Mapped[str] = mapped_column(String(8), default="low")
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # applied | verified | verification_failed | rolled_back | rejected | pending_approval
+    status: Mapped[str] = mapped_column(String(24), default="applied", index=True)
+    verification: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rolled_back_by: Mapped[str | None] = mapped_column(String(48))
+
+
+class Incident(IdMixin, Base):
+    """رخداد عملیاتی برای خوددرمانی: تشخیص ← طبقه‌بندی ← اصلاح ← آزمون ← گزارش."""
+
+    __tablename__ = "incidents"
+    created_at: Mapped[datetime] = _ts(index=True)
+    last_seen_at: Mapped[datetime] = _ts()
+    source: Mapped[str] = mapped_column(String(16))  # model | tool | provider | run | system
+    target: Mapped[str] = mapped_column(String(128))
+    error_class: Mapped[str] = mapped_column(String(32), index=True)
+    message: Mapped[str] = mapped_column(Text, default="")
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    # open | fixing | fixed | escalated | ignored
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    actions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("source", "target", "error_class"),)

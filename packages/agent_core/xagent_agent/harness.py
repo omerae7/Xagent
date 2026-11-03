@@ -35,9 +35,13 @@ CATEGORIES: dict[str, dict[str, Any]] = {
     "external_tool": {"label": "ابزارهای نصب‌شده خارجی (MCP/GitHub)", "default": "ask", "icon": "plug"},
     "system_update": {"label": "به‌روزرسانی هسته و سیاست‌های امنیتی", "default": "ask", "icon": "shield",
                       "locked": True},
+    "system_config": {"label": "اداره سیستم توسط مدیر (مدل‌ها، کارمندان، تنظیمات غیرامنیتی)", "default": "auto",
+                      "icon": "settings"},
+    "security_limits": {"label": "شل‌کردن سقف هزینه و محدودیت‌های ایمنی", "default": "ask", "icon": "shield",
+                        "locked": True},
 }
 # دسته‌هایی که هرگز نمی‌توانند خودکار شوند (تغییر هسته و سیاست امنیتی نیازمند تایید صریح است)
-NEVER_AUTO = {"system_update", "payment"}
+NEVER_AUTO = {"system_update", "payment", "security_limits"}
 
 
 @dataclass

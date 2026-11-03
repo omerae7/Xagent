@@ -83,7 +83,9 @@ _TOOL_GROUP_MARKERS = {
     "files": r"(فایل|پوشه|سند|file|folder|csv|pdf|excel)",
     "memory": r"(یادت|حافظه|قبلا|دفعه (قبل|پیش)|سابقه|تاریخچه|history|remember)",
     "episodes": r"(دیروز|هفته (پیش|گذشته)|ماه (پیش|گذشته)|چه کارهایی|گزارش کار|سابقه)",
-    "system": r"(ابزار|tool|نصب|مدل|تنظیمات)",
+    "system": r"(نصب|اجرا کن|ترمینال|اسکریپت|shell|bash)",
+    "admin": r"(تنظیم|مدل|کارمند|ابزار|خطا|ارور|مشکل|عیب|اصلاح|درست کن|ارائه ?دهنده|مسیریابی|api|کلید|خودت|سیستم|"
+             r"وضعیت|سلامت|بهینه|هزینه|فعال کن|غیرفعال|کشف|آزمون|تست کن|config|setting|model|employee|debug|fix)",
 }
 
 
@@ -114,6 +116,8 @@ def classify(text: str, has_images: bool = False, has_audio: bool = False, trigg
     for group, pat in _TOOL_GROUP_MARKERS.items():
         if re.search(pat, t):
             r.tool_groups.append(group)
+    if "admin" in r.tool_groups:
+        r.reasons.append("درخواست اداره/عیب‌یابی سیستم")
     risky = [cat for cat, pat in _RISK_MARKERS.items() if re.search(pat, t)]
     if risky:
         r.risk = "high"
@@ -136,6 +140,8 @@ def classify(text: str, has_images: bool = False, has_audio: bool = False, trigg
     if trigger in ("routine", "event"):
         score += 1
         r.memory_layers.append("experiential")
+    if "admin" in r.tool_groups and trigger in ("chat", "voice", "telegram"):
+        score += 2
     if score >= 2 or r.risk == "high":
         r.complexity, r.path = "complex", "manager"
         r.reasons.append(f"امتیاز پیچیدگی {score}")

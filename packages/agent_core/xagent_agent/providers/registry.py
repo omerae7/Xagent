@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -113,6 +113,7 @@ class BoundModel:
     price_cache_read: Decimal
     price_cache_write: Decimal
     provider: Provider
+    capability_meta: dict[str, Any] = field(default_factory=dict)
 
     def has(self, cap: str) -> bool:
         return bool(self.capabilities.get(cap))
@@ -146,16 +147,16 @@ async def _provider_for(row: AIProvider) -> Provider:
     return p
 
 
-async def load_model(session: AsyncSession, model_id: str | uuid.UUID) -> BoundModel | None:
+async def load_model(session: AsyncSession, model_id: str | uuid.UUID, include_disabled: bool = False) -> BoundModel | None:
     try:
         mid = model_id if isinstance(model_id, uuid.UUID) else uuid.UUID(str(model_id))
     except ValueError:
         return None
     m = await session.get(AIModel, mid)
-    if m is None or not m.enabled:
+    if m is None or (not m.enabled and not include_disabled):
         return None
     p = await session.get(AIProvider, m.provider_id)
-    if p is None or not p.enabled:
+    if p is None or (not p.enabled and not include_disabled):
         return None
     return BoundModel(
         id=m.id,
@@ -170,6 +171,7 @@ async def load_model(session: AsyncSession, model_id: str | uuid.UUID) -> BoundM
         price_cache_read=Decimal(m.price_cache_read or 0),
         price_cache_write=Decimal(m.price_cache_write or 0),
         provider=await _provider_for(p),
+        capability_meta=m.capability_meta or {},
     )
 
 

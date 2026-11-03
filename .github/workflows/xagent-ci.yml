@@ -2,7 +2,9 @@ name: X Agent verification
 
 on:
   push:
-    branches: ["fix/**", "feat/**"]
+    branches: ["fix/**", "feat/**", "ccr-**", "main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
