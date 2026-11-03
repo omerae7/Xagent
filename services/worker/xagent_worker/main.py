@@ -270,6 +270,7 @@ class Worker:
 
     async def run(self) -> None:
         await bus.ensure_groups()
+        await bus.get_redis().set("xagent:worker:heartbeat", utcnow().isoformat(), ex=120)
         await self.recover()
         await self.telegram.start()
         tasks = [asyncio.create_task(c()) for c in (self.consume_runs, self.consume_inbox, self.consume_control,

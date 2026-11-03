@@ -1,24 +1,111 @@
 #!/usr/bin/env bash
-# مدیریت X Agent روی سرور: status | logs | restart | update | backup | restore | password | desktop on|off
+# ════════════════════════════════════════════════════════════════════
+#  xagent — مدیریت X Agent روی سرور
+#  نصب در مسیر ثابت /usr/local/lib/xagent (مستقل از پوشه برنامه که هنگام به‌روزرسانی تغییر می‌کند)
+#
+#  xagent status | version | doctor | logs [service] | restart [service]
+#  xagent update [--ref <branch|tag|commit>] [--dry-run] [--yes]
+#  xagent rollback | backup | restore <file> | password [user] | desktop on|off
+# ════════════════════════════════════════════════════════════════════
 set -euo pipefail
+CONF="${XAGENT_CONF:-/etc/xagent.conf}"; [ -f "$CONF" ] && . "$CONF"
 XAGENT_HOME="${XAGENT_HOME:-/opt/xagent}"
-cd "$XAGENT_HOME/app"
-dc() { docker compose "$@"; }
+LIB="${XAGENT_LIB:-/usr/local/lib/xagent}"
+APP="$XAGENT_HOME/app"
+CTL="$XAGENT_HOME/data/control"
+[ -d "$APP" ] || { echo "X Agent در $XAGENT_HOME نصب نیست."; exit 1; }
+cd "$APP"
+dc() { docker compose --project-directory "$APP" -f "$APP/compose.yaml" --env-file "$APP/.env" "$@"; }
+need_root() { [ "$(id -u)" = "0" ] || { echo "این دستور به sudo نیاز دارد: sudo xagent $*"; exit 1; }; }
+envget() { grep -E "^$1=" "$APP/.env" | tail -1 | cut -d= -f2-; }
+
+health() {
+  dc exec -T api python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=4).read().decode())"
+}
+
 case "${1:-status}" in
-  status)  dc ps; echo; curl -fsS -k "https://127.0.0.1/api/health" -H "Host: localhost" 2>/dev/null || dc exec -T api python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/health').read().decode())" ;;
+  status)
+    dc ps
+    echo
+    health || echo "API پاسخ نمی‌دهد"
+    [ -f "$CTL/update.status" ] && { echo -n "آخرین به‌روزرسانی: "; cat "$CTL/update.status"; } ;;
+  version)
+    if [ -f "$CTL/version.json" ]; then cat "$CTL/version.json"; else
+      echo "{\"version\":\"$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)\",\"commit\":\"$(git rev-parse HEAD)\"}"; fi ;;
+  doctor)
+    echo "پوشه نصب: $XAGENT_HOME"
+    echo "فضای آزاد: $(df -h --output=avail "$XAGENT_HOME" | tail -1)"
+    echo "Docker: $(docker --version 2>/dev/null || echo 'نصب نیست')"
+    echo "نسخه: $(git rev-parse --short HEAD) — شاخه منبع: $(envget XAGENT_REPO_BRANCH) — ایمیج: $(envget XAGENT_IMAGE_TAG)"
+    echo "تغییرات محلی: $(git status --porcelain | wc -l) فایل"
+    echo "سرویس به‌روزرسان: $(systemctl is-active xagent-updater.path 2>/dev/null || echo نامشخص)"
+    health || echo "API: ناسالم" ;;
   logs)    dc logs -f --tail=200 "${2:-api}" ;;
-  restart) dc restart ${2:-} ;;
-  update)  sudo XAGENT_HOME="$XAGENT_HOME" "$XAGENT_HOME/app/infra/updater/xagent-update.sh" ;;
-  backup)  f="$XAGENT_HOME/backups/xagent-$(date +%Y%m%d-%H%M%S).dump"; mkdir -p "$XAGENT_HOME/backups"
-           dc exec -T postgres pg_dump -U xagent -d xagent -Fc > "$f" && echo "✓ $f" ;;
-  restore) [ -f "${2:-}" ] || { echo "مسیر فایل پشتیبان را بدهید"; exit 1; }
-           read -rp "دیتابیس فعلی با «$2» جایگزین شود؟ [y/N] " a; [ "$a" = "y" ] || exit 1
-           dc stop api worker && dc exec -T postgres pg_restore -U xagent -d xagent --clean --if-exists < "$2" && dc start api worker ;;
+  restart) shift; dc restart "$@" ;;
+  update)
+    need_root update
+    shift
+    # اجرای نسخه موقت از به‌روزرسان تا جایگزینی خود اسکریپت در حین اجرا امن باشد
+    SRC="$LIB/xagent-update"; [ -x "$SRC" ] || SRC="$APP/infra/updater/xagent-update.sh"
+    TMP="$(mktemp /tmp/xagent-update.XXXXXX)"; cp "$SRC" "$TMP"; chmod 700 "$TMP"
+    trap 'rm -f "$TMP"' EXIT
+    XAGENT_HOME="$XAGENT_HOME" XAGENT_LIB="$LIB" bash "$TMP" "$@" ;;
+  rollback)
+    need_root rollback
+    [ -f "$CTL/version.json" ] || { echo "اطلاعات نسخه قبلی موجود نیست."; exit 1; }
+    PREV_COMMIT="$(python3 -c "import json;print(json.load(open('$CTL/version.json')).get('previous_commit',''))")"
+    PREV_TAG="$(python3 -c "import json;print(json.load(open('$CTL/version.json')).get('previous_image_tag',''))")"
+    UPD_AT="$(python3 -c "import json;print(json.load(open('$CTL/version.json')).get('updated_at',''))")"
+    [ -n "$PREV_COMMIT" ] && [ -n "$PREV_TAG" ] || { echo "نسخه قبلی ثبت نشده است."; exit 1; }
+    docker image inspect "xagent/backend:$PREV_TAG" >/dev/null 2>&1 || { echo "ایمیج نسخه قبلی ($PREV_TAG) موجود نیست؛ از «xagent update --ref $PREV_COMMIT --allow-downgrade» استفاده کنید."; exit 1; }
+    CUR_REV="$(dc exec -T postgres psql -U xagent -d xagent -tAc 'SELECT version_num FROM alembic_version' | tr -d '[:space:]')"
+    NEED_DB=0
+    git cat-file -e "$PREV_COMMIT" 2>/dev/null || git fetch -q origin
+    git ls-tree -r --name-only "$PREV_COMMIT" services/api/migrations/versions | grep -q "/${CUR_REV}_" || NEED_DB=1
+    echo "بازگشت به نسخه ${PREV_COMMIT:0:12} (ایمیج $PREV_TAG)."
+    if [ "$NEED_DB" = "1" ]; then
+      BACKUP="$(ls -1t "$XAGENT_HOME"/backups/db-*.dump | head -1)"
+      echo "⚠ Schema دیتابیس توسط نسخه جدید تغییر کرده است؛ دیتابیس از آخرین پشتیبان قبل از به‌روزرسانی ($BACKUP، $UPD_AT) بازیابی می‌شود."
+      echo "  داده‌های ثبت‌شده پس از به‌روزرسانی در دیتابیس جداگانه نگه داشته می‌شوند (حذف نمی‌شوند)."
+    fi
+    read -rp "ادامه؟ [y/N] " a; [ "$a" = "y" ] || exit 1
+    if [ -n "$(git status --porcelain)" ]; then git stash push --include-untracked -m "xagent-rollback-$(date +%s)" >/dev/null; fi
+    if [ "$NEED_DB" = "1" ]; then
+      S="$(date +%Y%m%d_%H%M%S)"
+      dc stop api worker
+      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "CREATE DATABASE xagent_restore_$S OWNER xagent"
+      dc exec -T postgres pg_restore --exit-on-error -U xagent -d "xagent_restore_$S" < "$BACKUP"
+      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='xagent' AND pid<>pg_backend_pid()" >/dev/null
+      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "ALTER DATABASE xagent RENAME TO xagent_after_update_$S"
+      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "ALTER DATABASE xagent_restore_$S RENAME TO xagent"
+    fi
+    git checkout -q --detach "$PREV_COMMIT"
+    sed -i "s#^XAGENT_IMAGE_TAG=.*#XAGENT_IMAGE_TAG=$PREV_TAG#" .env
+    dc up -d --remove-orphans
+    for _ in $(seq 1 40); do health >/dev/null 2>&1 && { echo "✓ نسخه قبلی فعال و سالم است."; exit 0; }; sleep 3; done
+    echo "✗ نسخه قبلی سالم نشد؛ xagent logs api"; exit 1 ;;
+  backup)
+    f="$XAGENT_HOME/backups/db-$(date +%Y%m%d-%H%M%S).dump"; mkdir -p "$XAGENT_HOME/backups"
+    dc exec -T postgres pg_dump -U xagent -d xagent -Fc > "$f" && chmod 600 "$f" && echo "✓ $f" ;;
+  restore)
+    [ -f "${2:-}" ] || { echo "مسیر فایل پشتیبان را بدهید"; exit 1; }
+    read -rp "دیتابیس فعلی با «$2» جایگزین شود؟ (نسخه فعلی با نام دیگر نگه داشته می‌شود) [y/N] " a; [ "$a" = "y" ] || exit 1
+    S="$(date +%Y%m%d_%H%M%S)"
+    dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "CREATE DATABASE xagent_restore_$S OWNER xagent"
+    dc exec -T postgres pg_restore --exit-on-error -U xagent -d "xagent_restore_$S" < "$2"
+    dc stop api worker
+    dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='xagent' AND pid<>pg_backend_pid()" >/dev/null
+    dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "ALTER DATABASE xagent RENAME TO xagent_before_restore_$S"
+    dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "ALTER DATABASE xagent_restore_$S RENAME TO xagent"
+    dc start api worker && echo "✓ بازیابی شد (دیتابیس قبلی: xagent_before_restore_$S)" ;;
   password) dc exec api xagent-entrypoint cli reset-password --username "${2:-admin}" ;;
-  desktop) case "${2:-}" in
-             on)  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=desktop/; s/^XAGENT_SANDBOX=.*/XAGENT_SANDBOX=desktop/' .env ;;
-             off) sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=/; s/^XAGENT_SANDBOX=.*/XAGENT_SANDBOX=local/' .env; dc stop desktop || true ;;
-             *) echo "xagent desktop on|off"; exit 1 ;;
-           esac; dc up -d ;;
-  *) echo "دستورها: status | logs [service] | restart [service] | update | backup | restore <file> | password [user] | desktop on|off" ;;
+  desktop)
+    need_root desktop
+    case "${2:-}" in
+      on)  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=desktop/; s/^XAGENT_SANDBOX=.*/XAGENT_SANDBOX=desktop/' .env ;;
+      off) sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=/; s/^XAGENT_SANDBOX=.*/XAGENT_SANDBOX=runner/' .env; dc stop desktop || true ;;
+      *) echo "xagent desktop on|off"; exit 1 ;;
+    esac
+    dc up -d ;;
+  *) sed -n '3,9p' "$0" ;;
 esac

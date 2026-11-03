@@ -1,10 +1,10 @@
 [Unit]
-Description=X Agent — به‌روزرسانی امن هسته از GitHub
+Description=X Agent — به‌روزرسانی امن هسته (درخواست از پنل)
 After=docker.service network-online.target
 Requires=docker.service
 
 [Service]
 Type=oneshot
 Environment=XAGENT_HOME=/opt/xagent
-ExecStart=/opt/xagent/app/infra/updater/xagent-update.sh
+ExecStart=/usr/local/lib/xagent/xagentctl update --yes
 TimeoutStartSec=3600

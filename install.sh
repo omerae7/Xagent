@@ -235,6 +235,7 @@ XAGENT_DEFAULT_TIMEZONE=$TIMEZONE
 XAGENT_COOKIE_SECURE=true
 XAGENT_REPO_URL=$REPO_URL
 XAGENT_REPO_BRANCH=$BRANCH
+XAGENT_IMAGE_TAG=${COMMIT:0:12}
 COMPOSE_PROFILES=$PROFILES
 XAGENT_SANDBOX=$SANDBOX
 XAGENT_API_WORKERS=$API_W
@@ -281,7 +282,11 @@ sed "s#/opt/xagent#$XAGENT_HOME#g" infra/updater/xagent-updater.path > /etc/syst
 sed "s#/opt/xagent#$XAGENT_HOME#g" infra/updater/xagent-updater.service > /etc/systemd/system/xagent-updater.service
 systemctl daemon-reload
 systemctl enable --now xagent-updater.path >/dev/null
-ln -sf "$APP/infra/scripts/xagentctl" /usr/local/bin/xagent
+mkdir -p /usr/local/lib/xagent
+install -m 0755 infra/scripts/xagentctl /usr/local/lib/xagent/xagentctl
+install -m 0755 infra/updater/xagent-update.sh /usr/local/lib/xagent/xagent-update
+ln -sf /usr/local/lib/xagent/xagentctl /usr/local/bin/xagent
+printf 'XAGENT_HOME=%s\n' "$XAGENT_HOME" > /etc/xagent.conf
 ok "به‌روزرسانی از پنل (تنظیمات ← سیستم) یا با دستور «xagent update»"
 
 PASS_FILE="$XAGENT_HOME/data/initial_password.txt"
