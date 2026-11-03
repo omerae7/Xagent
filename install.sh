@@ -198,15 +198,16 @@ ok "نسخه: ${COMMIT:0:10}"
 
 # ───────────── ۶. پیکربندی ─────────────
 step "ساخت پیکربندی امن (.env)"
-mkdir -p "$XAGENT_HOME"/{data/control,pgdata,redis,desktop-home,caddy/data,caddy/config,backups}
+mkdir -p "$XAGENT_HOME"/{data/control,pgdata,redis,desktop-home,runner-home,caddy/data,caddy/config,backups}
 chown -R 1001:1001 "$XAGENT_HOME/data"
-chown -R 1000:1000 "$XAGENT_HOME/desktop-home"
+chown -R 1000:1000 "$XAGENT_HOME/desktop-home" "$XAGENT_HOME/runner-home"
 ENV_FILE="$APP/.env"
 gen() { openssl rand -hex "${1:-32}"; }
 getv() { [ -f "$ENV_FILE" ] && grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2- || true; }
 SECRET="$(getv XAGENT_SECRET_KEY)"; SECRET="${SECRET:-$(gen 32)}"
 PGPASS="$(getv POSTGRES_PASSWORD)"; PGPASS="${PGPASS:-$(gen 24)}"
 DTOKEN="$(getv DESKTOP_TOKEN)"; DTOKEN="${DTOKEN:-$(gen 24)}"
+RTOKEN="$(getv RUNNER_TOKEN)"; RTOKEN="${RTOKEN:-$(gen 24)}"
 
 if [ -n "$DOMAIN" ]; then
   SITE="$DOMAIN"; TLS="${EMAIL:-admin@$DOMAIN}"; PUBLIC_URL="https://$DOMAIN"
@@ -214,7 +215,7 @@ else
   IP="$(curl -fsS --max-time 6 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
   SITE="https://$IP"; TLS="internal"; PUBLIC_URL="https://$IP"
 fi
-if [ "$DESKTOP" = "on" ]; then PROFILES="desktop"; SANDBOX="desktop"; else PROFILES=""; SANDBOX="local"; fi
+if [ "$DESKTOP" = "on" ]; then PROFILES="desktop"; SANDBOX="desktop"; else PROFILES=""; SANDBOX="runner"; fi
 
 umask 077
 cat > "$ENV_FILE" <<EOF
@@ -226,6 +227,7 @@ XAGENT_HOME=$XAGENT_HOME
 XAGENT_SECRET_KEY=$SECRET
 POSTGRES_PASSWORD=$PGPASS
 DESKTOP_TOKEN=$DTOKEN
+RUNNER_TOKEN=$RTOKEN
 XAGENT_PUBLIC_URL=$PUBLIC_URL
 XAGENT_SITE_ADDRESS=$SITE
 XAGENT_TLS=$TLS
@@ -247,6 +249,7 @@ REDIS_MEM_LIMIT=$R_ML
 API_MEM_LIMIT=$API_ML
 WORKER_MEM_LIMIT=$WK_ML
 DESKTOP_MEM_LIMIT=$DK_ML
+RUNNER_MEM_LIMIT=768m
 DESKTOP_GEOMETRY=$GEOM
 PIP_INDEX_URL=${PIP_INDEX:-https://pypi.org/simple}
 NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org}

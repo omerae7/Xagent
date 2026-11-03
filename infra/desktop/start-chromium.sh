@@ -2,6 +2,7 @@
 # Chromium با پروفایل پایدار (لاگین‌ها پس از ری‌استارت حفظ می‌شوند) و پورت CDP محلی برای Playwright
 PROFILE="$HOME/.config/xagent-chromium"
 mkdir -p "$PROFILE"
+chmod 700 "$HOME/.config" "$PROFILE" 2>/dev/null || true
 rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
 exec /usr/bin/chromium \
   --user-data-dir="$PROFILE" \

@@ -23,6 +23,7 @@ from typing import Any
 from aiohttp import web
 
 TOKEN = os.environ.get("DESKTOP_TOKEN", "")
+RUNNER_MODE = os.environ.get("RUNNER_MODE") == "1"
 DISPLAY = os.environ.get("DISPLAY", ":1")
 HOME = os.environ.get("HOME", "/home/agent")
 WORKDIR = os.path.join(HOME, "work")
@@ -237,17 +238,19 @@ async def mcp_other(_: web.Request) -> web.Response:
 
 def app() -> web.Application:
     a = web.Application(middlewares=[auth], client_max_size=32 * 1024 * 1024)
-    a.add_routes([
+    routes = [
         web.get("/health", health),
-        web.post("/exec", exec_),
-        web.post("/screenshot", screenshot),
-        web.post("/input", input_),
-        web.post("/takeover", takeover),
         web.post("/mcp/register", mcp_register),
         web.post("/mcp/{name}", mcp_post),
         web.get("/mcp/{name}", mcp_other),
         web.delete("/mcp/{name}", mcp_other),
-    ])
+    ]
+    if RUNNER_MODE:
+        routes.append(web.post("/exec", exec_))
+    else:
+        routes.extend([web.post("/screenshot", screenshot), web.post("/input", input_),
+                       web.post("/takeover", takeover)])
+    a.add_routes(routes)
     return a
 
 

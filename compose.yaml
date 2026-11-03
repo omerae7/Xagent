@@ -18,10 +18,12 @@ x-backend: &backend
     XAGENT_REDIS_URL: redis://redis:6379/0
     XAGENT_DATA_DIR: /data
     XAGENT_DESKTOP_URL: http://desktop:7000
+    XAGENT_RUNNER_URL: http://runner:7000
     XAGENT_DESKTOP_VNC_WS_VIEW: ws://desktop:6080/websockify
     XAGENT_DESKTOP_VNC_WS_CONTROL: ws://desktop:6081/websockify
     XAGENT_DESKTOP_CDP_URL: http://desktop:9222
     XAGENT_DESKTOP_TOKEN: ${DESKTOP_TOKEN}
+    XAGENT_RUNNER_TOKEN: ${RUNNER_TOKEN}
     XAGENT_SANDBOX: ${XAGENT_SANDBOX:-desktop}
     TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
   volumes:
@@ -97,10 +99,12 @@ services:
       XAGENT_REDIS_URL: redis://redis:6379/0
       XAGENT_DATA_DIR: /data
       XAGENT_DESKTOP_URL: http://desktop:7000
+      XAGENT_RUNNER_URL: http://runner:7000
       XAGENT_DESKTOP_VNC_WS_VIEW: ws://desktop:6080/websockify
       XAGENT_DESKTOP_VNC_WS_CONTROL: ws://desktop:6081/websockify
       XAGENT_DESKTOP_CDP_URL: http://desktop:9222
       XAGENT_DESKTOP_TOKEN: ${DESKTOP_TOKEN}
+      XAGENT_RUNNER_TOKEN: ${RUNNER_TOKEN}
       XAGENT_SANDBOX: ${XAGENT_SANDBOX:-desktop}
       XAGENT_API_WORKERS: ${XAGENT_API_WORKERS:-1}
       TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
@@ -116,9 +120,33 @@ services:
   worker:
     <<: *backend
     command: ["worker"]
-    networks: [internal, public]
+    networks: [internal, public, runner_link]
     mem_limit: ${WORKER_MEM_LIMIT:-1536m}
     stop_grace_period: 40s
+
+  # Untrusted tools run in this independent container, with no mounted worker/database/browser secrets.
+  runner:
+    build:
+      context: .
+      dockerfile: infra/runner/Dockerfile
+    image: xagent/runner:${XAGENT_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DESKTOP_TOKEN: ${RUNNER_TOKEN}
+      RUNNER_MODE: "1"
+      TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
+    volumes:
+      - ${XAGENT_HOME:-/opt/xagent}/runner-home:/home/agent
+    networks: [runner_link]
+    mem_limit: ${RUNNER_MEM_LIMIT:-768m}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
 
   web:
     build:
@@ -157,7 +185,7 @@ services:
       TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
     volumes:
       - ${XAGENT_HOME:-/opt/xagent}/desktop-home:/home/agent
-    shm_size: 1gb
+    shm_size: ${DESKTOP_SHM_SIZE:-512m}
     networks: [internal, public]
     mem_limit: ${DESKTOP_MEM_LIMIT:-2560m}
     healthcheck:
@@ -171,4 +199,6 @@ networks:
   internal:
     internal: true
   public:
+    driver: bridge
+  runner_link:
     driver: bridge

@@ -96,7 +96,7 @@ async def run_dream(session: AsyncSession, force: bool = False) -> DreamReport:
     report.cleanup = _cleanup_temp()
     if len(episodes) == 400:
         report.checkpoint_to = episodes[-1].ts
-        report.cleanup["checkpoint_episode_id"] = str(episodes[-1].id)
+        report.cleanup = {**report.cleanup, "checkpoint_episode_id": str(episodes[-1].id)}
 
     meaningful = [e for e in episodes if e.tools or e.status == "failed" or e.kind == "routine"]
     if len(meaningful) < cfg.min_events_for_llm and not force:

@@ -45,9 +45,7 @@ class TakeoverActive(RuntimeError):
 
 
 def _limit_resources() -> None:  # pragma: no cover - در فرایند فرزند اجرا می‌شود
-    mem = 2 * 1024**3
     try:
-        resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
         resource.setrlimit(resource.RLIMIT_NOFILE, (512, 512))
         os.setsid()
     except (ValueError, OSError):
@@ -139,6 +137,9 @@ class DesktopSandbox:
         s = get_settings()
         self.base = s.desktop_url.rstrip("/")
         self.token = s.desktop_token
+        self.runner_base = os.environ.get("XAGENT_RUNNER_URL", "http://runner:7000").rstrip("/")
+        self.runner_token = os.environ.get("XAGENT_RUNNER_TOKEN", "")
+        self._runner = httpx.AsyncClient(base_url=self.runner_base, headers={"Authorization": f"Bearer {self.runner_token}"}, timeout=httpx.Timeout(30, read=900))
         self._client = httpx.AsyncClient(
             base_url=self.base, headers={"Authorization": f"Bearer {self.token}"}, timeout=httpx.Timeout(30, read=900)
         )
@@ -158,9 +159,11 @@ class DesktopSandbox:
         self, cmd: str | list[str], cwd: str | None = None, timeout: int = 120, env: dict[str, str] | None = None
     ) -> ExecResult:
         command = cmd if isinstance(cmd, str) else shlex.join(cmd)
-        d = await self._post(
-            "/exec", {"cmd": command, "cwd": cwd, "timeout": timeout, "env": env or {}}, timeout=timeout + 15
-        )
+        response = await self._runner.post("/exec", json={
+            "cmd": command, "cwd": cwd, "timeout": timeout, "env": env or {},
+        }, timeout=timeout + 15)
+        response.raise_for_status()
+        d = response.json()
         return ExecResult(d.get("code", -1), d.get("stdout", ""), d.get("stderr", ""), d.get("timed_out", False))
 
     def tool_path(self, name: str, version: str) -> str:
@@ -173,8 +176,9 @@ class DesktopSandbox:
                 yield streams
             return
         # سرور stdio داخل کامپیوتر ایجنت اجرا و از طریق پل HTTP دیمن در دسترس است
-        await self._post("/mcp/register", {"name": name, "config": config})
-        async with _http_streams(f"{self.base}/mcp/{name}", {"Authorization": f"Bearer {self.token}"}) as streams:
+        reg = await self._runner.post("/mcp/register", json={"name": name, "config": config})
+        reg.raise_for_status()
+        async with _http_streams(f"{self.runner_base}/mcp/{name}", {"Authorization": f"Bearer {self.runner_token}"}) as streams:
             yield streams
 
     async def screenshot(self) -> bytes:
@@ -194,12 +198,30 @@ class DesktopSandbox:
             return {"ok": False, "kind": "desktop", "error": str(e)}
 
 
-_sandbox: LocalSandbox | DesktopSandbox | None = None
+class RunnerSandbox(DesktopSandbox):
+    """The same isolated tool runner, without any desktop or browser access."""
+    kind = "runner"
+
+    async def screenshot(self) -> bytes:
+        raise DesktopUnavailable("دسکتاپ روی این نصب فعال نیست.")
+
+    async def desktop_action(self, action: str, **kw: Any) -> dict[str, Any]:
+        raise DesktopUnavailable("دسکتاپ روی این نصب فعال نیست.")
+
+    async def health(self) -> dict[str, Any]:
+        try:
+            r = await self._runner.get("/health", timeout=5)
+            return r.json() | {"ok": r.status_code == 200, "kind": "runner"}
+        except httpx.HTTPError as e:
+            return {"ok": False, "kind": "runner", "error": str(e)}
+
+
+_sandbox: LocalSandbox | DesktopSandbox | RunnerSandbox | None = None
 
 
 def get_sandbox() -> LocalSandbox | DesktopSandbox:
     global _sandbox
     if _sandbox is None:
         mode = os.environ.get("XAGENT_SANDBOX", "desktop")
-        _sandbox = LocalSandbox() if mode == "local" else DesktopSandbox()
+        _sandbox = LocalSandbox() if mode == "local" else (RunnerSandbox() if mode == "runner" else DesktopSandbox())
     return _sandbox
