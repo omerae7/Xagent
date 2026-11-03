@@ -83,7 +83,9 @@ def test_loop_controller_escalates_then_aborts():
 
 
 def test_regression_detection():
-    assert is_regression({"avg_tokens": 1000, "fail_rate": 0.0}, {"runs": 2, "failures": 0, "tokens": 4000})
+    assert is_regression({"avg_tokens": 1000, "fail_rate": 0.0}, {"runs": 2, "failures": 0, "tokens": 4000}) is None
+    assert is_regression({"avg_tokens": 1000, "fail_rate": 0.0, "comparison_scope": "routine"},
+                         {"runs": 2, "failures": 0, "tokens": 4000})
     assert is_regression({"fail_rate": 0.0}, {"runs": 2, "failures": 2, "tokens": 10})
     assert is_regression({"avg_tokens": 1000, "fail_rate": 0.0}, {"runs": 3, "failures": 0, "tokens": 3000}) is None
 

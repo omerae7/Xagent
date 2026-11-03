@@ -238,15 +238,15 @@ async def mcp_other(_: web.Request) -> web.Response:
 
 def app() -> web.Application:
     a = web.Application(middlewares=[auth], client_max_size=32 * 1024 * 1024)
-    routes = [
-        web.get("/health", health),
-        web.post("/mcp/register", mcp_register),
-        web.post("/mcp/{name}", mcp_post),
-        web.get("/mcp/{name}", mcp_other),
-        web.delete("/mcp/{name}", mcp_other),
-    ]
+    routes = [web.get("/health", health)]
     if RUNNER_MODE:
-        routes.append(web.post("/exec", exec_))
+        routes.extend([
+            web.post("/exec", exec_),
+            web.post("/mcp/register", mcp_register),
+            web.post("/mcp/{name}", mcp_post),
+            web.get("/mcp/{name}", mcp_other),
+            web.delete("/mcp/{name}", mcp_other),
+        ])
     else:
         routes.extend([web.post("/screenshot", screenshot), web.post("/input", input_),
                        web.post("/takeover", takeover)])

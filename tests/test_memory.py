@@ -76,8 +76,7 @@ async def test_experience_probation_auto_rollback(database):
         assert good and good[0].id == exp.id
         # صرف افزایش توکن یک کار سنگین‌تر نباید باعث پاک‌شدن یادگیری شود.
         assert await observe_probation(s, [rev_id], success=True, tokens=5000, probation_runs=3) == []
-        assert await observe_probation(s, [rev_id], success=False, tokens=5000, probation_runs=3) == []
-        # دو شکست از سه اجرا به‌اندازه کافی نشانه پسرفت است.
+        # با baseline خطای صفر، اولین شکست پس از دو اجرا از آستانه نرخ شکست می‌گذرد.
         purged = await observe_probation(s, [rev_id], success=False, tokens=5000, probation_runs=3)
         assert purged == [str(rev_id)]
         e = await s.get(Experience, exp.id)
