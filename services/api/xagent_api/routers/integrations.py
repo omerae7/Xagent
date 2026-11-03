@@ -224,7 +224,11 @@ class TakeoverIn(BaseModel):
 
 @router.get("/desktop/status")
 async def desktop_status(_: User = Depends(current_user)):
-    health = await get_sandbox().health()
+    sandbox = get_sandbox()
+    # In lite deployments tools use an isolated runner, but there is no desktop.
+    if sandbox.kind == "runner":
+        return {"health": {"ok": False, "kind": "disabled", "message": "دسکتاپ در پروفایل Lite غیرفعال است"}, "takeover": False}
+    health = await sandbox.health()
     return {"health": health, "takeover": await bus.is_takeover()}
 
 

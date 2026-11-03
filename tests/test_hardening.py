@@ -1,8 +1,4 @@
 """Regression coverage for current-message de-duplication and isolated runner configuration."""
-import uuid
-
-import pytest
-
 from xagent_core.db import session_scope
 from xagent_core.models import Conversation, Message, Run
 from xagent_memory.working import load_window
