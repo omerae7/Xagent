@@ -331,7 +331,7 @@ export function Composer({
         </label>
         <textarea ref={taRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
-          placeholder="از ایجنت بپرس یا کاری بسپار…  (Enter ارسال، Shift+Enter خط جدید)"
+          placeholder="از ایجنت بپرس یا کاری بسپار…"
           className="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[14px] leading-6 outline-none placeholder:text-muted/80" />
         <button onClick={toggleRecord} title="ضبط صدا و تبدیل به متن"
           className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-2xl transition", recording ? "animate-pulse bg-danger/15 text-danger" : "text-muted hover:bg-line/10 hover:text-ink")}>

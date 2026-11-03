@@ -167,7 +167,7 @@ export default function Chat() {
   const thinkingVariant = (steps.length % 4) as 0 | 1 | 2 | 3;
 
   return (
-    <div className="grid h-[calc(100dvh-8.5rem)] gap-4 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[290px_1fr]">
+    <div className="grid h-[calc(100dvh-11.75rem)] gap-4 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[290px_1fr]">
       <aside className="glass hidden overflow-hidden rounded-card lg:block"><ConversationList activeId={id} onPick={() => undefined} /></aside>
       <Drawer open={listOpen} onClose={() => setListOpen(false)} title="گفتگوها"><ConversationList activeId={id} onPick={() => setListOpen(false)} /></Drawer>
 
@@ -177,11 +177,11 @@ export default function Chat() {
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setListOpen(true)} aria-label="فهرست گفتگوها"><PanelRightOpen className="h-5 w-5" /></Button>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold">{data?.conversation?.title || "گفتگوی جدید"}</div>
-            {busy && <div className="text-[11px] text-primary">در حال کار روی درخواست شما…</div>}
+            {busy && <div className="truncate text-[11px] text-primary">در حال کار…</div>}
           </div>
           <div className="flex items-center gap-1.5">
             <Cpu className="hidden h-4 w-4 text-muted sm:block" />
-            <Select value={model} onChange={(e) => changeModel(e.target.value)} className="h-9 w-40 text-xs sm:w-52" aria-label="انتخاب مدل">
+            <Select value={model} onChange={(e) => changeModel(e.target.value)} className="h-9 w-32 text-xs sm:w-52" aria-label="انتخاب مدل">
               <option value="auto">✨ هوشمند (Smart Auto)</option>
               {(models.data?.items || []).filter((m: any) => m.capabilities?.tools !== false).map((m: any) => (
                 <option key={m.id} value={m.id}>{m.label} — {m.provider}</option>
@@ -189,7 +189,7 @@ export default function Chat() {
             </Select>
             {id && (
               <>
-                <Button variant="ghost" size="icon" title="سنجاق" onClick={async () => { await patch(`/api/conversations/${id}`, { pinned: !data?.conversation?.pinned }); qc.invalidateQueries({ queryKey: ["conversations"] }); qc.invalidateQueries({ queryKey: ["messages", id] }); }}>
+                <Button variant="ghost" size="icon" className="hidden sm:inline-flex" title="سنجاق" onClick={async () => { await patch(`/api/conversations/${id}`, { pinned: !data?.conversation?.pinned }); qc.invalidateQueries({ queryKey: ["conversations"] }); qc.invalidateQueries({ queryKey: ["messages", id] }); }}>
                   <Pin className={cn("h-4 w-4", data?.conversation?.pinned && "fill-primary text-primary")} />
                 </Button>
                 <Button variant="ghost" size="icon" className="hidden sm:inline-flex" title="بایگانی" onClick={async () => { await patch(`/api/conversations/${id}`, { archived: true }); qc.invalidateQueries({ queryKey: ["conversations"] }); nav("/chat"); }}>
@@ -251,8 +251,8 @@ export default function Chat() {
 
         <div className="border-t hairline p-3 sm:p-4">
           <Composer onSend={async (t, a) => { try { await send(t, a); } catch (e) { toastError(e); throw e; } }} busy={busy} onStop={cancel} conversationId={id} onVoice={() => setVoice(true)} />
-          <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[10px] text-muted">
-            <Bot className="h-3 w-3" /> فرمان‌های سریع بدون توکن: «وضعیت»، «توقف همه»، «ادامه همه»، «آندو»
+          <p className="mt-2 hidden items-center justify-center gap-1.5 text-center text-[10px] text-muted sm:flex">
+            <Bot className="h-3 w-3" /> Enter ارسال · Shift+Enter خط جدید · فرمان‌های سریع بدون توکن: «وضعیت»، «توقف همه»، «ادامه همه»، «آندو»
           </p>
         </div>
       </section>
