@@ -265,6 +265,19 @@ ok "Schema دیتابیس: $CUR_REV"
 # ───────────── ۱۱. تثبیت ─────────────
 step "تثبیت نسخه"
 git checkout -q -B "$BRANCH" "$TARGET" 2>/dev/null || git checkout -q --detach "$TARGET"
+if [ -n "${PATCH:-}" ]; then
+  # فایل‌های ردیابی‌نشده اپراتور اگر با نسخه جدید تداخل ندارند برگردانده می‌شوند؛
+  # تغییرات فایل‌های برنامه در stash/patch می‌مانند تا با کد جدید تداخل نکنند.
+  SREF="$(git stash list --format='%gd %s' | awk -v m="xagent-update-$STAMP" '$0 ~ m {print $1; exit}')"
+  if [ -n "$SREF" ] && git rev-parse -q --verify "$SREF^3" >/dev/null; then
+    git ls-tree -r -z --name-only "$SREF^3" | while IFS= read -r -d '' f; do
+      if [ ! -e "$f" ] && ! git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        mkdir -p "$(dirname "$f")" && git show "$SREF^3:$f" > "$f" && echo "  ↩ بازگردانده شد: $f"
+      fi
+    done
+  fi
+  warn "تغییرات فایل‌های برنامه در $PATCH مانده‌اند (اعمال دستی: git -C $APP stash apply \"stash^{/xagent-update-$STAMP}\")"
+fi
 cleanup_worktree
 WT=""
 dc_app up -d --remove-orphans >/dev/null 2>&1  # پروژه دوباره از پوشه اصلی مدیریت می‌شود (بدون ساخت مجدد)
