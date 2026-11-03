@@ -43,6 +43,8 @@ jobs:
         run: python -m compileall -q packages services infra/desktop/agentd.py tests
       - name: Shell syntax
         run: bash -n install.sh infra/updater/xagent-update.sh infra/docker/entrypoint.sh infra/desktop/start-chromium.sh
+      - name: Verify update-script permissions
+        run: test -x infra/updater/xagent-update.sh && test -x infra/scripts/xagentctl
       - name: Lint
         run: ruff check packages services tests
       - name: Pytest with live PostgreSQL and Redis
