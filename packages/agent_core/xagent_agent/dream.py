@@ -138,7 +138,7 @@ async def run_dream(session: AsyncSession, force: bool = False,
         res = await call_llm(
             session, chain, purpose="dream", system_stable="", system_dynamic="",
             messages=[LLMMessage("user", prompts.DREAM_PROMPT.format(events="\n".join(lines), skills=skills_text))],
-            max_tokens=2500, json_mode=True, effort="medium",
+            max_tokens=2500, json_mode=True, effort="medium", origin_id=str(report.id),
         )
     except (ProviderError, NoModelError) as e:
         report.status = "failed"
