@@ -54,29 +54,19 @@ def upgrade() -> None:
     )
     for col in ("created_at", "op", "run_id", "status", "host_job"):
         op.create_index(op.f(f"ix_host_ops_{col}"), "host_ops", [col], unique=False)
-    # Restore scoped private rows held in shadow tables by a previous downgrade.
-    # Their complete values (including original scope and embeddings) survive
-    # a return to the older application, which cannot see these archive tables.
+    # Restore archived private records after upgrading back from 0002.
+    # This migration runs in a transaction; archive is dropped only after insert.
     for table in ("semantic_facts", "episodes", "experiences"):
         archive = f"xagent_private_{table}_archive"
-        op.execute(sa.text(f"""
-        DO $
-        DECLARE cols text;
-        BEGIN
-          IF to_regclass('public.{archive}') IS NOT NULL THEN
-            SELECT string_agg(quote_ident(a.column_name), ', ' ORDER BY a.ordinal_position)
-              INTO cols FROM information_schema.columns a
-              WHERE a.table_schema = current_schema() AND a.table_name = '{table}'
-                AND a.is_generated = 'NEVER'
-                AND EXISTS (
-                  SELECT 1 FROM information_schema.columns b
-                  WHERE b.table_schema = current_schema()
-                    AND b.table_name = '{archive}' AND b.column_name = a.column_name);
-            EXECUTE format('INSERT INTO {table} (%s) SELECT %s FROM {archive}', cols, cols);
-            DROP TABLE {archive};
-          END IF;
-        END $;
-        """))
+        conn = op.get_bind()
+        exists = conn.execute(sa.text("SELECT to_regclass(:archive)"), {"archive": f"public.{archive}"}).scalar()
+        if exists is None:
+            continue
+        names = [col["name"] for col in sa.inspect(conn).get_columns(table) if not col.get("computed")]
+        quote = conn.dialect.identifier_preparer.quote
+        cols = ", ".join(quote(name) for name in names)
+        op.execute(sa.text(f"INSERT INTO {table} ({cols}) SELECT {cols} FROM {archive}"))
+        op.execute(sa.text(f"DROP TABLE {archive}"))
 
 
 def downgrade() -> None:
