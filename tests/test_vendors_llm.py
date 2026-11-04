@@ -6,9 +6,9 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from fake_vendors import Vendors, start
 from sqlalchemy import select
 
-from fake_vendors import Vendors, start
 from xagent_agent.control.capabilities import DiscoveryError, list_provider_models, sync_provider
 from xagent_agent.llm import call_llm
 from xagent_agent.providers.base import ChatRequest, LLMMessage, ProviderError, ToolSpec
