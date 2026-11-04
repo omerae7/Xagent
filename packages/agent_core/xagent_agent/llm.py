@@ -45,6 +45,7 @@ async def call_llm(
     json_mode: bool = False,
     effort: str | None = None,
     run_id: uuid.UUID | None = None,
+    origin_id: str | None = None,
 ) -> CallResult:
     if not chain:
         raise NoModelError(
@@ -77,7 +78,7 @@ async def call_llm(
         # Each attempt is committed before sending. The independent ledger outlives
         # agent rollback; retries and fallback are separately billed/reserved.
         for attempt in range(1 if purpose == "dream" else 3):
-            attempt_id = await begin_attempt(model, req, purpose=purpose, run_id=run_id)
+            attempt_id = await begin_attempt(model, req, purpose=purpose, run_id=run_id, origin_id=origin_id)
             try:
                 resp = await model.provider.chat(req)
             except ProviderError as e:
