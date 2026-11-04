@@ -4,7 +4,7 @@ import { Activity, CheckCircle2, Coins, Cpu, Gauge as GaugeIcon, Layers, Timer, 
 import { useState } from "react";
 import { Badge, Card, CardHeader, ErrorBox, PageHeader, Segmented, Skeleton } from "../components/ui";
 import { AreaChart, CHART, Donut, Gauge, Meter } from "../components/viz/charts";
-import { get } from "../lib/api";
+import { api, get } from "../lib/api";
 import { compact, faInt, faNum, fmtDate, fmtTime, toFaDigits, usd } from "../lib/format";
 import { useLiveMetrics } from "../lib/live";
 
@@ -16,10 +16,29 @@ const RUN_ST: Record<string, [string, any]> = { succeeded: ["موفق", "success
 
 export default function Usage() {
   const [days, setDays] = useState<"7" | "30" | "90">("30");
+  const [external, setExternal] = useState<any | null>(null);
+  const [csvError, setCsvError] = useState("");
+  const [csvBusy, setCsvBusy] = useState(false);
+  const uploadCSV = async (file: File) => {
+    setCsvBusy(true);
+    setCsvError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      setExternal(await api("/api/usage/reconcile", { form }));
+    } catch (e: any) {
+      setCsvError(e instanceof Error ? e.message : "خطای مقایسه مصرف");
+    } finally {
+      setCsvBusy(false);
+    }
+  };
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ["usage", days], queryFn: () => get(`/api/usage?days=${days}`) });
   const sys = useQuery({ queryKey: ["metrics"], queryFn: () => get("/api/system/metrics?hours=24"), refetchInterval: 60000 });
   const live = useLiveMetrics(sys.data?.series || [], 300);
   const totals = (data?.daily || []).reduce((a: any, d: any) => ({ in: a.in + d.tokens_in, out: a.out + d.tokens_out, cache: a.cache + d.cache_read, cost: a.cost + d.cost, calls: a.calls + d.calls }), { in: 0, out: 0, cache: 0, cost: 0, calls: 0 });
+  const ledger = data?.ledger || {};
+  const unknown = (ledger.statuses || []).filter((s: any) => s.status === "unknown" || s.status === "pending");
+  const outstanding = unknown.reduce((sum: number, s: any) => sum + (s.reserved_cost || 0), 0);
   const runsTotal = (data?.runs || []).reduce((a: number, r: any) => a + r.count, 0);
   const avgSec = (data?.runs || []).find((r: any) => r.status === "succeeded")?.avg_seconds;
   const cur = sys.data?.current || {};
@@ -57,6 +76,94 @@ export default function Usage() {
           </motion.div>
         ))}
       </div>
+
+      <Card className="mt-4">
+        <CardHeader title="دفتر حسابداری مصرف API" icon={<Coins className="h-4 w-4" />}
+          sub="هر درخواست، حتی خطا و پاسخ نامشخص؛ زیرمجموعه کش/استدلال دوبار شمرده نمی‌شود" />
+        <div className="space-y-4 p-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {(ledger.statuses || []).map((s: any) => (
+              <div className="rounded-lg border hairline p-3" key={s.status}>
+                <div className="text-xs text-muted">{({ confirmed: "مصرف تأییدشده", unknown: "مصرف نامشخص", pending: "در انتظار پاسخ",
+                  rejected: "درخواست ردشده", legacy: "قدیمی و تأییدنشده" } as Record<string, string>)[s.status] || s.status}</div>
+                <div className="num mt-1 text-xl font-bold">{faInt(s.calls)} درخواست</div>
+                <div className="mt-1 text-xs text-muted">{compact((s.tokens_in || 0) + (s.tokens_out || 0))} توکن گزارش‌شده</div>
+                <div className="mt-1 text-xs text-muted">هزینه: {usd(s.cost)} · رزرو/نامشخص: {usd(s.reserved_cost)}</div>
+              </div>
+            ))}
+          </div>
+          {unknown.length > 0 && (
+            <p className="text-sm text-warning">هشدار: {faInt(unknown.reduce((n: number, s: any) => n + s.calls, 0))}
+              درخواست بدون مصرف قطعی؛ حداقل {usd(outstanding)} بودجه برای بررسی محفوظ است.
+              صفر بودن توکن در این وضعیت به معنی رایگان بودن نیست.</p>
+          )}
+          <div className="flex flex-wrap gap-3 text-xs text-muted">
+            <span>توکن استدلال (زیرمجموعه خروجی): {compact(ledger.subsets?.reasoning_tokens || 0)}</span>
+            <span>توکن صوت ورودی: {compact(ledger.subsets?.audio_input_tokens || 0)}</span>
+            <span>توکن صوت خروجی: {compact(ledger.subsets?.audio_output_tokens || 0)}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-xs">
+              <thead><tr className="text-muted">{["منشأ", "تعداد", "ورودی", "خروجی", "کش خوانده", "کش نوشته", "هزینه", "بودجه محفوظ"].map(h =>
+                <th key={h} className="px-2 py-2 text-start">{h}</th>)}</tr></thead>
+              <tbody>{(ledger.purposes || []).map((p: any) => (
+                <tr key={p.purpose} className="border-t hairline">
+                  <td className="px-2 py-2">{PURPOSE[p.purpose] || p.purpose}</td>
+                  <td className="num px-2 py-2">{faInt(p.calls)}</td>
+                  <td className="num px-2 py-2">{compact(p.tokens_in)}</td>
+                  <td className="num px-2 py-2">{compact(p.tokens_out)}</td>
+                  <td className="num px-2 py-2">{compact(p.cache_read)}</td>
+                  <td className="num px-2 py-2">{compact(p.cache_write)}</td>
+                  <td className="num px-2 py-2">{usd(p.cost)}</td>
+                  <td className="num px-2 py-2">{usd(p.reserved_cost)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-semibold">تطبیق با گزارش رسمی OpenAI</p>
+            <p className="mb-2 text-xs text-muted">فایل CSV دقیقه‌ای OpenAI Usage را وارد کن. نتیجه تجمیعی است و به‌تنهایی اثبات نمی‌کند درخواست از کدام برنامه ارسال شده.</p>
+            <input aria-label="انتخاب CSV مصرف OpenAI" type="file" accept=".csv,text/csv"
+              disabled={csvBusy} onChange={e => { const file = e.currentTarget.files?.[0]; if (file) void uploadCSV(file); }}
+              className="w-full max-w-md text-xs" />
+            {csvBusy && <p className="mt-2 text-xs text-muted">در حال تطبیق...</p>}
+            {csvError && <p className="mt-2 text-xs text-danger">{csvError}</p>}
+            {external && (
+              <div className="mt-3 overflow-x-auto">
+                <p className="mb-2 text-xs text-muted">از {external.from_utc} تا {external.to_utc} (UTC) · {faInt(external.external_key_count)} شناسه کلید</p>
+                <table className="w-full min-w-[580px] text-xs">
+                  <thead><tr className="text-muted">{["مدل", "مصرف رسمی ورودی", "داخلی ورودی", "اختلاف ورودی", "اختلاف خروجی"].map(h =>
+                    <th key={h} className="px-2 py-2 text-start">{h}</th>)}</tr></thead>
+                  <tbody>{(external.by_model || []).map((m: any) => (
+                    <tr key={m.model} className="border-t hairline">
+                      <td className="px-2 py-2">{m.model}</td>
+                      <td className="num px-2 py-2">{compact(m.official.input || 0)}</td>
+                      <td className="num px-2 py-2">{compact(m.local_confirmed.input || 0)}</td>
+                      <td className="num px-2 py-2">{compact(m.delta_input)}</td>
+                      <td className="num px-2 py-2">{compact(m.delta_output)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+                <p className="mt-2 text-xs text-muted">{external.notice}</p>
+              </div>
+            )}
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-semibold">آخرین فراخوانی‌های ثبت‌شده</p>
+            <div className="max-h-72 overflow-auto">
+              {(ledger.recent || []).map((a: any, index: number) => (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t hairline py-2 text-xs" key={a.request_id || index}>
+                  <span className="text-muted">{fmtTime(a.at)}</span>
+                  <span>{a.model} · {a.purpose}</span>
+                  <Badge tone={a.status === "confirmed" ? "success" : a.status === "unknown" ? "warning" : "neutral"}>{a.status}</Badge>
+                  <span className="num">{compact((a.tokens_in || 0) + (a.tokens_out || 0))} توکن · {usd(a.cost)}</span>
+                </div>
+              ))}
+              {(!ledger.recent || ledger.recent.length === 0) && <p className="text-xs text-muted">هنوز رویدادی ثبت نشده است.</p>}
+            </div>
+          </div>
+        </div>
+      </Card>
 
       <div className="mt-5 grid gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
