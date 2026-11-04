@@ -116,7 +116,7 @@ class AnthropicProvider:
             system.append({"type": "text", "text": req.system_dynamic})
         params: dict[str, Any] = {
             "model": req.model,
-            "max_tokens": max(req.max_tokens, 2048),
+            "max_tokens": max(1, req.max_tokens),
             "messages": self._convert(req.messages),
         }
         if system:
