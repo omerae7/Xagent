@@ -48,6 +48,7 @@ class MockLLM:
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.scenarios: dict[str, list[tuple[str, dict]]] = {}
+        self.handlers: list = []
         self.port = _free_port()
 
     @property
@@ -79,6 +80,12 @@ class MockLLM:
                 "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 25,
                           "prompt_tokens_details": {"cached_tokens": prompt_tokens // 2}},
             }
+
+        # سناریوهای اختصاصی هر تست: (نام ابزار، آرگومان) یا متن پاسخ
+        for handler in list(self.handlers):
+            out = handler(body)
+            if out is not None:
+                return reply(None, out) if isinstance(out, tuple) else reply(out)
 
         # آزمون عملی قابلیت‌ها (probe)
         if "report_status" in tools:
