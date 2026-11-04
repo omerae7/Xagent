@@ -383,6 +383,16 @@ async def reconcile_usage_csv(file: UploadFile = File(...), _: User = Depends(ow
             bucket["input"] += value(row, "input_tokens")
             bucket["output"] += value(row, "output_tokens")
             bucket["cached"] += value(row, "input_cached_tokens")
+            # Detailed official token categories are subsets of input/output.
+            # Preserve them separately; never add them to the overall total.
+            for category in (
+                "input_uncached_tokens", "input_text_tokens", "output_text_tokens",
+                "input_cached_text_tokens", "input_audio_tokens", "input_cached_audio_tokens",
+                "output_audio_tokens", "input_image_tokens", "input_cached_image_tokens",
+                "output_image_tokens", "input_cache_write_tokens",
+                "input_cache_write_30m_tokens", "input_cache_write_12h_tokens",
+            ):
+                bucket[category] = bucket.get(category, 0) + value(row, category)
             hour = at.strftime("%Y-%m-%dT%H:00Z")
             hourly[hour] = hourly.get(hour, 0) + value(row, "num_model_requests")
             if row.get("api_key_id"):
@@ -410,6 +420,8 @@ async def reconcile_usage_csv(file: UploadFile = File(...), _: User = Depends(ow
         "by_model": [
             {"model": name, "official": sums.get(name, {}),
              "local_confirmed": by_model.get(name, {}),
+             "delta_requests": sums.get(name, {}).get("requests", 0) - by_model.get(name, {}).get("requests", 0),
+             "delta_cached": sums.get(name, {}).get("cached", 0) - by_model.get(name, {}).get("cached", 0),
              "delta_input": sums.get(name, {}).get("input", 0) - by_model.get(name, {}).get("input", 0),
              "delta_output": sums.get(name, {}).get("output", 0) - by_model.get(name, {}).get("output", 0)}
             for name in models
