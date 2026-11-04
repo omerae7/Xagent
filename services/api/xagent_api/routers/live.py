@@ -324,6 +324,8 @@ async def usage(days: int = Query(30, le=365), _: User = Depends(current_user),
                         "cache_write": row.cache_write, "cost": float(row.cost_usd),
                         "reserved_cost": float(row.reserved_cost_usd),
                         "reported": (row.usage_details or {}).get("reported"),
+                        "provider_id": (row.usage_details or {}).get("provider_id"),
+                        "origin_id": (row.usage_details or {}).get("origin_id"),
                         "non_token_units": (row.usage_details or {}).get("non_token_units")}
                        for row in latest_attempts],
         },
