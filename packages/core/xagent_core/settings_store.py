@@ -75,11 +75,15 @@ class RoutineSafetySettings(BaseModel):
 
 
 class DreamSettings(BaseModel):
-    enabled: bool = True
-    hour: int = 3
-    minute: int = 30
-    max_cost_usd: float = 0.3
-    min_events_for_llm: int = 3
+    # Paid background activity is opt-in; migration 0004 disables prior schedules.
+    enabled: bool = False
+    hour: int = Field(3, ge=0, le=23)
+    minute: int = Field(30, ge=0, le=59)
+    max_cost_usd: float = Field(0.3, gt=0)
+    max_tokens: int = Field(12_000, ge=1000, le=100_000)
+    max_calls: int = Field(2, ge=1, le=5)
+    max_runtime_seconds: int = Field(300, ge=30, le=1800)
+    min_events_for_llm: int = Field(3, ge=1, le=1000)
     probation_runs: int = 3
     regression_token_ratio: float = 1.3  # افزایش ۳۰٪ توکن = پسرفت
 
