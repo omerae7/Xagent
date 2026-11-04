@@ -109,6 +109,11 @@ async def test_dream_post_llm_error_keeps_usage_and_slot(configured_model, mock_
         await set_setting(session, "dream", prior.model_copy(update={
             "enabled": True, "hour": 0, "minute": 0, "min_events_for_llm": 3,
         }))
+        # Isolate this post-response crash test from accumulated suite history.
+        # Otherwise extra regression episodes can exhaust the real preflight token
+        # limit before the mocked paid response, never reaching the fault injection.
+        session.add(DreamReport(status="done", checkpoint_to=utcnow()))
+        await session.flush()
         for _ in range(3):
             session.add(Episode(kind="routine", title=f"Dream regression {uuid.uuid4()}",
                                 summary="Meaningful verified task", tools=["file_read"],

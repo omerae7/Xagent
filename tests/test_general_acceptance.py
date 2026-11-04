@@ -365,11 +365,13 @@ async def test_I_manager_delegates_and_reports_from_evidence(app_client, configu
     finally:
         for h in (hm, employees):
             mock_llm.handlers.remove(h)
-    assert run.status == "succeeded", run.error
+    # Both employees fabricated sales figures without retrieving any data. Those
+    # scripted reports must not count as evidence of completed delegated work.
+    assert run.status == "failed" and run.stop_reason == "validation"
     async with session_scope() as s:
         kids = (await s.execute(select(Run).where(Run.parent_run_id == run.id).order_by(Run.created_at))).scalars().all()
-    assert len(kids) == 2 and all(k.status == "succeeded" for k in kids)
-    assert "۱۲۰" in run.result and "۲۰٪" in run.result, "گزارش نهایی از شواهد مراحل ساخته نشد"
+    assert len(kids) == 2 and all(k.status == "failed" for k in kids)
+    assert "۱۲۰" not in run.result and "۲۰٪" not in run.result
     assert float(run.cost_usd) >= sum(float(k.cost_usd) for k in kids), "هزینه کارمندان به مأموریت والد منتسب نشد"
 
 

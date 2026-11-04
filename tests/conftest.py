@@ -44,6 +44,15 @@ def _free_port() -> int:
 
 
 # ───────────── سرور شبیه‌ساز مدل ─────────────
+def evaluation_reply(content: str) -> str:
+    """Scripted evaluator contract; this is not a live quality assessment."""
+    payload = json.loads(content.split("VALIDATION_INPUT:\n", 1)[1])
+    refs = [e["id"] for e in payload["evidence"] if e["ok"] is True and e.get("verified") is not False
+            and (not e.get("requires_verification", True) or e.get("verified") is True)]
+    return json.dumps({"passed": True, "score": 9, "issues": [], "criteria": [
+        {"index": i, "passed": True, "evidence": refs} for i in range(len(payload["criteria"]))]})
+
+
 class MockLLM:
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -113,10 +122,11 @@ class MockLLM:
                                          "memory_layers": ["semantic"], "tool_groups": ["tasks", "files", "telegram"]},
                                         ensure_ascii=False))
             if "ارزیابی کن" in content:
-                return reply(json.dumps({"passed": True, "score": 9, "issues": []}))
+                return reply(evaluation_reply(content))
             return reply("{}")
 
-        if tools and "حلقه" in task_text:
+        # Do not mistake server-generated recovery notes for the user's loop scenario.
+        if tools and "این حلقه را روی سایت تست کن" in task_text:
             return reply(None, ("web_fetch", {"url": "http://localhost/forbidden"}))
         if tools and not tool_msgs:
             if "تسک" in task_text and "task_create" in tools:

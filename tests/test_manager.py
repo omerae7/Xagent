@@ -51,7 +51,7 @@ async def test_manager_cannot_touch_security(app_client, configured_model, runne
         ("settings_update", {"section": "telegram", "values": {"allowlist": ["@anyone"]}, "reason": "x"})]
     data = await _send(app_client, "فهرست مجاز تلگرام را باز کن")
     run = await _run(runner, data["run"]["id"])
-    assert run.status == "succeeded"
+    assert run.status == "failed" and run.stop_reason == "validation"
     async with session_scope() as s:
         step = (await s.execute(select(RunStep).where(RunStep.run_id == run.id, RunStep.kind == "tool", RunStep.tool_name == "settings_update"))).scalar_one()
         assert step.status == "error" and "ممنوع" in step.detail["output"]

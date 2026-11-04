@@ -55,6 +55,13 @@ from .model_select import select_models
 from .providers.base import ImagePart, LLMMessage, ProviderError, ToolSpec
 from .providers.registry import BoundModel
 from .stoploss import LoopController, StopLossEnforcer
+from .validation import (
+    checked_result,
+    evaluation_verdict,
+    evidence_issues,
+    execution_required,
+    requires_verification,
+)
 
 TOOL_TIMEOUT = 300
 FALLBACK_FROM = {"http_request", "web_fetch"}
@@ -67,6 +74,10 @@ class LoopAbort(Exception):
 
 class WatchFailed(Exception):
     """پیش‌بررسی قطعی یا مجوز مأموریت اجازه ادامه نمی‌دهد (بدون فراخوانی مدل)."""
+
+
+class ValidationFailed(Exception):
+    """The answer did not establish completion; never settle it as succeeded."""
 
 
 class Paused(Exception):
@@ -317,6 +328,14 @@ class AgentRunner:
         await session.commit()
         try:
             answer = await self._pipeline(rc)
+            # Only explicit deterministic command/no-change paths may bypass model
+            # validation. Any other early return must not settle executable work.
+            command = rc.trusted and (rc.state.get("route") or {}).get("path") == "command"
+            watch = rc.state.get("watch") or {}
+            no_change = run.outcome == "no_change" and watch.get("events") == 0 and not watch.get("error")
+            if not command and not no_change and (rc.state.get("validation") or {}).get("passed") is not True:
+                rc.state["validation"] = {"passed": False, "issues": ["تکمیل درخواست اعتبارسنجی نشده است"]}
+                raise ValidationFailed("تکمیل درخواست اعتبارسنجی نشده است")
             await self._finalize(rc, "succeeded", answer)
         except Paused as p:
             rc.state["step_idx"] = rc.step_idx
@@ -334,6 +353,10 @@ class AgentRunner:
                              link=f"/chat/{run.conversation_id}" if run.conversation_id else "/tasks")
             await self._checkpoint(rc)
             return run.status
+        except ValidationFailed as e:
+            await self._finalize(rc, "failed", "⚠️ تکمیل درخواست تأیید نشد. ممکن است بخشی از عملیات انجام شده باشد؛ "
+                                 "بدون بررسی نتیجه، اقدامات را تکرار نکنید.\n" + str(e),
+                                 error=str(e), stop_reason="validation")
         except WatchFailed as e:
             rc.run.outcome = "error"
             await self._finalize(rc, "failed", f"⚠️ {e}", error=str(e), stop_reason="precheck")
@@ -380,6 +403,8 @@ class AgentRunner:
                     s["phase"] = "done"
                     return f"NO_CHANGE — {res.summary}"
                 s["watch_events"] = len(res.events)
+                self._record_evidence(rc, "watch_precheck", "watch_precheck", {"routine_id": str(routine.id)},
+                                      ToolResult(True, res.summary, verified=True), False)
                 src = routine.watch.get("source")
                 key = "new_messages" if src == "telegram" else ("events" if src == "inbox" else "changes")
                 s["event_payload"] = {"source": routine.watch.get("source"), key: res.events}
@@ -436,8 +461,8 @@ class AgentRunner:
             await self._step(rc, "goal", f"هدف: {truncate(goal.get('goal', ''), 120)}", detail=goal)
             amb = (goal.get("ambiguity") or "").strip()
             if amb and complex_task and run.trigger in ("chat", "voice", "telegram") and len(amb) > 5:
-                s["phase"] = "done"
-                return f"🤔 قبل از شروع یک نکته را روشن کنید:\n{amb}"
+                s["phase"] = "clarification"
+                raise Paused("paused", f"قبل از شروع یک نکته را روشن کنید:\n{amb}", "clarification")
             await self._checkpoint(rc)
 
         # ── ۳) برنامه‌ریزی + انتخاب ابزار و لایه‌های حافظه ──
@@ -653,15 +678,17 @@ class AgentRunner:
                 s["transcript"] = [m.to_json() for m in transcript]
                 await self._checkpoint(rc)
                 continue
-            final_text = r.text.strip() or "(پاسخی تولید نشد)"
+            final_text = r.text.strip()
             transcript.append(LLMMessage("assistant", final_text, raw=r.raw))
             s["transcript"] = [m.to_json() for m in transcript]
 
             # ── ۸) اعتبارسنجی ──
             verdict = await self._validate(rc, final_text, complex_task)
-            if verdict.get("passed", True) or s.get("recoveries", 0) >= 1:
-                s["validation"] = verdict
+            s["validation"] = verdict
+            if verdict.get("passed") is True:
                 break
+            if s.get("recoveries", 0) >= 1:
+                raise ValidationFailed("؛ ".join(verdict.get("issues") or ["معیارهای موفقیت تأیید نشد"]))
             s["recoveries"] = s.get("recoveries", 0) + 1
             hint = verdict.get("fix_hint") or "نتیجه معیارهای موفقیت را برآورده نکرد"
             await self._step(rc, "recover", f"بازیابی: {truncate(hint, 140)}", detail=verdict)
@@ -846,6 +873,7 @@ class AgentRunner:
                 continue
             tool = tool_map.get(name)
             if tool is None:
+                self._record_evidence(rc, cid, name, args, ToolResult(False, "ابزار موجود نیست"))
                 transcript.append(LLMMessage("tool", f"ابزار «{name}» وجود ندارد یا در این کار فعال نیست. "
                                              f"ابزارهای موجود: {', '.join(sorted(tool_map))[:600]}",
                                              tool_call_id=cid, tool_name=name, is_error=True))
@@ -872,6 +900,7 @@ class AgentRunner:
             if category and category not in cats:
                 decision = await self._harness_decide(rc, cid, tool, category, args, rules)
                 if decision == "deny":
+                    self._record_evidence(rc, cid, name, args, ToolResult(False, "عملیات مجاز نیست"))
                     transcript.append(LLMMessage("tool", "⛔ این عملیات طبق Harness ممنوع است یا کارفرما اجازه نداد. "
                                                  "راه دیگری پیشنهاد کن یا به کارفرما گزارش بده.",
                                                  tool_call_id=cid, tool_name=name, is_error=True))
@@ -910,14 +939,16 @@ class AgentRunner:
                 raise
             except Exception as e:  # noqa: BLE001
                 result = ToolResult(False, f"خطای ابزار: {type(e).__name__}: {truncate(str(e), 800)}")
+            # Escalated categories (send, payment, login, ...) need effect verification
+            # even when a browser interaction was initially classified as navigation.
+            verification_required = requires_verification(tool, args) or bool(set(cats) - {"desktop_control"})
+            result = checked_result(tool, args, result, verification_required=verification_required)
             dur = int((time.monotonic() - t0) * 1000)
             out = result.output
             if result.untrusted:
                 out = f"<tool_output untrusted=\"true\">\n{out}\n</tool_output>"
             transcript.append(LLMMessage("tool", out, tool_call_id=cid, tool_name=name, is_error=not result.ok))
-            s.setdefault("evidence", []).append(
-                {"tool": name, "ok": result.ok, "verified": result.verified, "summary": truncate(result.output, 300)}
-            )
+            self._record_evidence(rc, cid, name, args, result, verification_required)
             tools_used = s.setdefault("tools_used", [])
             if name not in tools_used:
                 tools_used.append(name)
@@ -944,6 +975,15 @@ class AgentRunner:
                 await self._step(rc, "recover", "تغییر استراتژی", detail={"diagnosis": self._diagnose(result.output)})
                 transcript.append(LLMMessage("user", prompts.RECOVERY_NOTE.format(
                     reason="خطای تکراری", diagnosis=self._diagnose(result.output))))
+
+    @staticmethod
+    def _record_evidence(rc: RunCtx, cid: str, name: str, args: dict, result: ToolResult,
+                         verification_required: bool = True) -> None:
+        rc.state.setdefault("evidence", []).append({
+            "call_id": cid, "signature": LoopController.signature(name, args),
+            "tool": name, "ok": result.ok, "verified": result.verified,
+            "requires_verification": verification_required, "summary": truncate(result.output, 300),
+        })
 
     async def _fallback_method(self, rc: RunCtx, tool_map: dict[str, Tool], transcript: list[LLMMessage], name: str,
                                args: dict, output: str) -> None:
@@ -1013,6 +1053,7 @@ class AgentRunner:
                              telegram=self.telegram)
         transcript.append(LLMMessage("tool", f"⛔ {why}. این اقدام انجام نشد؛ فقط در گزارش نهایی به کارفرما اعلام کن.",
                                      tool_call_id=cid, tool_name=tool.name, is_error=True))
+        self._record_evidence(rc, cid, tool.name, args, ToolResult(False, "عملیات خارج از محدوده مجوز است"))
         loop.observe(tool.name, args, False)
         return "blocked"
 
@@ -1088,29 +1129,38 @@ class AgentRunner:
     async def _validate(self, rc: RunCtx, answer: str, complex_task: bool) -> dict[str, Any]:
         s = rc.state
         evidence = s.get("evidence", [])
-        failed_verified = [e for e in evidence if e.get("verified") is False]
-        # اعتبارسنجی قطعی
+        required = execution_required(rc.run, s, answer)
+        issues = evidence_issues(s, required)
+        criteria = (s.get("goal") or {}).get("success_criteria")
+        if not isinstance(criteria, list) or not criteria or any(not isinstance(c, str) or not c.strip() for c in criteria):
+            issues.append("معیارهای صریح موفقیت ثبت نشده یا نامعتبر است")
         if not answer.strip():
-            return {"passed": False, "issues": ["پاسخ خالی"], "fix_hint": "پاسخ نهایی بنویس"}
-        if not complex_task:
+            issues.append("پاسخ خالی")
+        if issues:
+            verdict = {"passed": False, "issues": issues, "mode": "evidence",
+                       "fix_hint": "نتیجه را با معیارهای درخواست و شواهد واقعی تطبیق بده؛ "
+                                   "اثر نامشخص را بدون بررسی تکرار نکن و ادعای انجام کار نکن."}
+            await self._step(rc, "validate", "تکمیل درخواست تأیید نشد", status="error", detail=verdict)
+            return verdict
+        if not complex_task and not any(e["ok"] is False for e in evidence):
             await self._step(rc, "validate", "اعتبارسنجی قطعی: موفق", detail={"evidence": len(evidence)})
             return {"passed": True, "mode": "deterministic"}
         chain = (await select_models(rc.session, "evaluation", "manager")).models
         if not chain:
-            return {"passed": not failed_verified}
-        ev_text = "\n".join(
-            f"- {e['tool']}: {'موفق' if e['ok'] else 'ناموفق'}{' (تاییدشده)' if e.get('verified') else ''} — {e['summary']}"
-            for e in evidence[-15:]
-        ) or "(هیچ ابزاری اجرا نشد)"
+            verdict = {"passed": False, "issues": ["ارزیاب معیارهای موفقیت در دسترس نیست"]}
+            await self._step(rc, "validate", "ارزیابی انجام نشد", status="error", detail=verdict)
+            return verdict
+        validation_input = {"goal": s["goal"].get("goal"), "criteria": criteria,
+                            "evidence": [{"id": f"e{i}", **e} for i, e in enumerate(evidence)],
+                            "answer": truncate(answer, 3000)}
         try:
             res = await self._llm(rc, chain, "evaluation", "", "", [LLMMessage("user", prompts.VALIDATE_PROMPT.format(
-                goal=s["goal"].get("goal"), criteria="، ".join(s["goal"].get("success_criteria", [])),
-                evidence=ev_text, answer=truncate(answer, 3000)))], max_tokens=600, json_mode=True, effort="low",
+                validation_input=json.dumps(validation_input, ensure_ascii=False)))], max_tokens=1200,
+                json_mode=True, effort="low",
                 title="ارزیابی نتیجه")
-            verdict = parse_json(res.response.text) or {"passed": True}
+            verdict = evaluation_verdict(res.response.text, criteria, evidence, required)
         except (ProviderError, NoModelError):
-            verdict = {"passed": not failed_verified, "issues": ["ارزیاب در دسترس نبود"]}
-        verdict["passed"] = bool(verdict.get("passed", True))
+            verdict = {"passed": False, "issues": ["ارزیاب در دسترس نبود"]}
         await self._step(rc, "validate", f"ارزیابی: {'موفق' if verdict['passed'] else 'نیازمند اصلاح'}"
                          f" (امتیاز {verdict.get('score', '-')})", status="ok" if verdict["passed"] else "error",
                          detail=verdict)

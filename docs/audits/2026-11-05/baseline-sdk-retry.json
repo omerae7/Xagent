@@ -1,0 +1,1 @@
+{"provider_chat_calls": 1, "underlying_http_attempts": 3, "transport": "httpx2.MockTransport"}
