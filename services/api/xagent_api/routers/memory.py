@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
 from xagent_core.audit import audit
-from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_core.models import (
     BehavioralRule,
     Conversation,
@@ -24,6 +23,7 @@ from xagent_core.models import (
     Skill,
     User,
 )
+from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_memory.revisions import record_change, snapshot, undo_revision
 from xagent_memory.store import (
     EpisodeQuery,
