@@ -13,11 +13,13 @@ from sqlalchemy import func, select
 from xagent_agent.providers.base import ChatRequest, LLMMessage
 from xagent_agent.providers.google import GoogleProvider
 from xagent_agent.providers.openai_responses import ResponsesProvider
+from xagent_agent.providers.registry import load_model
 from xagent_agent.usage_ledger import BudgetDenied, begin_aux_attempt
 from xagent_core import bus
 from xagent_core.db import session_scope
 from xagent_core.models import UsageEvent
 from xagent_core.settings_store import StopLossSettings, get_setting, set_setting
+from xagent_core.timeutil import get_zone, now_utc
 
 
 @pytest.mark.asyncio
@@ -78,10 +80,10 @@ async def test_atomic_preflight_reservations_never_exceed_owner_daily_cap(config
     await bus.set_stop_all(False)
     async with session_scope() as session:
         old = await get_setting(session, "stoploss", StopLossSettings)
-        from xagent_agent.providers.registry import load_model
+
         bound = await load_model(session, configured_model)
         reserve = bound.cost(256, 1, 0, 0)
-        from xagent_core.timeutil import now_utc, get_zone
+
         local = now_utc().astimezone(get_zone("Asia/Tehran"))
         day = local.replace(hour=0, minute=0, second=0, microsecond=0)
         used = Decimal((await session.execute(select(func.coalesce(func.sum(
