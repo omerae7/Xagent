@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_agent.model_select import select_models
+from xagent_agent.usage_ledger import begin_aux_attempt, finish_aux_attempt
 from xagent_core import bus
 from xagent_core.audit import audit
 from xagent_core.config import get_settings
@@ -327,10 +328,20 @@ async def stt(file: UploadFile = File(...), _: User = Depends(owner_user), sessi
         raise HTTPException(413, "فایل صوتی بسیار بزرگ است")
     last = None
     for m in chain:
+        aid = await begin_aux_attempt(m, purpose="stt", input_hint=max(256, len(audio) // 1000),
+                                      output_hint=2048)
         try:
             text = await m.provider.transcribe(m.model_name, audio, file.content_type or "audio/webm")
+            await finish_aux_attempt(aid, model=m, unit_details={
+                "type": "audio_input", "bytes": len(audio), "mime": file.content_type or "audio/webm",
+                "output_text_characters": len(text),
+            })
             return {"text": text.strip(), "model": m.label}
         except Exception as e:  # noqa: BLE001
+            from xagent_agent.providers.base import ProviderError
+            await finish_aux_attempt(aid, model=m, error=e,
+                known_rejected=isinstance(e, ProviderError) and e.status in (400, 401, 403, 404, 422),
+                unit_details={"type": "audio_input", "bytes": len(audio)})
             last = e
     raise HTTPException(502, f"تبدیل گفتار ناموفق: {scrub(str(last))}")
 
@@ -343,9 +354,19 @@ async def tts(body: TTSIn, _: User = Depends(owner_user), session: AsyncSession 
     ai = await get_setting(session, "ai", AISettings)
     last = None
     for m in chain:
+        aid = await begin_aux_attempt(m, purpose="tts", input_hint=max(256, len(body.text) // 2),
+                                      output_hint=max(1024, len(body.text)))
         try:
             audio, mime = await m.provider.speak(m.model_name, body.text, ai.tts_voice)
+            await finish_aux_attempt(aid, model=m, unit_details={
+                "type": "audio_output", "input_text_characters": len(body.text),
+                "output_bytes": len(audio), "mime": mime,
+            })
             return Response(audio, media_type=mime, headers={"Cache-Control": "no-store"})
         except Exception as e:  # noqa: BLE001
+            from xagent_agent.providers.base import ProviderError
+            await finish_aux_attempt(aid, model=m, error=e,
+                known_rejected=isinstance(e, ProviderError) and e.status in (400, 401, 403, 404, 422),
+                unit_details={"type": "audio_output", "input_text_characters": len(body.text)})
             last = e
-    raise HTTPException(502, f"تولید صدا ناموفق: {last}")
+    raise HTTPException(502, f"تولید صدا ناموفق: {scrub(str(last))}")
