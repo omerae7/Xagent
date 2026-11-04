@@ -39,9 +39,13 @@ CATEGORIES: dict[str, dict[str, Any]] = {
                       "icon": "settings"},
     "security_limits": {"label": "شل‌کردن سقف هزینه و محدودیت‌های ایمنی", "default": "ask", "icon": "shield",
                         "locked": True},
+    "host_ops": {"label": "ترمینال مدیریتی VPS: مشاهده، تشخیص و اصلاح کم‌ریسک (سطح ۱ و ۲)", "default": "auto",
+                 "icon": "terminal"},
+    "host_admin": {"label": "ترمینال مدیریتی VPS: آپدیت، Rollback، بسته‌ها، فایروال و فرمان خاص (سطح ۳)",
+                   "default": "ask", "icon": "shield", "locked": True},
 }
 # دسته‌هایی که هرگز نمی‌توانند خودکار شوند (تغییر هسته و سیاست امنیتی نیازمند تایید صریح است)
-NEVER_AUTO = {"system_update", "payment", "security_limits"}
+NEVER_AUTO = {"system_update", "payment", "security_limits", "host_admin"}
 
 
 @dataclass

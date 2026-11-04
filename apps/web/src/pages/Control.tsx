@@ -4,17 +4,18 @@
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, CircuitBoard, History, Plus, RotateCcw, ShieldCheck, Stethoscope, Trash2, Users, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, CircuitBoard, History, Plus, RotateCcw, ShieldCheck, Stethoscope, TerminalSquare, Trash2, Users, Wrench } from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Badge, Button, Card, CardHeader, cn, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Skeleton, Switch, Tabs, Textarea, type Tone } from "../components/ui";
 import { ChipMark } from "../components/viz/Silicon";
+import HostTerminal from "./HostTerminal";
 import { del, get, post } from "../lib/api";
 import { faInt, fmtDate, relTime, usd } from "../lib/format";
 import { useLive } from "../lib/live";
 import { toast, toastError } from "../lib/store";
 
-type TabKey = "employees" | "changes" | "health" | "models";
+type TabKey = "employees" | "changes" | "health" | "models" | "host";
 
 const GROUPS: [string, string][] = [
   ["web", "وب (جستجو و خواندن)"], ["files", "فایل‌ها"], ["system", "سیستم"], ["tasks", "وظایف"], ["routines", "روتین‌ها"],
@@ -367,18 +368,20 @@ export default function Control() {
   return (
     <div>
       <PageHeader title="مرکز کنترل مدیر" icon={<CircuitBoard className="h-5 w-5" />}
-        sub="کارمندان، هر تغییری که مدیر در سیستم داده، عیب‌یابی و سلامت مدل‌ها. تنظیمات امنیتی فقط با اجازه شما تغییر می‌کنند." />
+        sub="کارمندان، هر تغییری که مدیر در سیستم داده، عیب‌یابی، سلامت مدل‌ها و ترمینال مدیریتی سرور. تنظیمات امنیتی فقط با اجازه شما تغییر می‌کنند." />
       <Tabs value={tab} onChange={(t) => setParams({ tab: t })} tabs={[
         { value: "employees", label: "کارمندان", icon: <Users className="h-4 w-4" /> },
         { value: "changes", label: "تاریخچه تغییرات", icon: <History className="h-4 w-4" /> },
         { value: "health", label: "عیب‌یابی و خوددرمانی", icon: <Stethoscope className="h-4 w-4" /> },
         { value: "models", label: "سلامت مدل‌ها", icon: <CircuitBoard className="h-4 w-4" /> },
+        { value: "host", label: "ترمینال VPS", icon: <TerminalSquare className="h-4 w-4" /> },
       ]} />
       <div className="mt-4">
         {tab === "employees" && <Employees />}
         {tab === "changes" && <Changes />}
         {tab === "health" && <Health />}
         {tab === "models" && <ModelHealth />}
+        {tab === "host" && <HostTerminal />}
       </div>
     </div>
   );

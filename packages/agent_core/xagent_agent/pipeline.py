@@ -580,13 +580,16 @@ class AgentRunner:
 
     async def _tools_for(self, rc: RunCtx, groups: list[str], query: str, employee) -> list[Tool]:
         """ابزارهای این اجرا: گروه‌های لازم + بارگذار پویا + ابزارهای خواندنی اداره سیستم برای کارفرما."""
+        from .control.host_tools import HOST_TOOLS
         from .control.ops_tools import ADMIN_TOOLS, LOAD_TOOL
 
-        tools = await select_tools(rc.session, [g for g in groups if g != "admin"], query)
+        tools = await select_tools(rc.session, [g for g in groups if g not in ("admin", "host")], query)
         tools.append(LOAD_TOOL)
         # ابزارهای اداره سیستم فقط برای اجرای کارفرما (نه کارمند، نه رویداد بیرونی، نه Viewer)
         if rc.is_owner and employee is None:
             read_only = {"system_overview", "system_diagnose", "change_history"}
+            if "host" in groups or "admin" in groups:
+                tools.extend(HOST_TOOLS)
             if "admin" in groups:
                 tools.extend(ADMIN_TOOLS)
             else:
@@ -648,13 +651,17 @@ class AgentRunner:
                 "تغییر تنظیمات، ساخت کارمند، تفویض کار، عیب‌یابی، خوددرمانی و بازگردانی تغییرات. همه تغییرات ثبت و قابل Rollback هستند.\n"
                 "- فقط تنظیمات امنیتی (Harness، کلیدهای API، احراز هویت، تلگرام، به‌روزرسانی هسته، پرداخت) با کارفرماست؛ "
                 "شل‌کردن سقف هزینه با کارت اجازه انجام می‌شود.\n"
+                "- مدیریت واقعی سرور (VPS): با tools_load(['host']) ترمینال مدیریتی را بارگذاری کن و با host_run عملیات ساختاریافته "
+                "را واقعاً اجرا کن (وضعیت CPU/RAM/دیسک/شبکه، لاگ Docker/systemd، xagent status/doctor/backup، update.check برای "
+                "Dry Run، Restart سرویس با بررسی سلامت). سطح ۳ (آپدیت هسته، Rollback، بسته، فایروال، فرمان خاص) کارت اجازه می‌سازد؛ "
+                "دستور Linux پیشنهاد نده که کارفرما دستی اجرا کند، خودت اجرا کن.\n"
                 "- هرگز بدون تلاش نگو «دسترسی ندارم». اول system_overview/system_diagnose، بعد اقدام، بعد آزمون نتیجه.\n"
                 "- کارهای پیچیده را به مراحل بشکن و در صورت وجود کارمند مناسب با delegate_task تفویض و نتیجه را ارزیابی کن.")
         lines.append(f"مدل فعلی تو: {chain[0].label if chain else '-'}"
                      + (f" (جایگزین‌ها: {', '.join(m.label for m in chain[1:3])})" if len(chain) > 1 else ""))
         loaded = ", ".join(GROUP_LABELS.get(g, g) for g in groups) or "پایه"
         lines.append(f"گروه‌های ابزار بارگذاری‌شده: {loaded}. گروه‌های قابل بارگذاری با tools_load: "
-                     "admin, web, browser, desktop, files, system, tasks, routines, crm, telegram, memory, episodes, installed.")
+                     "admin, host, web, browser, desktop, files, system, tasks, routines, crm, telegram, memory, episodes, installed.")
         return "\n".join(lines)
 
     def _wrap_input(self, rc: RunCtx) -> str:

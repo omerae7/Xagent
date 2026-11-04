@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -20,7 +21,7 @@ from xagent_core.db import dispose_engine, get_engine
 from xagent_core.redact import install_log_scrubber, scrub
 
 from .bootstrap import bootstrap
-from .routers import auth, chat, control, integrations, live, memory, settings, work
+from .routers import auth, chat, control, host, integrations, live, memory, settings, work
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 install_log_scrubber()
@@ -31,7 +32,11 @@ log = logging.getLogger("xagent.api")
 async def lifespan(app: FastAPI):
     await bootstrap()
     log.info("X Agent API آماده است (پروفایل: %s)", get_settings().profile)
+    from . import hostops
+
+    reconcile = asyncio.create_task(hostops.reconcile_loop())
     yield
+    reconcile.cancel()
     await bus.close_redis()
     await dispose_engine()
 
@@ -62,7 +67,7 @@ async def validation_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": "داده نامعتبر: " + "؛ ".join(errors)})
 
 
-for r in (auth, chat, live, work, memory, settings, integrations, control):
+for r in (auth, chat, live, work, memory, settings, integrations, control, host):
     app.include_router(r.router)
 
 

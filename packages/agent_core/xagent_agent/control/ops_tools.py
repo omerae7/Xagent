@@ -420,7 +420,8 @@ ADMIN_TOOLS = [
 
 LOAD_TOOL = Tool(
     "tools_load",
-    "بارگذاری گروه‌های ابزار بیشتر برای ادامه همین کار: admin (اداره سیستم)، web، browser، desktop، files، tasks، routines، "
+    "بارگذاری گروه‌های ابزار بیشتر برای ادامه همین کار: admin (اداره سیستم)، host (ترمینال مدیریتی VPS)، web، browser، "
+    "desktop، files، tasks، routines، "
     "crm، telegram، memory، episodes، system، installed.",
     obj({"groups": {"type": "array", "items": {"type": "string"}}}, ["groups"]), tools_load, "core", label="بارگذاری ابزار",
 )

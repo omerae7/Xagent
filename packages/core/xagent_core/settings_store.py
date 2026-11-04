@@ -95,6 +95,23 @@ class TelegramSettings(BaseModel):
     auto_link_crm: bool = True
 
 
+class HostSettings(BaseModel):
+    """سیاست کارفرما برای کارگزار فرمان میزبان (فقط کارفرما تغییر می‌دهد)."""
+
+    enabled: bool = True
+    # حالت هر عملیات: auto (پیش‌فرض سطح ۱ و ۲) | ask (کارت اجازه) | forbidden
+    op_modes: dict[str, Literal["auto", "ask", "forbidden"]] = Field(default_factory=dict)
+    restart_per_hour: int = Field(3, ge=0, le=20)
+    backup_per_hour: int = Field(2, ge=0, le=10)
+    prune_per_day: int = Field(2, ge=0, le=10)
+    # آپدیت هسته: manual = همیشه با تأیید | auto = فقط از شاخه تنظیم‌شده و در بازه زمانی مشخص
+    update_policy: Literal["manual", "auto"] = "manual"
+    auto_window_start_hour: int = Field(3, ge=0, le=23)
+    auto_window_end_hour: int = Field(5, ge=0, le=23)
+    # اعتبار مجوز اجرای فرمان خارج از Allowlist (دقیقه)
+    exec_session_minutes: int = Field(15, ge=1, le=60)
+
+
 class EmbeddingSettings(BaseModel):
     provider: Literal["local_hash", "model"] = "local_hash"
 
@@ -106,6 +123,7 @@ DEFAULTS: dict[str, type[BaseModel]] = {
     "routine_safety": RoutineSafetySettings,
     "dream": DreamSettings,
     "telegram": TelegramSettings,
+    "host": HostSettings,
 }
 
 

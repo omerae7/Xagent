@@ -56,6 +56,13 @@ if [ -d /run/systemd/system ] && command -v systemctl >/dev/null; then
 else
   echo "⚠ systemd یافت نشد؛ به‌روزرسانی از پنل فعال نیست (دستور xagent update کار می‌کند)."
 fi
+# کارگزار فرمان میزبان از نسخه هدف (اگر آن نسخه آن را دارد)
+if git cat-file -e "$SRC:infra/hostd/xagent-hostd.py" 2>/dev/null; then
+  TMPH="$(mktemp -d)"
+  for f in xagent-hostd.py xagent-hostd.socket xagent-hostd.service install-hostd.sh; do git show "$SRC:infra/hostd/$f" > "$TMPH/$f"; done
+  bash "$TMPH/install-hostd.sh" "$XAGENT_HOME" "$LIB" "$TMPH" || echo "⚠ نصب کارگزار فرمان میزبان ناموفق بود"
+  rm -rf "$TMPH"
+fi
 if [ "$SET_BRANCH" = "1" ]; then
   if grep -q '^XAGENT_REPO_BRANCH=' .env; then sed -i "s#^XAGENT_REPO_BRANCH=.*#XAGENT_REPO_BRANCH=$REF#" .env; else echo "XAGENT_REPO_BRANCH=$REF" >> .env; fi
 fi

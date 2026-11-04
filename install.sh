@@ -287,6 +287,7 @@ install -m 0755 infra/scripts/xagentctl /usr/local/lib/xagent/xagentctl
 install -m 0755 infra/updater/xagent-update.sh /usr/local/lib/xagent/xagent-update
 ln -sf /usr/local/lib/xagent/xagentctl /usr/local/bin/xagent
 printf 'XAGENT_HOME=%s\n' "$XAGENT_HOME" > /etc/xagent.conf
+bash infra/hostd/install-hostd.sh "$XAGENT_HOME" /usr/local/lib/xagent "$APP/infra/hostd" || warn "نصب کارگزار فرمان میزبان ناموفق بود"
 ok "به‌روزرسانی از پنل (تنظیمات ← سیستم) یا با دستور «xagent update»"
 
 PASS_FILE="$XAGENT_HOME/data/initial_password.txt"

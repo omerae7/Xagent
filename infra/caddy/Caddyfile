@@ -20,6 +20,11 @@
 		-Server
 	}
 
+	# مسیر داخلی Worker→API هرگز از اینترنت در دسترس نیست
+	handle /api/internal/* {
+		respond 404
+	}
+
 	# API، رویدادهای زنده (SSE) و WebSocket دسکتاپ
 	handle /api/* {
 		reverse_proxy api:8000 {
@@ -43,5 +48,19 @@
 
 	request_body {
 		max_size 60MB
+	}
+}
+
+# بررسی سلامت داخلی پنل: فقط روی loopback داخل کانتینر (پورت منتشر نمی‌شود).
+# به‌روزرسان، صفحه اصلی پنل و مسیر /api را از همین‌جا می‌سنجد؛ شکست آن = شکست به‌روزرسانی.
+http://:8088 {
+	bind 127.0.0.1
+	handle /api/health {
+		reverse_proxy api:8000
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
 	}
 }

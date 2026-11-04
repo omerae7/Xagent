@@ -114,6 +114,10 @@ services:
       timeout: 6s
       retries: 10
       start_period: 40s
+    # فقط API به سوکت کارگزار فرمان میزبان دسترسی دارد (فقط‌خواندنی؛ Worker/Runner/Desktop هرگز)
+    volumes:
+      - ${XAGENT_HOME:-/opt/xagent}/data:/data
+      - ${XAGENT_HOME:-/opt/xagent}/run/hostd:/run/xagent-hostd:ro
     networks: [internal, public, desktop_link]
     mem_limit: ${API_MEM_LIMIT:-768m}
 
@@ -169,6 +173,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8088/"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
     networks: [public]
     mem_limit: 256m
 

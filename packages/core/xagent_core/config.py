@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     repo_branch: str = "main"
     updater_url: str = "http://updater:7100"
 
+    # کارگزار فرمان میزبان: سوکت یونیکس (فقط در کانتینر API و فقط‌خواندنی mount می‌شود)
+    hostd_socket: str = "/run/xagent-hostd/hostd.sock"
+    hostd_jobs_dir: str = "/run/xagent-hostd/jobs"
+    # Worker برای عملیات میزبان فقط از طریق API (با توکن داخلی مشتق از کلید اصلی) درخواست می‌دهد
+    api_internal_url: str = "http://api:8000"
+
     # جاسازی (embedding) — اندازه ثابت ستون pgvector
     embedding_dim: int = 768
 
