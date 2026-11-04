@@ -78,6 +78,12 @@ class Usage:
     output: int = 0
     cache_read: int = 0
     cache_write: int = 0
+    # Provider-reported subcategories; subsets are not added to the total again.
+    reasoning_tokens: int = 0
+    audio_input_tokens: int = 0
+    audio_output_tokens: int = 0
+    details: dict[str, Any] = field(default_factory=dict)
+    reported: bool = True
 
     @property
     def input_total(self) -> int:
@@ -93,6 +99,7 @@ class LLMResponse:
     model: str
     latency_ms: int = 0
     raw: dict[str, Any] | None = None
+    provider_request_id: str | None = None
 
 
 @dataclass
