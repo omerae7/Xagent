@@ -71,7 +71,7 @@ case "${1:-status}" in
       echo "   دیتابیس فعلی حذف نمی‌شود و با نام xagent_after_update_* نگه داشته می‌شود."
     fi
     if [ "${2:-}" != "--yes" ]; then read -rp "ادامه؟ [y/N] " a; [ "$a" = "y" ] || exit 1; fi
-    if [ -n "$(git status --porcelain)" ]; then git stash push --include-untracked -m "xagent-rollback-$(date +%s)" >/dev/null && echo "تغییرات محلی در git stash حفظ شدند."; fi
+    if [ -n "$(git status --porcelain)" ]; then git -c user.name="X Agent Updater" -c user.email=updater@xagent.local stash push --include-untracked -m "xagent-rollback-$(date +%s)" >/dev/null && echo "تغییرات محلی در git stash حفظ شدند."; fi
     S="$(date +%Y%m%d_%H%M%S)"
     if [ "$NEED_DB" = "1" ]; then
       psql_su() { dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "$1" >/dev/null; }

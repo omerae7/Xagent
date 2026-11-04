@@ -156,7 +156,7 @@ step "بررسی تغییرات محلی"
 if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
   PATCH="$BK/local-changes-$STAMP.patch"
   { git diff HEAD; git ls-files --others --exclude-standard | sed 's/^/# untracked: /'; } > "$PATCH"
-  git stash push --include-untracked -m "xagent-update-$STAMP" >/dev/null || die "حفظ تغییرات محلی ناموفق بود"
+  git -c user.name="X Agent Updater" -c user.email=updater@xagent.local stash push --include-untracked -m "xagent-update-$STAMP" >/dev/null || die "حفظ تغییرات محلی ناموفق بود"
   warn "تغییرات محلی در $PATCH و git stash («xagent-update-$STAMP») حفظ شدند"
 else
   ok "تغییر محلی وجود ندارد"
