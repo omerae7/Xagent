@@ -7,6 +7,12 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+# Only the newest revision of a branch should consume CI resources. Earlier
+# intermediate commits are superseded; both PR and push events use the same group.
+concurrency:
+  group: xagent-verification-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     runs-on: ubuntu-24.04
