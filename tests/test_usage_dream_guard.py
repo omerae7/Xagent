@@ -25,7 +25,7 @@ pytestmark = pytest.mark.asyncio
 
 async def test_confirmed_usage_survives_later_application_rollback(configured_model, mock_llm):
     await bus.set_stop_all(False)
-    marker = f"rollback-{uuid.uuid4()}"
+    marker = f"rollback-{uuid.uuid4().hex[:12]}"
     mid = uuid.UUID(configured_model)
     with pytest.raises(RuntimeError, match="simulated failure"):
         async with session_scope() as session:
@@ -47,7 +47,7 @@ async def test_confirmed_usage_survives_later_application_rollback(configured_mo
 
 async def test_ambiguous_provider_failure_is_not_free(configured_model):
     await bus.set_stop_all(False)
-    marker = f"unknown-{uuid.uuid4()}"
+    marker = f"unknown-{uuid.uuid4().hex[:12]}"
     async with session_scope() as session:
         model = await load_model(session, configured_model)
         rid = await begin_attempt(model, ChatRequest(
