@@ -9,7 +9,6 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import available_timezones
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -18,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_agent import harness
 from xagent_agent.commands import run_command
 from xagent_agent.model_select import PRO_ROLE_CAPS_DOC, ROLE_CAPS, ROLE_LABELS
-from xagent_agent.providers.registry import CATALOG, test_model
+from xagent_agent.providers.registry import CATALOG, PROVIDER_STATUS_FA, provider_status, test_model
 from xagent_core import bus
 from xagent_core.audit import audit
 from xagent_core.config import get_settings
@@ -112,10 +111,15 @@ class ModelIn(BaseModel):
     price_out: float | None = None
     price_cache_read: float | None = None
     price_cache_write: float | None = None
+    # کنترل استدلال مدل‌های Kimi (فقط با تأیید مستندات/آزمون توسط کارفرما): none | toggle | always
+    thinking_control: str | None = Field(None, pattern="^(none|toggle|always)$")
 
 
-def _ser_provider(p: AIProvider) -> dict[str, Any]:
-    return ser(p, extra={"api_key_masked": mask_secret(decrypt_secret(p.api_key_enc)), "has_key": bool(p.api_key_enc)})
+def _ser_provider(p: AIProvider, models: list[AIModel] | None = None) -> dict[str, Any]:
+    status, reason = provider_status(p, models or [])
+    return ser(p, extra={"api_key_masked": mask_secret(decrypt_secret(p.api_key_enc)), "has_key": bool(p.api_key_enc),
+                         "status": status, "status_label": PROVIDER_STATUS_FA[status], "status_reason": reason,
+                         "type": CATALOG.get(p.kind, {}).get("type", "llm")})
 
 
 @router.get("/ai/catalog")
@@ -127,7 +131,7 @@ async def catalog(_: User = Depends(current_user)):
 async def providers(_: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     ps = (await session.execute(select(AIProvider).order_by(AIProvider.created_at))).scalars().all()
     ms = (await session.execute(select(AIModel).order_by(AIModel.created_at))).scalars().all()
-    return {"providers": [_ser_provider(p) for p in ps], "models": [ser(m) for m in ms]}
+    return {"providers": [_ser_provider(p, list(ms)) for p in ps], "models": [ser(m) for m in ms]}
 
 
 @router.post("/ai/providers")
@@ -178,71 +182,41 @@ async def discover_models(
     pid: str, cursor: str | None = None,
     _: User = Depends(owner_user), session: AsyncSession = Depends(get_session),
 ):
-    """List models visible to this API key. Listing does NOT assert tool, audio or vision support."""
+    """فهرست مدل‌های قابل دسترس با همین کلید (فهرست‌شدن به معنی تأیید ابزار/بینایی/صوت نیست).
+
+    قیمت فقط وقتی برگردانده می‌شود که API ارائه‌دهنده آن را اعلام کرده باشد (مثلاً xAI: سنت به ازای ۱۰۰M توکن
+    → دلار به ازای ۱M). نتیجه کشف وضعیت اتصال را هم ثبت می‌کند (آماده/نیازمند تنظیم/موقتاً در دسترس نیست).
+    """
+    from xagent_agent.control.capabilities import DiscoveryError, list_provider_models
+
     p = await session.get(AIProvider, parse_uuid(pid))
     if p is None:
         raise HTTPException(404, "ارائه‌دهنده یافت نشد")
-    key = decrypt_secret(p.api_key_enc)
-    if not key and p.kind != "ollama":
+    if not decrypt_secret(p.api_key_enc) and p.kind != "ollama":
         raise HTTPException(400, "کلید API ثبت نشده است")
     if cursor and len(cursor) > 256:
         raise HTTPException(400, "شناسه صفحه نامعتبر است")
-    if p.kind == "anthropic":
-        url = (p.base_url or "https://api.anthropic.com/v1").rstrip("/") + "/models"
-        headers = {"x-api-key": key or "", "anthropic-version": "2023-06-01"}
-        params: dict[str, str | int] = {"limit": 100}
-        if cursor:
-            params["after_id"] = cursor
-    elif p.kind == "google":
-        url = (p.base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/") + "/models"
-        headers = {"x-goog-api-key": key or ""}
-        params = {"pageSize": 100}
-        if cursor:
-            params["pageToken"] = cursor
-    else:
-        from xagent_agent.providers.openai_compat import DEFAULT_BASES
-
-        kind = "openai" if p.kind in ("openai", "openai_chat") else p.kind
-        base = p.base_url or DEFAULT_BASES.get(kind)
-        if not base:
-            raise HTTPException(400, "برای دریافت فهرست مدل‌ها Base URL را مشخص کنید")
-        url = base.rstrip("/") + "/models"
-        headers = {"Authorization": f"Bearer {key}"} if key else {}
-        params = {}
-        if cursor:
-            params["after"] = cursor
     try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
-            response = await client.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-    except (httpx.HTTPError, ValueError) as e:
-        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
-        raise HTTPException(502, f"دریافت مدل‌ها از شرکت ناموفق بود (HTTP {status or 'network'})") from e
-    raw_items = data.get("models") if p.kind == "google" else data.get("data")
-    if not isinstance(raw_items, list):
-        raise HTTPException(502, "پاسخ فهرست مدل‌ها ساختار شناخته‌شده ندارد")
+        found, next_cursor = await list_provider_models(p, cursor)
+    except DiscoveryError as e:
+        p.last_test_at, p.last_test_ok, p.last_test_error = utcnow(), False, str(e)[:1000]
+        await session.commit()
+        raise HTTPException(502, f"دریافت مدل‌ها از شرکت ناموفق بود: {e}") from e
+    p.last_test_at, p.last_test_ok, p.last_test_error = utcnow(), True, None
     items = []
-    for item in raw_items[:200]:
-        if not isinstance(item, dict):
+    for d in found[:200]:
+        if p.kind == "google" and d.caps.get("embedding"):
             continue
-        model_id = item.get("id") or item.get("name")
-        if not isinstance(model_id, str):
-            continue
-        if p.kind == "google":
-            model_id = model_id.removeprefix("models/")
-            allowed = item.get("supportedGenerationMethods") or []
-            if "generateContent" not in allowed:
-                continue
-        items.append({"id": model_id, "label": item.get("displayName") or item.get("display_name") or model_id})
-    next_cursor = (
-        data.get("nextPageToken") if p.kind == "google"
-        else data.get("last_id") if p.kind == "anthropic" and data.get("has_more")
-        else None
-    )
-    if p.kind not in ("google", "anthropic") and data.get("has_more") and items:
-        next_cursor = items[-1]["id"]
+        detail = d.meta.get("pricing_detail") or {}
+        items.append({"id": d.id, "label": d.label, "caps": d.caps, "context_window": d.context_window,
+                      "price_in": float(d.price[0]) if d.price else None,
+                      "price_out": float(d.price[1]) if d.price else None,
+                      "price_cache_read": float(d.cache_price) if d.cache_price else None,
+                      "price_status": "provider_api" if d.price else "unknown",
+                      "long_context": detail.get("long_context"),
+                      "reasoning": d.meta.get("reasoning"), "thinking": d.meta.get("thinking")})
     return {"items": items, "next_cursor": next_cursor}
+
 
 def _apply_model(m: AIModel, body: ModelIn) -> None:
     for f in ("model_name", "display_name", "enabled", "capabilities", "context_window"):
@@ -253,6 +227,11 @@ def _apply_model(m: AIModel, body: ModelIn) -> None:
         v = getattr(body, f)
         if v is not None:
             setattr(m, f, Decimal(str(v)))
+    if body.thinking_control is not None:
+        meta = dict(m.capability_meta or {})
+        meta["thinking"] = {"value": body.thinking_control != "none", "control": body.thinking_control,
+                            "source": "manual", "at": utcnow().isoformat()}
+        m.capability_meta = meta
 
 
 @router.post("/ai/models")

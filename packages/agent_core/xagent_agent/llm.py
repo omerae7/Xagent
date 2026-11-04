@@ -16,6 +16,7 @@ from xagent_core import bus
 from xagent_core.models import AIModel
 
 from .providers.base import ChatRequest, LLMMessage, LLMResponse, ProviderError, ToolSpec
+from .providers.params import request_params
 from .providers.registry import BoundModel
 from .usage_ledger import begin_attempt, finish_attempt
 
@@ -74,6 +75,7 @@ async def call_llm(
             temperature=temperature,
             json_mode=json_mode,
             effort=effort,  # type: ignore[arg-type]
+            extra=request_params(model.provider_kind, model.model_name, model.capability_meta, effort),
         )
         # Each attempt is committed before sending. The independent ledger outlives
         # agent rollback; retries and fallback are separately billed/reserved.

@@ -113,6 +113,8 @@ class ChatRequest:
     temperature: float | None = None
     json_mode: bool = False
     effort: Literal["low", "medium", "high"] | None = None
+    # پارامترهای خاص ارائه‌دهنده که از ویژگی‌های همان مدل نگاشت شده‌اند (thinking، reasoning_effort)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class ProviderError(Exception):

@@ -25,6 +25,10 @@ DEFAULT_BASES = {
     "deepseek": "https://api.deepseek.com/v1",
     "groq": "https://api.groq.com/openai/v1",
     "xai": "https://api.x.ai/v1",
+    # Kimi Open Platform (Moonshot AI) — بین‌المللی؛ کلیدهای منطقه چین: https://api.moonshot.cn/v1
+    "moonshot": "https://api.moonshot.ai/v1",
+    # Kimi Code — اتصال مستقل با کلید کنسول Kimi Code؛ منطقه چین: https://api.kimi.com/coding/v1
+    "kimi_code": "https://api.kimi.ai/coding/v1",
     "mistral": "https://api.mistral.ai/v1",
     "together": "https://api.together.xyz/v1",
     "ollama": "http://host.docker.internal:11434/v1",
@@ -32,6 +36,12 @@ DEFAULT_BASES = {
 
 # مدل‌های استدلالی OpenAI که temperature نمی‌پذیرند و max_completion_tokens لازم دارند
 _REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+
+
+# ارائه‌دهندگانی که در حلقه فراخوانی ابزار، reasoning_content پیام دستیار باید بازپخش شود
+_REPLAY_REASONING = ("moonshot", "kimi_code")
+# پارامترهای مجاز که از نگاشت هر مدل به بدنه درخواست افزوده می‌شوند
+_EXTRA_KEYS = ("thinking", "reasoning_effort")
 
 
 def _is_reasoning(model: str) -> bool:
@@ -62,11 +72,11 @@ class OpenAICompatProvider:
         if system.strip():
             out.append({"role": "system", "content": system})
         for m in req.messages:
-            out.extend(self._convert_msg(m))
+            out.extend(self._convert_msg(m, self.kind))
         return out
 
     @staticmethod
-    def _convert_msg(m: LLMMessage) -> list[dict[str, Any]]:
+    def _convert_msg(m: LLMMessage, kind: str = "openai") -> list[dict[str, Any]]:
         if m.role == "tool":
             return [{"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content or ""}]
         if m.role == "assistant":
@@ -80,6 +90,11 @@ class OpenAICompatProvider:
                     }
                     for t in m.tool_calls
                 ]
+                # استدلال فقط در همان ارائه‌دهنده و فقط در حلقه ابزار بازپخش می‌شود؛ هرگز در متن پاسخ
+                raw = m.raw or {}
+                if (kind in _REPLAY_REASONING and raw.get("kind") == "openai_compat"
+                        and raw.get("provider") == kind and raw.get("reasoning_content")):
+                    d["reasoning_content"] = raw["reasoning_content"]
             return [d]
         if m.images:
             parts: list[dict[str, Any]] = [{"type": "text", "text": m.content or ""}]
@@ -106,6 +121,11 @@ class OpenAICompatProvider:
             body["tool_choice"] = "auto"
         if req.json_mode and not req.tools:
             body["response_format"] = {"type": "json_object"}
+        for k in _EXTRA_KEYS:
+            if k in req.extra:
+                body[k] = req.extra[k]
+        if (body.get("thinking") or {}).get("type") == "enabled" and "tool_choice" in body:
+            body["tool_choice"] = "auto"  # در حالت thinking فقط auto/none پذیرفته می‌شود
         if self.kind == "openrouter":
             body["usage"] = {"include": True}
         t0 = time.monotonic()
@@ -133,7 +153,8 @@ class OpenAICompatProvider:
         u = data.get("usage") or {}
         prompt = int(u.get("prompt_tokens") or 0)
         cached = int(
-            (u.get("prompt_tokens_details") or {}).get("cached_tokens") or u.get("prompt_cache_hit_tokens") or 0
+            (u.get("prompt_tokens_details") or {}).get("cached_tokens") or u.get("prompt_cache_hit_tokens")
+            or u.get("cached_tokens") or 0
         )
         output_details = u.get("completion_tokens_details") or {}
         input_details = u.get("prompt_tokens_details") or {}
@@ -147,8 +168,12 @@ class OpenAICompatProvider:
             details={"prompt_tokens_details": input_details, "completion_tokens_details": output_details},
             reported=data.get("usage") is not None,
         )
+        reasoning = msg.get("reasoning_content")
+        raw = ({"kind": "openai_compat", "provider": self.kind, "reasoning_content": reasoning}
+               if isinstance(reasoning, str) and reasoning else None)
         return LLMResponse(
             text=msg.get("content") or "",
+            raw=raw,
             tool_calls=calls,
             usage=usage,
             stop_reason=choice.get("finish_reason") or "stop",

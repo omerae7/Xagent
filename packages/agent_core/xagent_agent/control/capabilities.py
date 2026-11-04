@@ -30,10 +30,9 @@ from ..providers.registry import CATALOG, load_model
 
 
 class DiscoveryError(Exception):
-    def __init__(self, message: str = "") -> None:
+    def __init__(self, message: str = "", status: int | None = None) -> None:
         super().__init__(scrub(message))
-
-
+        self.status = status
 
 
 @dataclass
@@ -43,6 +42,96 @@ class DiscoveredModel:
     caps: dict[str, bool] = field(default_factory=dict)  # فقط قابلیت‌هایی که API اعلام کرده
     context_window: int | None = None
     price: tuple[Decimal, Decimal] | None = None  # (ورودی، خروجی) دلار به ازای هر میلیون توکن — فقط از API
+    cache_price: Decimal | None = None
+    meta: dict[str, Any] = field(default_factory=dict)  # جزئیات قیمت/استدلال اعلام‌شده توسط API
+
+
+def _http_error(kind: str, status: int) -> DiscoveryError:
+    if status in (401, 403):
+        hint = (" (کلید نامعتبر است یا اشتراک Kimi Code این مدل/سرویس را شامل نمی‌شود)" if kind == "kimi_code"
+                else " (کلید نامعتبر یا بدون دسترسی)")
+        return DiscoveryError(f"ارائه‌دهنده درخواست را رد کرد: HTTP {status}{hint}", status)
+    if status == 404:
+        return DiscoveryError("این سرویس نقطه فهرست مدل ندارد (HTTP 404)؛ مدل را دستی یا از کاتالوگ مستند اضافه کنید.",
+                              status)
+    if status == 429:
+        return DiscoveryError("محدودیت نرخ ارائه‌دهنده (HTTP 429)؛ بعداً دوباره تلاش کنید.", status)
+    return DiscoveryError(f"ارائه‌دهنده فهرست مدل‌ها را برنگرداند (HTTP {status}).", status)
+
+
+def _xai_merge(lm: dict[str, Any], md: dict[str, Any]) -> list[DiscoveredModel]:
+    """ترکیب ‎/v1/language-models (قیمت و Modality) و ‎/v1/models (پنجره متن، reasoning_effort، قیمت بافت بلند)."""
+    from ..providers.params import XAI_PRICE_UNIT, xai_price_per_m
+
+    now = utcnow().isoformat()
+    out: list[DiscoveredModel] = []
+    for mid in [*lm.keys(), *(k for k in md if k not in lm)]:
+        L, M = lm.get(mid) or {}, md.get(mid) or {}
+
+        def field_(name: str, L: dict[str, Any] = L, M: dict[str, Any] = M) -> Any:
+            return L.get(name) if L.get(name) is not None else M.get(name)
+
+        pin = xai_price_per_m(field_("prompt_text_token_price"))
+        pout = xai_price_per_m(field_("completion_text_token_price"))
+        pcache = xai_price_per_m(field_("cached_prompt_text_token_price"))
+        caps: dict[str, bool] = {}
+        mods_in = L.get("input_modalities") or M.get("input_modalities")
+        if isinstance(mods_in, list) and mods_in:
+            caps["vision"] = "image" in mods_in
+        mods_out = L.get("output_modalities") or M.get("output_modalities")
+        if isinstance(mods_out, list) and mods_out and "text" not in mods_out:
+            caps["tools"] = False
+        meta: dict[str, Any] = {}
+        mc = M.get("capabilities") if isinstance(M.get("capabilities"), dict) else {}
+        efforts = mc.get("reasoning_effort")
+        if isinstance(efforts, list) and efforts:
+            meta["reasoning"] = {"efforts": [e for e in efforts if isinstance(e, str)],
+                                 "default": mc.get("default_reasoning_effort"), "source": "provider", "at": now}
+        raw_prices = {k: field_(k) for k in ("prompt_text_token_price", "cached_prompt_text_token_price",
+                                             "completion_text_token_price", "prompt_image_token_price")}
+        detail: dict[str, Any] = {"unit": XAI_PRICE_UNIT, "raw": raw_prices, "source": "xai_api", "at": now,
+                                  "valid": bool(pin and pout)}
+        threshold = M.get("long_context_threshold")
+        lin = xai_price_per_m(M.get("prompt_text_token_price_long_context"))
+        lout = xai_price_per_m(M.get("completion_text_token_price_long_context"))
+        if isinstance(threshold, int) and threshold > 0 and lin and lout:
+            # مقدار ۰ یعنی قیمت بافت بلند جداگانه ندارد (همان قیمت عادی)؛ فقط مقدار مثبت ثبت می‌شود
+            lcache = xai_price_per_m(M.get("cached_prompt_text_token_price_long_context"))
+            detail["long_context"] = {"threshold": threshold, "in": str(lin), "out": str(lout),
+                                      "cache": str(lcache) if lcache else None}
+        meta["pricing_detail"] = detail
+        aliases = L.get("aliases") or M.get("aliases")
+        if isinstance(aliases, list) and aliases:
+            meta["aliases"] = [a for a in aliases if isinstance(a, str)][:10]
+        ctx = M.get("context_length")
+        out.append(DiscoveredModel(mid, mid, caps, ctx if isinstance(ctx, int) and ctx > 0 else None,
+                                   (pin, pout) if pin and pout else None, pcache if pin and pout else None, meta))
+    return out
+
+
+async def _xai_models(base: str, key: str) -> list[DiscoveredModel]:
+    headers = {"Authorization": f"Bearer {key}"}
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=False) as c:
+            r1 = await c.get(base.rstrip("/") + "/language-models", headers=headers)
+            r2 = await c.get(base.rstrip("/") + "/models", headers=headers)
+    except httpx.HTTPError as e:
+        raise DiscoveryError(f"ارتباط با xAI ناموفق بود: {type(e).__name__}") from e
+    for r in (r1, r2):
+        if r.status_code in (401, 403, 429):
+            raise _http_error("xai", r.status_code)
+    lm: dict[str, Any] = {}
+    md: dict[str, Any] = {}
+    try:
+        if r1.status_code < 400:
+            lm = {m["id"]: m for m in (r1.json().get("models") or []) if isinstance(m, dict) and isinstance(m.get("id"), str)}
+        if r2.status_code < 400:
+            md = {m["id"]: m for m in (r2.json().get("data") or []) if isinstance(m, dict) and isinstance(m.get("id"), str)}
+    except (ValueError, AttributeError) as e:
+        raise DiscoveryError("پاسخ فهرست مدل‌های xAI ساختار شناخته‌شده ندارد.") from e
+    if not lm and not md:
+        raise _http_error("xai", r1.status_code if r1.status_code >= 400 else r2.status_code)
+    return _xai_merge(lm, md)
 
 
 def _heuristic_caps(model_id: str) -> dict[str, bool]:
@@ -77,6 +166,8 @@ async def list_provider_models(provider: AIProvider, cursor: str | None = None) 
         base = provider.base_url or DEFAULT_BASES.get(base_kind) or CATALOG.get(kind, {}).get("base_url")
         if not base:
             raise DiscoveryError("برای این ارائه‌دهنده Base URL مشخص نیست.")
+        if kind == "xai":
+            return await _xai_models(base, key or ""), None
         url = base.rstrip("/") + "/models"
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         if cursor:
@@ -86,8 +177,14 @@ async def list_provider_models(provider: AIProvider, cursor: str | None = None) 
             r = await c.get(url, headers=headers, params=params)
     except httpx.HTTPError as e:
         raise DiscoveryError(f"ارتباط با ارائه‌دهنده ناموفق بود: {type(e).__name__}") from e
+    if r.status_code == 404 and kind == "kimi_code":
+        # Kimi Code فهرست مدل عمومی ندارد: شناسه‌های مستند (بدون قابلیت/قیمت ادعایی) تا آزمون عملی
+        docs = [DiscoveredModel(x["name"], x["label"], {}, None, None, None,
+                                {"listing": {"source": "docs_catalog", "note": x.get("note", "")}})
+                for x in CATALOG["kimi_code"]["models"]]
+        return docs, None
     if r.status_code >= 400:
-        raise DiscoveryError(f"ارائه‌دهنده فهرست مدل‌ها را برنگرداند (HTTP {r.status_code}).")
+        raise _http_error(kind, r.status_code)
     try:
         data = r.json()
     except ValueError as e:
@@ -127,6 +224,18 @@ async def list_provider_models(provider: AIProvider, cursor: str | None = None) 
                     price = (Decimal(str(pr["prompt"])) * 1_000_000, Decimal(str(pr["completion"])) * 1_000_000)
             except (ArithmeticError, ValueError):
                 price = None
+        elif kind in ("moonshot", "kimi_code"):
+            # فقط فیلدهایی که API واقعاً برگرداند؛ قیمت در این API اعلام نمی‌شود (نامعلوم، نه رایگان)
+            c = it.get("context_length")
+            ctx = c if isinstance(c, int) and c > 0 else None
+            if isinstance(it.get("supports_image_in"), bool):
+                caps["vision"] = it["supports_image_in"]
+            if isinstance(it.get("supports_reasoning"), bool) and it["supports_reasoning"]:
+                meta_th = {"value": True, "control": "always" if "thinking" in mid.lower() else "unknown",
+                           "source": "provider", "at": utcnow().isoformat()}
+                out.append(DiscoveredModel(mid, it.get("display_name") or mid, caps, ctx, None, None,
+                                           {"thinking": meta_th}))
+                continue
         out.append(DiscoveredModel(mid, it.get("displayName") or it.get("display_name") or it.get("name") or mid,
                                    caps, int(ctx) if isinstance(ctx, int) else None, price))
     nxt = None
@@ -162,9 +271,12 @@ async def sync_provider(session: AsyncSession, provider: AIProvider, max_pages: 
             m = AIModel(provider_id=provider.id, model_name=d.id, display_name=d.label, enabled=False,
                         capabilities=caps, capability_meta=meta, source="discovered",
                         context_window=d.context_window or 128000)
+            m.capability_meta = {**meta, **d.meta}
             preset = catalog.get(d.id)
             if d.price:
                 m.price_in, m.price_out = d.price
+                if d.cache_price:
+                    m.price_cache_read = d.cache_price
                 m.pricing_source, m.pricing_checked_at = "provider_api", now
             elif preset:
                 m.price_in, m.price_out, m.price_cache_read, m.price_cache_write = (
@@ -180,9 +292,14 @@ async def sync_provider(session: AsyncSession, provider: AIProvider, max_pages: 
                 if (meta_cur.get(k) or {}).get("source") not in ("probe", "manual"):
                     caps_cur[k] = v
                     meta_cur[k] = {"value": v, "source": "provider", "at": now.isoformat()}
+            for k, v in d.meta.items():
+                if (meta_cur.get(k) or {}).get("source") != "manual":
+                    meta_cur[k] = v
             m.capabilities, m.capability_meta = caps_cur, meta_cur
             if d.price and m.pricing_source in ("unknown", "provider_api", "catalog_unverified"):
                 m.price_in, m.price_out = d.price
+                if d.cache_price:
+                    m.price_cache_read = d.cache_price
                 m.pricing_source, m.pricing_checked_at = "provider_api", now
             if d.context_window:
                 m.context_window = d.context_window

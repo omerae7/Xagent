@@ -81,7 +81,21 @@ CATALOG: dict[str, dict[str, Any]] = {
                     "price": [0.27, 1.10, 0.07, 0], "tier": "worker"}],
     },
     "groq": {"label": "Groq", "base_url": DEFAULT_BASES["groq"], "models": []},
-    "xai": {"label": "xAI", "base_url": DEFAULT_BASES["xai"], "models": []},
+    # مدل‌ها و قیمت‌ها فقط از ‎/v1/language-models و ‎/v1/models همان کلید کشف می‌شوند (بدون فهرست ثابت)
+    "xai": {"label": "xAI — Grok API", "base_url": DEFAULT_BASES["xai"], "models": [], "type": "llm",
+            "docs": "https://docs.x.ai/docs/api-reference"},
+    # Kimi Open Platform: سازگار با OpenAI؛ قیمت در API فهرست مدل اعلام نمی‌شود → تا ثبت دستی «نامعلوم»
+    "moonshot": {"label": "Moonshot AI — Kimi Open Platform", "base_url": DEFAULT_BASES["moonshot"], "models": [],
+                 "type": "llm", "alt_bases": ["https://api.moonshot.cn/v1"],
+                 "docs": "https://platform.kimi.ai/docs"},
+    # Kimi Code: مسیر مستقل و اختیاری با کلید کنسول Kimi Code (جدا از Open Platform). صورت‌حساب اشتراکی است و
+    # قیمت توکنی ندارد → هزینه همیشه «برآوردی» (Stop-Loss) ثبت می‌شود، نه صفر.
+    "kimi_code": {"label": "Kimi Code (اتصال مستقل اختیاری)", "base_url": DEFAULT_BASES["kimi_code"], "type": "llm",
+                  "alt_bases": ["https://api.kimi.com/coding/v1"], "docs": "https://www.kimi.ai/code/docs",
+                  "models": [
+                      {"name": n, "label": f"Kimi Code — {n}", "caps": [], "ctx": 0, "price": [0, 0, 0, 0],
+                       "note": "شناسه از مستندات Kimi Code؛ دسترسی به طرح اشتراک بستگی دارد"}
+                      for n in ("kimi-for-coding", "kimi-for-coding-highspeed", "k3", "k3-256k")]},
     "mistral": {"label": "Mistral", "base_url": DEFAULT_BASES["mistral"], "models": []},
     "ollama": {"label": "Ollama (محلی)", "base_url": DEFAULT_BASES["ollama"], "models": []},
     "custom": {"label": "سازگار با OpenAI (سفارشی)", "base_url": None, "models": []},
@@ -116,17 +130,23 @@ class BoundModel:
     capability_meta: dict[str, Any] = field(default_factory=dict)
     # قیمت معتبر ندارد: هزینه با قیمت محافظه‌کارانه Stop-Loss برآورد می‌شود
     price_estimated: bool = False
+    # قیمت بافت بلند اعلام‌شده توسط API (آستانه، ورودی، خروجی، کش) — مثلاً xAI
+    long_context: tuple[int, Decimal, Decimal, Decimal | None] | None = None
 
     def has(self, cap: str) -> bool:
         return bool(self.capabilities.get(cap))
 
     def cost(self, input_uncached: int, output: int, cache_read: int, cache_write: int) -> Decimal:
         m = Decimal(1_000_000)
+        p_in, p_out, p_cr = self.price_in, self.price_out, self.price_cache_read or self.price_in
+        if self.long_context and input_uncached + cache_read + cache_write > self.long_context[0]:
+            p_in, p_out = self.long_context[1], self.long_context[2]
+            p_cr = self.long_context[3] or p_in
         return (
-            Decimal(input_uncached) * self.price_in
-            + Decimal(output) * self.price_out
-            + Decimal(cache_read) * (self.price_cache_read or self.price_in)
-            + Decimal(cache_write) * (self.price_cache_write or self.price_in)
+            Decimal(input_uncached) * p_in
+            + Decimal(output) * p_out
+            + Decimal(cache_read) * p_cr
+            + Decimal(cache_write) * (self.price_cache_write or p_in)
         ) / m
 
 
@@ -170,6 +190,14 @@ async def load_model(session: AsyncSession, model_id: str | uuid.UUID, include_d
         sl = await get_setting(session, "stoploss", StopLossSettings)
         prices = [Decimal(str(sl.unpriced_input_per_m)), Decimal(str(sl.unpriced_output_per_m)),
                   Decimal(str(sl.unpriced_input_per_m)), Decimal(str(sl.unpriced_input_per_m))]
+    long_ctx = None
+    lc = ((m.capability_meta or {}).get("pricing_detail") or {}).get("long_context")
+    if not estimated and m.pricing_source == "provider_api" and isinstance(lc, dict):
+        try:
+            long_ctx = (int(lc["threshold"]), Decimal(str(lc["in"])), Decimal(str(lc["out"])),
+                        Decimal(str(lc["cache"])) if lc.get("cache") else None)
+        except (KeyError, ValueError, ArithmeticError):
+            long_ctx = None
     return BoundModel(
         id=m.id,
         provider_id=p.id,
@@ -185,7 +213,33 @@ async def load_model(session: AsyncSession, model_id: str | uuid.UUID, include_d
         provider=await _provider_for(p),
         capability_meta=m.capability_meta or {},
         price_estimated=estimated,
+        long_context=long_ctx,
     )
+
+
+# وضعیت قابل‌نمایش هر اتصال (بدون تماس شبکه؛ از آخرین آزمون/کشف و مدل‌ها)
+PROVIDER_STATUS_FA = {
+    "ready": "آماده", "available": "در دسترس (مدل فعالی ندارد)", "needs_setup": "نیازمند تنظیم",
+    "unsupported": "پشتیبانی‌نشده", "temporarily_unavailable": "موقتاً در دسترس نیست", "untested": "آزمون‌نشده",
+}
+
+
+def provider_status(p: AIProvider, models: list[AIModel]) -> tuple[str, str]:
+    if not p.api_key_enc and p.kind != "ollama":
+        return "needs_setup", "کلید API ثبت نشده است"
+    if p.last_test_ok is None:
+        return "untested", "هنوز آزمون یا کشف مدل انجام نشده است"
+    err = (p.last_test_error or "")
+    if p.last_test_ok is False:
+        if any(f"HTTP {c}" in err for c in ("401", "403")):
+            return "needs_setup", "کلید نامعتبر یا بدون دسترسی/اشتراک لازم"
+        if "HTTP 404" in err:
+            return "unsupported", "نقطه API یا مدل در این سرویس وجود ندارد"
+        return "temporarily_unavailable", err[:160] or "خطای موقت"
+    mine = [m for m in models if m.provider_id == p.id]
+    if any(m.enabled and m.health in ("ok", "unknown") for m in mine):
+        return "ready", "اتصال آزموده شد و مدل فعال دارد"
+    return "available", "اتصال برقرار است؛ مدلی فعال نشده"
 
 
 class ModelEmbedder:
