@@ -242,7 +242,7 @@ async def handle_owner_command(bridge: TelegramBridge, payload: dict[str, Any]) 
         conv.message_count += 1
         conv.updated_at = utcnow()
         run = Run(conversation_id=conv.id, trigger="telegram", input=text,
-                  state={"trusted": True, "reply_to": "me"})
+                  state={"trusted": True, "principal": "owner", "requested_by": "telegram:saved_messages", "reply_to": "me"})
         session.add(run)
         await session.flush()
         msg.run_id = run.id

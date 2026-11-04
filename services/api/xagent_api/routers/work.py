@@ -18,7 +18,7 @@ from xagent_core.text import normalize_fa
 from xagent_crm import contact_overview, log_interaction, upsert_contact
 from xagent_tools.schedule import compute_next_run, validate_routine
 
-from ..deps import current_user, get_session, parse_uuid, ser
+from ..deps import current_user, get_session, owner_user, parse_uuid, ser
 
 router = APIRouter(prefix="/api", tags=["work"])
 
@@ -60,7 +60,7 @@ async def _run_task(session: AsyncSession, t: Task) -> Run:
     await session.flush()
     run = Run(conversation_id=conv.id, task_id=t.id, trigger="api",
               input=f"تسک «{t.title}» را انجام بده.\n{t.description or ''}\n(شناسه تسک: {t.id} — در پایان وضعیت تسک را به‌روزرسانی کن)",
-              state={"trusted": True})
+              state={"trusted": True, "principal": "owner", "requested_by": "task"})
     session.add(run)
     t.status = "in_progress"
     await session.flush()
@@ -91,7 +91,7 @@ async def list_tasks(status: str | None = None, q: str | None = None, project_id
 
 
 @router.post("/tasks")
-async def create_task(body: TaskIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def create_task(body: TaskIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     if not body.title:
         raise HTTPException(400, "عنوان لازم است")
     t = Task(title=body.title, created_by="owner")
@@ -107,7 +107,7 @@ async def create_task(body: TaskIn, user: User = Depends(current_user), session:
 
 
 @router.patch("/tasks/{tid}")
-async def update_task(tid: str, body: TaskIn, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def update_task(tid: str, body: TaskIn, _: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     t = await session.get(Task, parse_uuid(tid))
     if t is None:
         raise HTTPException(404, "تسک یافت نشد")
@@ -121,7 +121,7 @@ async def update_task(tid: str, body: TaskIn, _: User = Depends(current_user), s
 
 
 @router.delete("/tasks/{tid}")
-async def delete_task(tid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def delete_task(tid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     t = await session.get(Task, parse_uuid(tid))
     if t is None:
         raise HTTPException(404, "تسک یافت نشد")
@@ -163,7 +163,7 @@ async def list_routines(_: User = Depends(current_user), session: AsyncSession =
 
 
 @router.post("/routines")
-async def create_routine(body: RoutineIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def create_routine(body: RoutineIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     if not body.name or not body.instruction:
         raise HTTPException(400, "نام و دستور روتین لازم است")
     r = Routine(name=body.name, instruction=body.instruction, created_by="owner")
@@ -179,7 +179,7 @@ async def create_routine(body: RoutineIn, user: User = Depends(current_user), se
 
 
 @router.patch("/routines/{rid}")
-async def update_routine(rid: str, body: RoutineIn, user: User = Depends(current_user),
+async def update_routine(rid: str, body: RoutineIn, user: User = Depends(owner_user),
                          session: AsyncSession = Depends(get_session)):
     r = await session.get(Routine, parse_uuid(rid))
     if r is None:
@@ -194,7 +194,7 @@ async def update_routine(rid: str, body: RoutineIn, user: User = Depends(current
 
 
 @router.post("/routines/{rid}/{action}")
-async def routine_action(rid: str, action: str, user: User = Depends(current_user),
+async def routine_action(rid: str, action: str, user: User = Depends(owner_user),
                          session: AsyncSession = Depends(get_session)):
     r = await session.get(Routine, parse_uuid(rid))
     if r is None:
@@ -211,7 +211,7 @@ async def routine_action(rid: str, action: str, user: User = Depends(current_use
     elif action == "test":
         conv = await _routine_conversation(session, r)
         run = Run(conversation_id=conv.id, routine_id=r.id, trigger="routine", input=r.instruction,
-                  state={"trusted": True, "test_run": True,
+                  state={"trusted": True, "principal": "owner", "requested_by": "routine_test", "test_run": True,
                          "max_cost": float(r.max_cost_usd) if r.max_cost_usd else None,
                          "max_steps": r.max_steps})
         session.add(run)
@@ -236,7 +236,7 @@ async def _routine_conversation(session: AsyncSession, r: Routine) -> Conversati
 
 
 @router.delete("/routines/{rid}")
-async def delete_routine(rid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def delete_routine(rid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     r = await session.get(Routine, parse_uuid(rid))
     if r is None:
         raise HTTPException(404, "روتین یافت نشد")
@@ -300,7 +300,7 @@ async def contacts(q: str | None = None, kind: str | None = None, _: User = Depe
 
 
 @router.post("/crm/contacts")
-async def create_contact(body: ContactIn, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def create_contact(body: ContactIn, _: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     if not body.name:
         raise HTTPException(400, "نام لازم است")
     c = Contact(name=body.name)
@@ -313,7 +313,7 @@ async def create_contact(body: ContactIn, _: User = Depends(current_user), sessi
 
 
 @router.patch("/crm/contacts/{cid}")
-async def update_contact(cid: str, body: ContactIn, _: User = Depends(current_user),
+async def update_contact(cid: str, body: ContactIn, _: User = Depends(owner_user),
                          session: AsyncSession = Depends(get_session)):
     c = await upsert_contact(session, body.model_dump(exclude_none=True), parse_uuid(cid))
     await bus.publish("crm.changed", {"id": str(c.id)})
@@ -330,7 +330,7 @@ async def get_contact(cid: str, _: User = Depends(current_user), session: AsyncS
 
 
 @router.delete("/crm/contacts/{cid}")
-async def delete_contact(cid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def delete_contact(cid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     c = await session.get(Contact, parse_uuid(cid))
     if c is None:
         raise HTTPException(404, "مخاطب یافت نشد")
@@ -340,7 +340,7 @@ async def delete_contact(cid: str, user: User = Depends(current_user), session: 
 
 
 @router.post("/crm/interactions")
-async def add_interaction(body: InteractionIn, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def add_interaction(body: InteractionIn, _: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     it = await log_interaction(session, parse_uuid(body.contact_id) if body.contact_id else None, body.summary,
                                body.channel, body.direction, body.content,
                                parse_uuid(body.project_id) if body.project_id else None, body.follow_up_at)
@@ -364,7 +364,7 @@ async def projects(_: User = Depends(current_user), session: AsyncSession = Depe
 
 
 @router.post("/crm/projects")
-async def create_project(body: ProjectIn, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def create_project(body: ProjectIn, _: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     if not body.name:
         raise HTTPException(400, "نام لازم است")
     p = Project(name=body.name)
@@ -376,7 +376,7 @@ async def create_project(body: ProjectIn, _: User = Depends(current_user), sessi
 
 
 @router.patch("/crm/projects/{pid}")
-async def update_project(pid: str, body: ProjectIn, _: User = Depends(current_user),
+async def update_project(pid: str, body: ProjectIn, _: User = Depends(owner_user),
                          session: AsyncSession = Depends(get_session)):
     p = await session.get(Project, parse_uuid(pid))
     if p is None:
@@ -387,7 +387,7 @@ async def update_project(pid: str, body: ProjectIn, _: User = Depends(current_us
 
 
 @router.delete("/crm/projects/{pid}")
-async def delete_project(pid: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def delete_project(pid: str, _: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     p = await session.get(Project, parse_uuid(pid))
     if p is None:
         raise HTTPException(404, "پروژه یافت نشد")

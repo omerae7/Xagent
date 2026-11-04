@@ -62,6 +62,11 @@ class Paused(Exception):
         self.code = code
 
 
+def run_is_owner(state: dict[str, Any]) -> bool:
+    """فقط اجرایی که هویتش صراحتاً «کارفرما» ثبت شده دسترسی مدیریتی دارد (پیش‌فرض امن: خیر)."""
+    return bool(state.get("trusted")) and state.get("principal") == "owner"
+
+
 @dataclass
 class RunCtx:
     session: AsyncSession
@@ -72,6 +77,7 @@ class RunCtx:
     trusted: bool
     state: dict[str, Any] = field(default_factory=dict)
     step_idx: int = 0
+    is_owner: bool = False
     t0: float = field(default_factory=time.monotonic)
 
 
@@ -274,7 +280,8 @@ class AgentRunner:
         ai = await get_setting(session, "ai", AISettings)
         stoploss = await get_setting(session, "stoploss", StopLossSettings)
         state = dict(run.state or {})
-        rc = RunCtx(session, run, general, ai, stoploss, trusted=bool(state.get("trusted", True)), state=state)
+        rc = RunCtx(session, run, general, ai, stoploss, trusted=bool(state.get("trusted", False)), state=state,
+                    is_owner=run_is_owner(state) and run.employee_id is None)
         rc.step_idx = int(state.get("step_idx", 0))
         rc.state["elapsed_base"] = float(state.get("elapsed", 0))
         if run.started_at is None:
@@ -488,7 +495,9 @@ class AgentRunner:
             trusted_owner=rc.trusted, sandbox=get_sandbox(), publish=bus.publish,
             vision=lambda data, q: self._vision(rc, data, q),
             extra={"telegram": self.telegram, "employee_name": employee.name if employee else None,
-                   "runner": self, "depth": int(s.get("depth", 0))},
+                   "runner": self, "depth": int(s.get("depth", 0)),
+                   "principal": "owner" if rc.is_owner else ("employee" if employee else s.get("principal", "external")),
+                   "requested_by": s.get("requested_by")},
         )
         effort = "medium" if (s.get("escalated") or tier == "manager") else "low"
         max_tokens = 8192 if complex_task else 4096
@@ -566,9 +575,10 @@ class AgentRunner:
 
         tools = await select_tools(rc.session, [g for g in groups if g != "admin"], query)
         tools.append(LOAD_TOOL)
-        if rc.trusted:
+        # ابزارهای اداره سیستم فقط برای اجرای کارفرما (نه کارمند، نه رویداد بیرونی، نه Viewer)
+        if rc.is_owner and employee is None:
             read_only = {"system_overview", "system_diagnose", "change_history"}
-            if "admin" in groups and employee is None:
+            if "admin" in groups:
                 tools.extend(ADMIN_TOOLS)
             else:
                 tools.extend(t for t in ADMIN_TOOLS if t.name in read_only)
@@ -666,8 +676,8 @@ class AgentRunner:
                 continue
             if name == "tools_load":
                 wanted = [g for g in (args.get("groups") or []) if isinstance(g, str)]
-                if "admin" in wanted and not rc.trusted:
-                    wanted.remove("admin")
+                if not rc.is_owner:
+                    wanted = [g for g in wanted if g not in ("admin", "host")]
                 s["extra_groups"] = sorted(set(s.get("extra_groups", [])) | set(wanted))
                 emp = await self._employee(rc)
                 new_tools = await self._tools_for(rc, sorted(set(wanted) | set(s["extra_groups"])), rc.run.input, emp)
@@ -705,6 +715,7 @@ class AgentRunner:
                     cats.append(category)
                     approved[cid] = cats
             tctx.extra["approved"] = set(cats)
+            tctx.extra["tool_call_id"] = cid
             st = await self._step(rc, "tool", tool.label or name, status="running", tool_name=name,
                                   detail={"args": harness.redact(args)})
             t0 = time.monotonic()

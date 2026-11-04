@@ -24,7 +24,7 @@ from xagent_core.db import utcnow
 from xagent_core.models import Approval, Conversation, Message, Run, RunStep, Upload, User
 from xagent_core.text import normalize_fa, truncate
 
-from ..deps import current_user, get_session, parse_uuid, ser
+from ..deps import current_user, get_session, owner_user, parse_uuid, ser
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -94,7 +94,7 @@ async def list_conversations(q: str | None = None, archived: bool = False, limit
 
 
 @router.post("/conversations")
-async def create_conversation(body: ConvPatch, _: User = Depends(current_user),
+async def create_conversation(body: ConvPatch, _: User = Depends(owner_user),
                               session: AsyncSession = Depends(get_session)):
     c = Conversation(title=body.title or "گفتگوی جدید", model_selection=body.model_selection or "auto")
     session.add(c)
@@ -103,7 +103,7 @@ async def create_conversation(body: ConvPatch, _: User = Depends(current_user),
 
 
 @router.patch("/conversations/{cid}")
-async def patch_conversation(cid: str, body: ConvPatch, _: User = Depends(current_user),
+async def patch_conversation(cid: str, body: ConvPatch, _: User = Depends(owner_user),
                              session: AsyncSession = Depends(get_session)):
     c = await session.get(Conversation, parse_uuid(cid))
     if c is None:
@@ -118,7 +118,7 @@ async def patch_conversation(cid: str, body: ConvPatch, _: User = Depends(curren
 
 
 @router.delete("/conversations/{cid}")
-async def delete_conversation(cid: str, user: User = Depends(current_user),
+async def delete_conversation(cid: str, user: User = Depends(owner_user),
                               session: AsyncSession = Depends(get_session)):
     c = await session.get(Conversation, parse_uuid(cid))
     if c is None:
@@ -169,7 +169,7 @@ async def list_messages(cid: str, before: str | None = None, limit: int = Query(
 
 # ── ارسال پیام ──
 @router.post("/chat/send")
-async def send(body: SendIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def send(body: SendIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     text = body.text.strip()
     if not text and not body.attachments:
         raise HTTPException(400, "پیام خالی است")
@@ -214,7 +214,7 @@ async def send(body: SendIn, user: User = Depends(current_user), session: AsyncS
 
     run = Run(conversation_id=conv.id, trigger="voice" if body.channel == "voice" else "chat", input=text,
               model_override=None if body.model == "auto" else body.model,
-              state={"trusted": True, "attachments": attachments})
+              state={"trusted": True, "principal": "owner", "requested_by": user.username, "attachments": attachments})
     session.add(run)
     await session.flush()
     msg.run_id = run.id
@@ -227,7 +227,7 @@ async def send(body: SendIn, user: User = Depends(current_user), session: AsyncS
 
 # ── پیوست‌ها ──
 @router.post("/uploads")
-async def upload(file: UploadFile = File(...), conversation_id: str | None = None, _: User = Depends(current_user),
+async def upload(file: UploadFile = File(...), conversation_id: str | None = None, _: User = Depends(owner_user),
                  session: AsyncSession = Depends(get_session)):
     s = get_settings()
     now = utcnow()
@@ -284,7 +284,7 @@ async def get_run(rid: str, _: User = Depends(current_user), session: AsyncSessi
 
 
 @router.post("/runs/{rid}/cancel")
-async def cancel_run(rid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def cancel_run(rid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     r = await session.get(Run, parse_uuid(rid))
     if r is None:
         raise HTTPException(404, "اجرا یافت نشد")
@@ -310,7 +310,7 @@ async def cancel_run(rid: str, user: User = Depends(current_user), session: Asyn
 
 
 @router.post("/runs/{rid}/resume")
-async def resume_run(rid: str, body: ResumeIn, user: User = Depends(current_user),
+async def resume_run(rid: str, body: ResumeIn, user: User = Depends(owner_user),
                      session: AsyncSession = Depends(get_session)):
     r = await session.get(Run, parse_uuid(rid))
     if r is None:
@@ -349,7 +349,7 @@ async def list_approvals(status: str = "pending", _: User = Depends(current_user
 
 
 @router.post("/approvals/{aid}")
-async def decide(aid: str, body: DecisionIn, user: User = Depends(current_user),
+async def decide(aid: str, body: DecisionIn, user: User = Depends(owner_user),
                  session: AsyncSession = Depends(get_session)):
     a = await session.get(Approval, parse_uuid(aid))
     if a is None:

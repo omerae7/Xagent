@@ -33,7 +33,7 @@ from xagent_memory.store import (
     upsert_fact,
 )
 
-from ..deps import current_user, get_session, parse_uuid, ser
+from ..deps import current_user, get_session, owner_user, parse_uuid, ser
 
 router = APIRouter(prefix="/api", tags=["memory"])
 
@@ -87,7 +87,7 @@ async def rules(include_inactive: bool = False, _: User = Depends(current_user),
 
 
 @router.post("/memory/rules")
-async def create_rule(body: RuleIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def create_rule(body: RuleIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     if not body.content:
         raise HTTPException(400, "متن قانون لازم است")
     r = await add_rule(session, body.title or body.content[:80], body.content, source="owner",
@@ -97,7 +97,7 @@ async def create_rule(body: RuleIn, user: User = Depends(current_user), session:
 
 
 @router.patch("/memory/rules/{rid}")
-async def edit_rule(rid: str, body: RuleIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def edit_rule(rid: str, body: RuleIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     r = await session.get(BehavioralRule, parse_uuid(rid))
     if r is None:
         raise HTTPException(404, "قانون یافت نشد")
@@ -107,7 +107,7 @@ async def edit_rule(rid: str, body: RuleIn, user: User = Depends(current_user), 
 
 
 @router.delete("/memory/rules/{rid}")
-async def delete_rule(rid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def delete_rule(rid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     r = await session.get(BehavioralRule, parse_uuid(rid))
     if r is None:
         raise HTTPException(404, "قانون یافت نشد")
@@ -130,14 +130,14 @@ async def facts(section: str | None = None, q: str | None = None, _: User = Depe
 
 
 @router.post("/memory/facts")
-async def save_fact(body: FactIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def save_fact(body: FactIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     f = await upsert_fact(session, body.section, body.key, body.content, source="owner", reason="ثبت از پنل",
                           actor="owner", origin="panel")
     return ser(f)
 
 
 @router.delete("/memory/facts/{fid}")
-async def delete_fact(fid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def delete_fact(fid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     f = await session.get(SemanticFact, parse_uuid(fid))
     if f is None:
         raise HTTPException(404, "یافت نشد")
@@ -170,7 +170,7 @@ async def experiences(outcome: str | None = None, _: User = Depends(current_user
 
 
 @router.post("/memory/experiences/{eid}/obsolete")
-async def obsolete(eid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def obsolete(eid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     e = await session.get(Experience, parse_uuid(eid))
     if e is None:
         raise HTTPException(404, "یافت نشد")
@@ -189,7 +189,7 @@ async def candidates(status: str = "conflict", _: User = Depends(current_user), 
 
 
 @router.post("/memory/candidates/{cid}/{action}")
-async def resolve_candidate(cid: str, action: str, user: User = Depends(current_user),
+async def resolve_candidate(cid: str, action: str, user: User = Depends(owner_user),
                             session: AsyncSession = Depends(get_session)):
     c = await session.get(MemoryCandidate, parse_uuid(cid))
     if c is None:
@@ -227,7 +227,7 @@ async def revisions(status: str | None = None, entity_type: str | None = None, l
 
 
 @router.post("/memory/revisions/{rid}/undo")
-async def undo(rid: str, body: UndoIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def undo(rid: str, body: UndoIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     res = await undo_revision(session, parse_uuid(rid), actor="owner", reason=body.reason or "Undo توسط کارفرما")
     await audit(session, user.username, "memory.undo", rid, {"reverted": res.reverted})
     if not res.reverted:
@@ -243,7 +243,7 @@ async def dream_reports(_: User = Depends(current_user), session: AsyncSession =
 
 
 @router.post("/dream/run")
-async def dream_now(user: User = Depends(current_user)):
+async def dream_now(user: User = Depends(owner_user)):
     await bus.get_redis().xadd("xagent:control", {"cmd": "dream", "force": "1", "by": user.username})
     return {"ok": True, "message": "رویا در صف اجرا قرار گرفت"}
 
@@ -255,7 +255,7 @@ async def skills(_: User = Depends(current_user), session: AsyncSession = Depend
 
 
 @router.post("/skills/{sid}/{action}")
-async def skill_action(sid: str, action: str, user: User = Depends(current_user),
+async def skill_action(sid: str, action: str, user: User = Depends(owner_user),
                        session: AsyncSession = Depends(get_session)):
     s = await session.get(Skill, parse_uuid(sid))
     if s is None:

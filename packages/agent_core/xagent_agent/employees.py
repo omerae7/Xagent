@@ -43,7 +43,8 @@ async def delegate(ctx: ToolContext, employee_name: str, task: str, expected_out
         s2.add(Message(conversation_id=conv.id, role="user", content=text, meta={"from": "manager"}))
         child = Run(conversation_id=conv.id, parent_run_id=ctx.run_id, employee_id=emp.id, trigger="delegate",
                     input=text, task_id=parent_task,
-                    state={"trusted": ctx.trusted_owner, "employee_id": str(emp.id), "depth": 1,
+                    state={"trusted": ctx.trusted_owner, "principal": "employee", "requested_by": f"manager:{ctx.run_id}",
+                           "employee_id": str(emp.id), "depth": 1,
                            "max_steps": emp.max_steps, "max_cost": float(emp.max_cost_usd or 0.2),
                            "route": {"complexity": "simple", "risk": "low", "path": "worker", "command": None,
                                      "needs_vision": False, "needs_audio": False, "tool_groups": list(emp.tool_groups or []),

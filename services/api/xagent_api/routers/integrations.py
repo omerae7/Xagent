@@ -265,7 +265,7 @@ async def vnc_proxy(ws: WebSocket, mode: str = "view"):
     if user is None:
         await ws.close(code=4401)
         return
-    if mode == "control" and not await bus.is_takeover():
+    if mode == "control" and (user.role != "owner" or not await bus.is_takeover()):
         await ws.close(code=4403)
         return
     s = get_settings()
@@ -318,7 +318,7 @@ class TTSIn(BaseModel):
 
 
 @router.post("/voice/stt")
-async def stt(file: UploadFile = File(...), _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def stt(file: UploadFile = File(...), _: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     chain = (await select_models(session, "stt", "worker", need_cap="stt")).models
     if not chain:
         raise HTTPException(400, "مدل گفتار به متن (STT) تنظیم نشده است")
@@ -336,7 +336,7 @@ async def stt(file: UploadFile = File(...), _: User = Depends(current_user), ses
 
 
 @router.post("/voice/tts")
-async def tts(body: TTSIn, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def tts(body: TTSIn, _: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     chain = (await select_models(session, "tts", "worker", need_cap="tts")).models
     if not chain:
         raise HTTPException(400, "مدل متن به گفتار (TTS) تنظیم نشده است")

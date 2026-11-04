@@ -51,7 +51,8 @@ async def tick_routines() -> int:
                 session.add(conv)
                 await session.flush()
             run = Run(conversation_id=conv.id, routine_id=r.id, trigger="routine", input=r.instruction,
-                      state={"trusted": True, "max_cost": float(r.max_cost_usd) if r.max_cost_usd else None,
+                      state={"trusted": True, "principal": "owner", "requested_by": f"routine:{r.id}",
+                             "max_cost": float(r.max_cost_usd) if r.max_cost_usd else None,
                              "max_steps": r.max_steps, "lease": lease})
             session.add(run)
             await session.flush()

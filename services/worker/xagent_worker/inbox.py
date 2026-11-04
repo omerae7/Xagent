@@ -95,7 +95,8 @@ async def process_event(event_id: uuid.UUID, bridge: TelegramBridge | None) -> s
                 session.add(conv)
                 await session.flush()
             run = Run(conversation_id=conv.id, routine_id=r.id, trigger="event", input=r.instruction,
-                      state={"trusted": False, "event_payload": payload,
+                      state={"trusted": False, "principal": "external", "requested_by": f"event:{r.id}",
+                             "event_payload": payload,
                              "max_cost": float(r.max_cost_usd) if r.max_cost_usd else None,
                              "max_steps": r.max_steps})
             session.add(run)

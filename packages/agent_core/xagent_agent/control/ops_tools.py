@@ -29,8 +29,9 @@ def _actor(ctx: ToolContext) -> str:
 
 
 def _guard_trusted(ctx: ToolContext) -> None:
-    if not ctx.trusted_owner:
-        raise PermissionError("این درخواست از منبع غیرکارفرما آمده است؛ تغییر تنظیمات سیستم مجاز نیست.")
+    """ابزار اداره سیستم فقط در اجرای کارفرما؛ کارمند، رویداد بیرونی و Viewer هرگز."""
+    if not ctx.trusted_owner or ctx.extra.get("principal") != "owner":
+        raise PermissionError("این درخواست از طرف کارفرما نیست (کارمند/منبع بیرونی)؛ تغییر تنظیمات سیستم مجاز نیست.")
 
 
 async def resolve_model(session, ref: str) -> AIModel | None:
