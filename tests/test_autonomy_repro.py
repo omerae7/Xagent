@@ -68,6 +68,11 @@ async def test_q1_timed_request_offers_routine_tool_to_model(app_client, configu
 async def test_q2_capability_manifest_separates_ready_from_setup(configured_model):
     from xagent_agent.manifest import build_manifest
 
+    await bus.get_redis().delete("xagent:worker:heartbeat")
+    async with session_scope() as s:
+        m = await build_manifest(s, principal="owner", telegram=FakeTelegram(connected=False))
+    assert "routines" in {c["key"] for c in m["needs_setup"]}, "بدون Worker زنده، روتین نباید آماده اعلام شود"
+    await bus.get_redis().set("xagent:worker:heartbeat", "now", ex=60)
     async with session_scope() as s:
         m = await build_manifest(s, principal="owner", telegram=FakeTelegram(connected=False))
     ready = {c["key"] for c in m["ready"]}

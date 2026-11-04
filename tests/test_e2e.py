@@ -138,13 +138,16 @@ async def test_loop_controller_stops_blind_repetition(app_client, configured_mod
 
 async def test_stoploss_pauses_and_resume(app_client, configured_model, runner):
     s = (await app_client.get("/api/settings")).json()["settings"]["stoploss"]
-    s["max_steps_simple"] = 1
+    # بودجه تطبیقی بدون تمدید = سقف ثابت قدیمی؛ این تست مسیر توقف/ادامه را می‌سنجد
+    s["max_steps_simple"], s["step_extensions"] = 1, 0
     await app_client.put("/api/settings/stoploss", json=s)
-    data = await _send(app_client, "یک فایل دیگر هم بساز")
-    run = await _run(runner, data["run"]["id"])
-    assert run.status == "paused" and run.stop_reason == "steps"
-    s["max_steps_simple"] = 6
-    await app_client.put("/api/settings/stoploss", json=s)
+    try:
+        data = await _send(app_client, "یک فایل دیگر هم بساز")
+        run = await _run(runner, data["run"]["id"])
+        assert run.status == "paused" and run.stop_reason == "steps"
+    finally:
+        s["max_steps_simple"], s["step_extensions"] = 6, 2
+        await app_client.put("/api/settings/stoploss", json=s)
     r = await app_client.post(f"/api/runs/{run.id}/resume", json={"extra_steps": 5})
     assert r.status_code == 200
     run = await _run(runner, str(run.id))

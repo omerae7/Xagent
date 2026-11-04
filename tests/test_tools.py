@@ -120,12 +120,19 @@ async def test_routine_scheduler_lease_and_circuit_breaker(app_client, configure
         runs = (await s.execute(select(Run).where(Run.routine_id == rid))).scalars().all()
         assert len(runs) == 1
         run_id = runs[0].id
-    # سه خطای پیاپی → مدارقطع‌کن باز می‌شود
-    for _ in range(3):
-        async with session_scope() as s:
-            run = await s.get(Run, run_id)
-            run.status = "failed"
-        await after_routine_run(run_id)
+    # سه اجرای ناموفق پیاپی (سه نوبت متمایز) → مدارقطع‌کن باز می‌شود.
+    # پس‌پردازش دوباره همان اجرا عمداً یک بار شمرده می‌شود (بدون شمارش/گزارش تکراری).
+    failed_ids = [run_id]
+    async with session_scope() as s:
+        for i in range(2):
+            extra = Run(routine_id=rid, trigger="routine", input="x", status="failed", dedupe_key=f"t:{rid}:{i}")
+            s.add(extra)
+            await s.flush()
+            failed_ids.append(extra.id)
+        (await s.get(Run, run_id)).status = "failed"
+    for fid in failed_ids:
+        await after_routine_run(fid)
+        await after_routine_run(fid)
     async with session_scope() as s:
         routine = await s.get(Routine, rid)
         assert routine.circuit_state == "open" and routine.circuit_open_until is not None

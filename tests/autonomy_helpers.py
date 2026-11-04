@@ -22,11 +22,15 @@ class FakeTelegram:
         self.connected = connected
         self.sent: list[dict[str, Any]] = []
         self.owner_notes: list[str] = []
+        self.fail_next_sends = 0  # شبیه‌سازی خطای موقت شبکه
         self._mid = 1000
 
     async def send(self, chat, text: str, file_path: str | None = None, reply_to: int | None = None) -> dict:
         if not self.connected:
             raise RuntimeError("تلگرام متصل نیست")
+        if self.fail_next_sends > 0:
+            self.fail_next_sends -= 1
+            raise ConnectionError("قطع موقت ارتباط با سرور تلگرام (شبیه‌سازی)")
         if file_path:
             raise PermissionError("ارسال فایل در این آزمون مجاز نیست")
         self._mid += 1
