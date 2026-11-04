@@ -83,9 +83,32 @@ async def _stats(session: AsyncSession, ids: list[Any]) -> dict[Any, tuple[int, 
     return {mid: (int(n), float(ok or 0), float(lat or 0)) for mid, n, ok, lat in rows}
 
 
+MIN_TASK_SAMPLES = 5
+
+
+async def _task_stats(session: AsyncSession, ids: list[Any]) -> dict[Any, tuple[int, float]]:
+    """(تعداد Run پایانی، نرخ انجام تأییدشده) هر مدل در ۷ روز اخیر — موفقیت HTTP معیار کیفیت کار نیست.
+
+    Run «succeeded» فقط با اعتبارسنجی شواهد (Critical Fix 1) ثبت می‌شود؛ failed/stopped شکست کار است.
+    """
+    if not ids:
+        return {}
+    from xagent_core.models import Run
+
+    terminal = ("succeeded", "failed", "stopped")
+    rows = (await session.execute(
+        select(UsageEvent.model_id, func.count(func.distinct(Run.id)),
+               func.count(func.distinct(Run.id)).filter(Run.status == "succeeded"))
+        .join(Run, Run.id == UsageEvent.run_id)
+        .where(UsageEvent.model_id.in_(ids), UsageEvent.ts >= utcnow() - timedelta(days=7), Run.status.in_(terminal))
+        .group_by(UsageEvent.model_id))).all()
+    return {mid: (int(n), (int(ok) / int(n)) if n else 0.0) for mid, n, ok in rows}
+
+
 async def score(session: AsyncSession, models: list[BoundModel], profile: TaskProfile) -> list[Candidate]:
     rows = {r.id: r for r in (await session.execute(select(AIModel).where(AIModel.id.in_([m.id for m in models])))).scalars()}
     stats = await _stats(session, [m.id for m in models])
+    tasks = await _task_stats(session, [m.id for m in models])
     now = utcnow()
     out: list[Candidate] = []
     for m in models:
@@ -102,6 +125,12 @@ async def score(session: AsyncSession, models: list[BoundModel], profile: TaskPr
         n, ok_rate, lat = stats.get(m.id, (0, 0.0, 0.0))
         # میانگین بیزی: پیش‌فرض ۰٫۹ با وزن ۵ نمونه، تا چند خطای اتفاقی مدل تازه را حذف نکند
         reliability = (0.9 * 5 + ok_rate * n) / (5 + n)
+        tn, task_rate = tasks.get(m.id, (0, 0.0))
+        if tn >= MIN_TASK_SAMPLES:
+            # کیفیت انجام کار تأییدشده (نه فقط پاسخ HTTP) با میانگین بیزی؛ با نمونه کم اعمال نمی‌شود
+            reliability *= (0.8 * 5 + task_rate * tn) / (5 + tn) / 0.8
+            reliability = min(reliability, 0.99)
+            notes.append(f"نرخ انجام تأییدشده {task_rate:.0%} در {tn} اجرا")
         if row is not None and row.health == "degraded":
             reliability *= 0.7
             notes.append("کیفیت سرویس کاهش‌یافته")

@@ -866,6 +866,11 @@ class AgentRunner:
             lines.append(f"تو کارمند «{employee.name}» با سمت «{employee.title}» هستی و به مدیر X Agent گزارش می‌دهی.\n"
                          f"شرح وظیفه: {employee.description}\nدستورالعمل: {employee.instructions}\n"
                          "کار سپرده‌شده را کامل و دقیق انجام بده و در پایان گزارش واقعی (نتیجه، شواهد، مشکلات) بنویس.")
+        elif not rc.is_owner:
+            # اجرای رویداد بیرونی/بیننده: هیچ توانایی اداری که این هویت نمی‌تواند بارگذاری کند معرفی نمی‌شود
+            lines.append("تو ایجنت X Agent هستی و این اجرا از طرف «"
+                         f"{rc.state.get('principal', 'external')}» است (نه کارفرما)؛ فقط ابزارهای مجاز همین اجرا در "
+                         "دسترس‌اند و ابزار اداره سیستم/سرور برای این هویت وجود ندارد.")
         else:
             lines.append(
                 "تو مدیر و هماهنگ‌کننده X Agent هستی؛ یک ایجنت اجرایی، نه چت‌بات. برای هر کار ابزار لازم را بارگذاری و اجرا کن.\n"
@@ -886,13 +891,22 @@ class AgentRunner:
                 principal = "owner" if rc.is_owner else str(rc.state.get("principal", "external"))
                 lines.append(render_manifest(await build_manifest(rc.session, principal=principal, employee=employee,
                                                                   telegram=self.telegram)))
-            except Exception:  # noqa: BLE001 — شناسنامه کمکی است و نباید اجرا را متوقف کند
-                pass
+            except Exception as e:  # noqa: BLE001 — شناسنامه کمکی است و نباید اجرا را متوقف کند
+                rc.state["manifest_error"] = type(e).__name__
+                lines.append("شناسنامه قابلیت‌ها اکنون در دسترس نیست؛ آمادگی هیچ سرویسی را فرض نکن و پیش از ادعای "
+                             "انجام، با ابزار امتحان کن و نتیجه واقعی را گزارش بده.")
         lines.append(f"مدل فعلی تو: {chain[0].label if chain else '-'}"
                      + (f" (جایگزین‌ها: {', '.join(m.label for m in chain[1:3])})" if len(chain) > 1 else ""))
         loaded = ", ".join(GROUP_LABELS.get(g, g) for g in groups) or "پایه"
-        lines.append(f"گروه‌های ابزار بارگذاری‌شده: {loaded}. گروه‌های قابل بارگذاری با tools_load: "
-                     "admin, host, web, browser, desktop, files, system, tasks, routines, crm, telegram, memory, episodes, installed.")
+        loadable = ["web", "browser", "desktop", "files", "system", "tasks", "routines", "crm", "telegram", "memory",
+                    "episodes", "installed", "external"]
+        if rc.is_owner and employee is None:
+            loadable = ["admin", "host", *loadable]
+        emp_allowed = await self._employee_groups(rc)
+        if emp_allowed is not None:
+            loadable = [g for g in loadable if g in emp_allowed]
+        lines.append(f"گروه‌های ابزار بارگذاری‌شده: {loaded}. گروه‌های قابل بارگذاری با tools_load برای همین اجرا: "
+                     + ", ".join(loadable) + ".")
         return "\n".join(lines)
 
     def _wrap_input(self, rc: RunCtx) -> str:

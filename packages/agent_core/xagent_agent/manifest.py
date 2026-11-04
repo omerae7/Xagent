@@ -18,8 +18,52 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
 from xagent_core.config import get_settings
-from xagent_core.models import AIModel, Employee, InstalledTool, Routine
+from xagent_core.models import AIModel, AIProvider, Employee, InstalledTool, Routine
 from xagent_core.settings_store import StopLossSettings, TelegramSettings, get_setting
+
+# ── کاوش واقعی آمادگی (با سقف زمان و کش کوتاه؛ نه در هر نوبت مدل) ──
+PROBE_TTL = 60.0
+PROBE_TIMEOUT = 2.0
+_probe_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+async def _cached(name: str, fn) -> dict[str, Any]:  # noqa: ANN001
+    import asyncio
+    import time
+
+    now = time.monotonic()
+    hit = _probe_cache.get(name)
+    if hit and now - hit[0] < PROBE_TTL:
+        return hit[1]
+    try:
+        res = await asyncio.wait_for(fn(), timeout=PROBE_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 — نتیجه نامعلوم «آماده» نیست
+        res = {"ok": None, "error": type(e).__name__}
+    res["checked_at"] = time.time()
+    _probe_cache[name] = (now, res)
+    return res
+
+
+def invalidate_probes() -> None:
+    _probe_cache.clear()
+
+
+async def probe_browser() -> dict[str, Any]:
+    """مرورگر فقط وقتی آماده است که نقطه CDP واقعاً پاسخ دهد (نه به‌خاطر نام نوع Sandbox)."""
+    import httpx
+
+    from xagent_tools.builtin.computer import _cdp_url
+
+    async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as c:
+        r = await c.get(_cdp_url().rstrip("/") + "/json/version")
+    return {"ok": r.status_code == 200, "status": r.status_code}
+
+
+async def probe_desktop() -> dict[str, Any]:
+    from xagent_tools.sandbox import get_sandbox
+
+    h = await get_sandbox().health()
+    return {"ok": bool(h.get("ok")), "kind": h.get("kind")}
 
 
 async def _redis_get(key: str) -> str | None:
@@ -32,7 +76,7 @@ async def _redis_get(key: str) -> str | None:
 
 async def build_manifest(session: AsyncSession, principal: str = "owner", employee: Any = None,
                          telegram: Any = None, sandbox_kind: str | None = None) -> dict[str, Any]:
-    out: dict[str, list[dict[str, Any]]] = {"ready": [], "needs_setup": [], "unsupported": []}
+    out: dict[str, list[dict[str, Any]]] = {"ready": [], "needs_setup": [], "unsupported": [], "unverified": []}
 
     def add(key: str, label: str, state: str, detail: str = "", how: str = "", tools: str = "") -> None:
         out[state].append({"key": key, "label": label, "detail": detail, "how": how, "load": tools})
@@ -70,16 +114,35 @@ async def build_manifest(session: AsyncSession, principal: str = "owner", employ
         add("telegram", "تلگرام شخصی", "needs_setup",
             "فعال نیست یا نشست متصل نیست" if tg_cfg.enabled else "هنوز متصل نشده است",
             "تنظیمات ← تلگرام: ورود با شماره و کد (فقط کارفرما)", tools="telegram")
-    # ── مرورگر و دسکتاپ ──
+    # ── مرورگر و دسکتاپ: آمادگی از کاوش واقعی، نه از نام نوع Sandbox ──
     kind = sandbox_kind or os.environ.get("XAGENT_SANDBOX", "desktop")
-    if kind in ("desktop", "runner"):
-        add("browser", "مرورگر Chrome ایجنت (کلیک، تایپ، خواندن، اسکرین‌شات) و دسکتاپ", "ready",
-            "قابل مشاهده و Takeover در صفحه دسکتاپ", tools="browser, desktop")
+    allowed = _employee_groups(employee)
+    if kind == "desktop":
+        b = await _cached("browser", probe_browser)
+        d = await _cached("desktop", probe_desktop)
+        for key, label, res, tools in (
+                ("browser", "مرورگر Chrome ایجنت (تب‌ها، باز کردن، خواندن، کلیک، تایپ؛ Takeover کارفرما)", b, "browser"),
+                ("desktop", "کنترل تصویری دسکتاپ (ماوس/صفحه‌کلید، با قفل یک‌اجرایی)", d, "desktop")):
+            if allowed is not None and key not in allowed:
+                add(key, label, "unsupported", "خارج از گروه‌های مجاز این کارمند")
+            elif res.get("ok") is True:
+                add(key, label, "ready", "اتصال آزموده شد", tools=tools)
+            elif res.get("ok") is None:
+                add(key, label, "unverified", f"آمادگی تأیید نشد ({res.get('error') or 'نامعلوم'})",
+                    "پیش از ادعای انجام، با ابزار امتحان کن و نتیجه واقعی را گزارش بده", tools=tools)
+            else:
+                add(key, label, "needs_setup", "سرویس مرورگر/دسکتاپ پاسخ نمی‌دهد",
+                    "xagent status / ری‌استارت سرویس desktop (فقط کارفرما)", tools=tools)
+    elif kind == "runner":
+        add("browser", "مرورگر تعاملی و دسکتاپ", "unsupported", "این نصب Runner بدون Chromium/XFCE است",
+            "web_fetch/web_search برای خواندن وب؛ برای مرورگر تعاملی نصب با پروفایل دسکتاپ لازم است")
     else:
         add("browser", "مرورگر تعاملی و دسکتاپ", "unsupported", "این نصب در حالت سبک (بدون دسکتاپ) است",
             "نصب با پروفایل دارای دسکتاپ؛ تا آن زمان web_fetch/web_search برای خواندن وب آماده است")
     # ── مدل‌ها ──
-    models = (await session.execute(select(AIModel).where(AIModel.enabled.is_(True)))).scalars().all()
+    # فقط مدل فعال از ارائه‌دهنده فعال و بدون وضعیت «از کار افتاده» قابل اتکاست
+    models = (await session.execute(select(AIModel).join(AIProvider, AIProvider.id == AIModel.provider_id).where(
+        AIModel.enabled.is_(True), AIProvider.enabled.is_(True), AIModel.health != "failing"))).scalars().all()
     tool_models = [m for m in models if (m.capabilities or {}).get("tools")]
     if tool_models:
         add("models", "مدل‌های اجرایی با فراخوانی ابزار", "ready", f"{len(tool_models)} مدل فعال")
@@ -92,10 +155,11 @@ async def build_manifest(session: AsyncSession, principal: str = "owner", employ
         else:
             add(cap, label, "needs_setup", "مدل دارای این قابلیت فعال نیست", "افزودن/کشف مدل مناسب در تنظیمات")
     # ── ابزارهای نصب‌شده ──
-    inst = (await session.execute(select(InstalledTool.status, func.count()).group_by(InstalledTool.status))).all()
+    inst = (await session.execute(select(InstalledTool.status, func.count()).where(InstalledTool.enabled.is_(True))
+                                  .group_by(InstalledTool.status))).all()
     counts = dict(inst)
-    if counts.get("ready"):
-        add("installed", "ابزارهای نصب‌شده (MCP/GitHub)", "ready", f"{counts['ready']} ابزار آماده", tools="installed")
+    if counts.get("ready") and (allowed is None or "installed" in allowed):
+        add("installed", "ابزارهای نصب‌شده (MCP/GitHub)", "ready", f"{counts['ready']} ابزار فعال و آماده", tools="installed")
     if any(k for k in counts if k not in ("ready",)):
         add("installed_broken", "ابزارهای نصب‌شده معیوب/در حال نصب", "needs_setup",
             "، ".join(f"{k}: {v}" for k, v in counts.items() if k != "ready"), "صفحه ابزارها: آزمون یا Rollback")
@@ -145,6 +209,11 @@ async def build_manifest(session: AsyncSession, principal: str = "owner", employ
     }
 
 
+def _employee_groups(employee: Any) -> set[str] | None:
+    groups = set(getattr(employee, "tool_groups", None) or []) if employee is not None else set()
+    return groups | {"core", "memory"} if groups else None
+
+
 def render_manifest(m: dict[str, Any]) -> str:
     """متن فشرده برای کانتکست مدل (بدون جزئیات حساس)."""
     def line(c: dict[str, Any]) -> str:
@@ -157,6 +226,9 @@ def render_manifest(m: dict[str, Any]) -> str:
     if m["needs_setup"]:
         parts += ["### پشتیبانی می‌شود ولی نیازمند تنظیم/اتصال (ادعای آماده‌بودن نکن؛ راه رفع را بگو)",
                   *[line(c) + (f" → {c['how']}" if c.get("how") else "") for c in m["needs_setup"]]]
+    if m.get("unverified"):
+        parts += ["### آمادگی تأییدنشده (کاوش نتیجه نداد؛ «آماده» فرض نکن)", *[line(c) + (f" → {c['how']}" if c.get("how") else "")
+                                                                   for c in m["unverified"]]]
     if m["unsupported"]:
         parts += ["### پشتیبانی‌نشده در این نصب/نقش", *[line(c) for c in m["unsupported"]]]
     parts.append("قاعده: پیش از گفتن «نمی‌توانم»، ابزار مرتبط را بارگذاری و امتحان کن؛ اگر واقعاً ممکن نبود، "

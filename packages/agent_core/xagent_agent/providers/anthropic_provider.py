@@ -50,10 +50,15 @@ def supports_fallbacks(model: str) -> bool:
 class AnthropicProvider:
     kind = "anthropic"
 
-    def __init__(self, api_key: str | None, base_url: str | None = None, timeout: float = 300):
-        kwargs: dict[str, Any] = {"api_key": api_key, "timeout": timeout, "max_retries": 2}
+    def __init__(self, api_key: str | None, base_url: str | None = None, timeout: float = 300,
+                 http_client: Any = None):
+        # تلاش مجدد فقط در llm.call_llm (یک لایه، هر تلاش فیزیکی = یک رزرو در دفتر مصرف). تلاش مجدد پنهان SDK
+        # (پیش‌فرض ۲) درخواست‌های واقعی را بدون ثبت در دفتر چند برابر می‌کرد (یافته A6 ممیزی).
+        kwargs: dict[str, Any] = {"api_key": api_key, "timeout": timeout, "max_retries": 0}
         if base_url:
             kwargs["base_url"] = base_url
+        if http_client is not None:
+            kwargs["http_client"] = http_client
         self._client = anthropic.AsyncAnthropic(**kwargs)
         self._no_fallback: set[str] = set()
 
