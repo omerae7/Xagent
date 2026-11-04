@@ -25,7 +25,10 @@ EPISODE_STATUS = {"succeeded": "success", "failed": "failed", "stopped": "stoppe
 
 
 def memory_scope_for(run: Run, employee: Any) -> str:
-    """فضای نام حافظه اجرا: کارمند خصوصی ← employee:<id>؛ مدیر و کارمند مشترک ← global."""
+    """فضای نام حافظه اجرا: مأموریت ← mission:<id>؛ کارمند خصوصی ← employee:<id>؛ مدیر و کارمند مشترک ← global."""
+    mid = (run.state or {}).get("mission_id")
+    if mid:
+        return f"mission:{mid}"  # تجربه حاصل از داده غیرقابل‌اعتماد مأموریت وارد حافظه سراسری نمی‌شود
     if run.employee_id is not None and employee is not None and getattr(employee, "memory_scope", "shared") == "private":
         return f"employee:{employee.id}"
     return "global"

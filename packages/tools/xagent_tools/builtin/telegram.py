@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
+from xagent_core import inbox
 from xagent_core.text import truncate
 
 from .. import missions
@@ -17,35 +19,73 @@ def _bridge(ctx: ToolContext):
     return br
 
 
+def _definitely_not_sent(e: Exception) -> bool:
+    """خطاهایی که پیش از ارسال شبکه یا با پاسخ صریح سرور رخ می‌دهند → قطعاً ارسال نشده (تلاش دوباره امن)."""
+    if isinstance(e, (RuntimeError, PermissionError, ValueError, ConnectionRefusedError)) and not isinstance(e, TimeoutError):
+        return True  # پیش از ارسال یا اتصال برقرار نشده
+    return type(e).__module__.startswith("telethon.errors") and "Timeout" not in type(e).__name__
+
+
+async def _reconcile(br: Any, chat: str, text: str) -> bool:
+    """تطبیق با مقصد: آیا پیام خروجی با همین متن در گفتگو دیده می‌شود؟ (بهترین تلاش؛ بدون ادعای قطعیت)"""
+    try:
+        for m in await br.recent(chat, 15):
+            if m.get("sender") == "من" and (m.get("text") or "").strip() == text.strip():
+                return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 async def telegram_send(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     br = _bridge(ctx)
     mission_id = ctx.extra.get("mission_id")
-    ref = key = None
-    if mission_id:
-        # اجرای مأموریت: هر پیام ورودی حداکثر یک پاسخ (کلید یکتا، حتی پس از ری‌استارت یا تکرار نوبت)
-        state = ctx.extra.get("run_state") or {}
-        ref = missions.infer_reply_to(a, state)
+    state = ctx.extra.get("run_state") or {}
+    text = a.get("text", "")
+    ref = str(a["reply_to"]) if a.get("reply_to") not in (None, "") else None
+    # کلید صندوق خروجی: در مأموریت = پیام مقصد (هر پیام حداکثر یک پاسخ)؛ در اجرای عادی = همین فراخوانی ابزار
+    # (اجرای ازسرگرفته پس از Crash همان فراخوانی را دوباره ارسال نمی‌کند)
+    if mission_id and ref:
         key = missions.reply_key(mission_id, a["chat"], ref)
-        if await missions.already_done(ctx.session, key):
-            return ToolResult(True, "به این پیام قبلاً پاسخ داده شده است؛ ارسال تکراری انجام نشد.",
-                              {"duplicate": True}, verified=True)
-    reply_to = int(ref) if ref and str(ref).isdigit() else (int(a["reply_to"]) if str(a.get("reply_to", "")).isdigit() else None)
+    else:
+        key = f"tg-send:{ctx.run_id}:{ctx.extra.get('tool_call_id') or hashlib.sha1(text.encode()).hexdigest()[:12]}"
+    verdict, aid = await missions.outbox_reserve(
+        key, mission_id=mission_id, routine_id=ctx.extra.get("routine_id"), run_id=ctx.run_id,
+        action="telegram_reply" if ref else "telegram_send", target=str(a["chat"]), ref=ref,
+        detail={"text": truncate(text, 300)})
+    if verdict == "done":
+        return ToolResult(True, "این پیام قبلاً ارسال شده است؛ ارسال تکراری انجام نشد.", {"duplicate": True}, verified=True)
+    if verdict == "uncertain":
+        if aid is not None and await _reconcile(br, str(a["chat"]), text):
+            await missions.outbox_mark(aid, "reconciled", {"by": "recent_history"})
+            return ToolResult(True, "ارسال قبلی در تاریخچه گفتگو تأیید شد؛ دوباره ارسال نشد.", {"reconciled": True}, verified=True)
+        await inbox.post(ctx.session, kind="error", severity="important",
+                         title=f"نتیجه ارسال پیام به {a['chat']} نامشخص است",
+                         body="ارسال قبلی ممکن است انجام شده باشد؛ برای جلوگیری از پیام تکراری دوباره ارسال نشد. "
+                              "لطفاً گفتگو را بررسی کنید.", run_id=ctx.run_id, mission_id=mission_id,
+                         dedupe_key=f"outbox-uncertain:{key}")
+        return ToolResult(False, "نتیجه ارسال قبلی همین پیام نامشخص است؛ دوباره ارسال نشد و به کارفرما گزارش شد.",
+                          {"uncertain": True})
+    await missions.outbox_mark(aid, "sending")
     try:
-        res = await br.send(a["chat"], a.get("text", ""), file_path=a.get("file"), reply_to=reply_to)
+        res = await br.send(a["chat"], text, file_path=a.get("file"),
+                            reply_to=int(ref) if ref and ref.lstrip("-").isdigit() else None)
     except Exception as e:
-        if mission_id:
-            # مکان‌نمای پایش جلو نمی‌رود تا نوبت بعد دوباره تلاش شود (پاسخ‌های موفق با کلید یکتا تکرار نمی‌شوند)
-            (ctx.extra.get("run_state") or {})["mission_send_failed"] = True
-            await missions.record(ctx.session, mission_id=mission_id, routine_id=ctx.extra.get("routine_id"),
-                                  run_id=ctx.run_id, action="telegram_reply", target=str(a["chat"]), ref=ref,
-                                  status="failed", detail={"error": type(e).__name__})
-        raise
+        if _definitely_not_sent(e):
+            await missions.outbox_mark(aid, "failed", {"error": type(e).__name__})
+            if mission_id:
+                state["mission_send_failed"] = True  # مکان‌نما جلو نمی‌رود؛ نوبت بعد امن دوباره تلاش می‌کند
+            raise
+        await missions.outbox_mark(aid, "unknown", {"error": type(e).__name__})
+        state["mission_send_unknown"] = True
+        await inbox.post(ctx.session, kind="error", severity="important",
+                         title=f"نتیجه ارسال پیام به {a['chat']} نامشخص است",
+                         body=f"خطای شبکه پس از ارسال ({type(e).__name__}). برای جلوگیری از پیام تکراری، خودکار دوباره ارسال نمی‌شود.",
+                         run_id=ctx.run_id, mission_id=mission_id, dedupe_key=f"outbox-uncertain:{key}")
+        return ToolResult(False, "نتیجه ارسال نامشخص است (ممکن است ارسال شده باشد)؛ تکرار خودکار انجام نمی‌شود.",
+                          {"uncertain": True})
     ok = bool(res.get("message_id"))
-    if mission_id:
-        await missions.record(ctx.session, mission_id=mission_id, routine_id=ctx.extra.get("routine_id"),
-                              run_id=ctx.run_id, action="telegram_reply", target=str(a["chat"]), ref=ref,
-                              status="sent" if ok else "failed", key=key,
-                              detail={"message_id": res.get("message_id"), "text": truncate(a.get("text", ""), 300)})
+    await missions.outbox_mark(aid, "sent" if ok else "unknown", {"message_id": res.get("message_id")})
     return ToolResult(ok, f"پیام به {a['chat']} ارسال شد (شناسه پیام {res.get('message_id')})" if ok else "ارسال ناموفق",
                       res, verified=ok)
 

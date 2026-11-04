@@ -207,6 +207,8 @@ class Worker:
         loop = asyncio.get_running_loop()
         while not self.stopping.is_set():
             try:
+                if self.telegram._pending:
+                    await self.telegram.flush_pending()
                 n = await tick_routines(self.telegram)
                 if n:
                     log.info("%d روتین زمان‌بندی شد", n)

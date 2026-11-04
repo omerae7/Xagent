@@ -32,7 +32,7 @@ class FakeTelegram:
             raise RuntimeError("تلگرام متصل نیست")
         if self.fail_next_sends > 0:
             self.fail_next_sends -= 1
-            raise ConnectionError("قطع موقت ارتباط با سرور تلگرام (شبیه‌سازی)")
+            raise ConnectionRefusedError("اتصال به سرور تلگرام برقرار نشد (شبیه‌سازی؛ قطعاً ارسال نشده)")
         if file_path:
             raise PermissionError("ارسال فایل در این آزمون مجاز نیست")
         self._mid += 1

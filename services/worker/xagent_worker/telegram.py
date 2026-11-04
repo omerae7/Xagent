@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from xagent_core import bus
 from xagent_core.config import get_settings
@@ -39,12 +40,13 @@ class TelegramBridge:
         self.me: Any = None
         self.cfg = TelegramSettings()
         self._lock = asyncio.Lock()
+        self._pending: list[tuple[dict[str, Any], str]] = []
 
     async def _publish_status(self, error: str | None = None) -> None:
         status = {"connected": self.connected, "error": error, "at": utcnow().isoformat()}
         if self.me is not None:
             status["me"] = {"id": self.me.id, "username": getattr(self.me, "username", None),
-                            "name": " ".join(filter(None, [self.me.first_name, getattr(self.me, "last_name", None)]))}
+                            "name": " ".join(filter(None, [getattr(self.me, "first_name", None), getattr(self.me, "last_name", None)]))}
         await bus.get_redis().set("xagent:telegram:status", json.dumps(status, ensure_ascii=False))
         await bus.publish("telegram.status", status)
 
@@ -122,19 +124,38 @@ class TelegramBridge:
                 "has_media": bool(msg.media),
                 "geo": {"lat": msg.geo.lat, "long": msg.geo.long} if getattr(msg, "geo", None) else None,
             }
+            await self._store(payload, f"tg:{msg.chat_id}:{msg.id}")
+        except Exception as e:  # noqa: BLE001
+            log.exception("خطا در پردازش پیام تلگرام: %s", e)
+
+    async def _store(self, payload: dict[str, Any], dedup: str) -> None:
+        """ثبت پایدار رویداد: تکراری (Unique) بی‌صدا رد می‌شود؛ خطای واقعی ذخیره‌سازی در صف بازیابی می‌ماند."""
+        try:
             async with session_scope() as session:
-                ev = EventInbox(source="telegram", kind="message", payload=payload,
-                                dedup_key=f"tg:{msg.chat_id}:{msg.id}")
+                ev = EventInbox(source="telegram", kind="message", payload=payload, dedup_key=dedup)
                 session.add(ev)
                 try:
                     await session.flush()
-                except Exception:  # noqa: BLE001 — تکراری
+                except IntegrityError:  # همان پیام قبلاً ثبت شده است
                     await session.rollback()
                     return
                 ev_id = ev.id
-            await bus.enqueue_inbox(ev_id)
-        except Exception as e:  # noqa: BLE001
-            log.exception("خطا در پردازش پیام تلگرام: %s", e)
+        except IntegrityError:
+            return
+        except Exception as e:  # noqa: BLE001 — اتصال/ذخیره‌سازی: نباید بی‌صدا حذف شود
+            if len(self._pending) < 2000:
+                self._pending.append((payload, dedup))
+            log.error("ذخیره پیام تلگرام ناموفق؛ در صف بازیابی ماند (%d در صف): %s", len(self._pending), type(e).__name__)
+            await self._publish_status(f"ذخیره پیام‌های دریافتی موقتاً ناموفق است ({len(self._pending)} در صف بازیابی)")
+            return
+        await bus.enqueue_inbox(ev_id)
+
+    async def flush_pending(self) -> int:
+        """تلاش دوباره برای ثبت پیام‌هایی که هنگام خطای دیتابیس در صف بازیابی ماندند."""
+        items, self._pending = self._pending, []
+        for payload, dedup in items:
+            await self._store(payload, dedup)
+        return len(items) - len(self._pending)
 
     # ── عملیات ──
     async def _entity(self, chat: str | int):

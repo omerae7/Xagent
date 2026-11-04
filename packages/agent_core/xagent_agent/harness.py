@@ -31,6 +31,8 @@ CATEGORIES: dict[str, dict[str, Any]] = {
     "payment": {"label": "پرداخت و امور مالی", "default": "forbidden", "icon": "wallet"},
     "code_exec": {"label": "اجرای کد و فرمان ترمینال", "default": "ask", "icon": "terminal"},
     "desktop_control": {"label": "کنترل دسکتاپ و مرورگر", "default": "auto", "icon": "monitor"},
+    "web_irreversible": {"label": "اقدام برگشت‌ناپذیر در وب (حذف، تأیید نهایی، ثبت فرم، تغییر حساب)", "default": "ask",
+                         "icon": "alert"},
     "memory_rule": {"label": "تغییر قوانین رفتاری و حافظه", "default": "ask", "icon": "brain"},
     "external_tool": {"label": "ابزارهای نصب‌شده خارجی (MCP/GitHub)", "default": "ask", "icon": "plug"},
     "system_update": {"label": "به‌روزرسانی هسته و سیاست‌های امنیتی", "default": "ask", "icon": "shield",

@@ -211,7 +211,10 @@ async def test_acceptance_ten_minute_telegram_mission(app_client, configured_mod
         # ۸ و ۹) پیام مجاز پردازش شد؛ پیام تکراری پاسخ دوباره نگرفت؛ خطای موقت دوباره تلاش شد
         assert [(m["chat"], m["reply_to"]) for m in fake.sent] == [("ali", 501), ("ali", 502)]
         acts = (await s.execute(select(MissionAction).where(MissionAction.mission_id == routine.mission_id))).scalars().all()
-        assert sorted(a.status for a in acts if a.target == "ali") == ["failed", "sent", "sent"]
+        # صندوق خروجی: یک ردیف برای هر پیام مقصد؛ تلاش قطعاً‌ناموفق ۵۰۲ همان ردیف را به sent رساند
+        ali = {a.ref: a for a in acts if a.target == "ali"}
+        assert {k: v.status for k, v in ali.items()} == {"501": "sent", "502": "sent"}
+        assert ali["502"].detail.get("error") == "ConnectionRefusedError"
         # ۱۰) پیام خارج از محدوده (و دستور تزریقی فایل) هیچ اقدامی ایجاد نکرد
         assert not any(m["chat"] == "eve" for m in fake.sent)
         assert any(a.target == "eve" and a.status == "blocked" for a in acts)
@@ -356,7 +359,7 @@ def _browser_handler(marker: str, page: FakePage, *, same_args: bool = True, rec
 async def _browser_mission(app_client, runner, mock_llm, monkeypatch, marker: str, page: FakePage, **kw):
     from xagent_tools.builtin import computer
 
-    async def fake_page():
+    async def fake_page(*_):
         return page
 
     monkeypatch.setattr(computer, "_page", fake_page)

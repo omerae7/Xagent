@@ -364,11 +364,11 @@ class AgentRunner:
             routine = await rc.session.get(Routine, run.routine_id)
             if routine is not None and routine.watch:
                 res = await watch_mod.precheck(rc.session, routine, self.telegram)
-                s["watch"] = {"summary": res.summary, "events": len(res.events), "error": res.error_code}
+                s["watch"] = {"summary": res.summary, "events": len(res.events), "error": res.error_code, "stats": res.stats}
                 await self._step(rc, "watch", f"پیش‌بررسی قطعی: {res.error or res.summary}",
                                  status="error" if res.error else "ok",
                                  detail={"source": routine.watch.get("source"), "events": len(res.events),
-                                         "error": res.error_code})
+                                         "error": res.error_code, "stats": res.stats})
                 if res.error:
                     raise WatchFailed(res.error)
                 s["watch_next_state"] = res.state
@@ -377,7 +377,8 @@ class AgentRunner:
                     s["phase"] = "done"
                     return f"NO_CHANGE — {res.summary}"
                 s["watch_events"] = len(res.events)
-                key = "new_messages" if routine.watch.get("source") == "telegram" else "changes"
+                src = routine.watch.get("source")
+                key = "new_messages" if src == "telegram" else ("events" if src == "inbox" else "changes")
                 s["event_payload"] = {"source": routine.watch.get("source"), key: res.events}
                 s["light"] = True
                 await self._checkpoint(rc)
@@ -488,10 +489,10 @@ class AgentRunner:
             scopes=["global", run.trigger if run.trigger != "chat" else "chat"],
         )
         budget = ContextBudget.for_window(primary.context_window, complex_task)
-        mem_scope = memory_scope_for(run, await self._employee(rc))
+        mem_scopes = self.memory_scopes_for_run(run, await self._employee(rc), rc.state)
         built: BuiltContext = await build_context(
             rc.session, run.input, mplan, budget, conversation_id=run.conversation_id, routine_id=run.routine_id,
-            exclude_run_id=run.id, scopes=[mem_scope],
+            exclude_run_id=run.id, scopes=mem_scopes,
         )
         if "memory_logged" not in s:
             await self._step(rc, "memory", f"بازیابی حافظه (~{built.used_tokens} توکن)", detail=built.stats)
@@ -578,8 +579,8 @@ class AgentRunner:
                    "runner": self, "depth": int(s.get("depth", 0)),
                    "principal": "owner" if rc.is_owner else ("employee" if employee else s.get("principal", "external")),
                    "requested_by": s.get("requested_by"),
-                   "memory_scopes": [memory_scope_for(run, employee)],
-                   "memory_write_scope": memory_scope_for(run, employee),
+                   "memory_scopes": self.memory_scopes_for_run(run, employee, s),
+                   "memory_write_scope": self.memory_scopes_for_run(run, employee, s)[0],
                    "mission_intent": route.get("intent"), "mission_id": s.get("mission_id"),
                    "routine_id": str(run.routine_id) if run.routine_id else None, "run_state": s,
                    "enqueue_runs": []},
@@ -659,6 +660,17 @@ class AgentRunner:
             return await rc.session.get(Employee, uuid.UUID(str(eid)))
         except ValueError:
             return None
+
+    @staticmethod
+    def memory_scopes_for_run(run: Run, employee: Any, state: dict[str, Any] | None) -> list[str]:
+        """Scope حافظه: مأموریت فقط حافظه خودش را می‌بیند (نه دانسته‌های سراسری کارفرما)، مگر مجوز صریح."""
+        mid = (state or {}).get("mission_id")
+        if mid:
+            scopes = [f"mission:{mid}"]
+            if (state or {}).get("mission_memory") == "global":
+                scopes.append("global")
+            return scopes
+        return [memory_scope_for(run, employee)]
 
     async def _mission(self, rc: RunCtx) -> Mission | None:
         mid = rc.state.get("mission_id")
@@ -924,15 +936,15 @@ class AgentRunner:
         if verdict == "ask":
             return "ask"
         target = str(args.get("chat", ""))
-        ref = missions.infer_reply_to(args, s)
+        ev = next((e for e in ((s.get("event_payload") or {}).get("new_messages") or [])
+                   if missions.norm(target) in {missions.norm(e.get(k)) for k in ("chat", "chat_id") if e.get(k) is not None}), None)
+        ref = str(args.get("reply_to") or (ev or {}).get("message_id") or "") or None
         await missions.record(rc.session, mission_id=mission.id if mission else None, routine_id=rc.run.routine_id,
                               run_id=rc.run.id, action=tool.name, target=target or tool.name, ref=ref,
-                              status="blocked", detail={"reason": why})
+                              status="blocked", detail={"reason": why, "args": harness.redact(args)})
         await self._step(rc, "approval", f"مجوز مأموریت: {why}", status="blocked", tool_name=tool.name,
                          detail={"reason": why, "args": harness.redact(args)})
-        if verdict == "out_of_scope":
-            ev = next((e for e in ((s.get("event_payload") or {}).get("new_messages") or [])
-                       if missions.norm(e.get("chat", "")) == missions.norm(target)), None)
+        if verdict == "out_of_scope" and tool.name == missions.REPLY_TOOL:
             await inbox.post(rc.session, kind="message", severity="important",
                              title=f"پیام از گفتگوی خارج از محدوده مجوز: {target}",
                              body=(f"متن: {truncate((ev or {}).get('text', ''), 600)}\n" if ev else "")
@@ -1157,6 +1169,12 @@ class AgentRunner:
             except Exception as e:  # noqa: BLE001 — یادگیری نباید نتیجه کار را خراب کند
                 rc.state["learn_error"] = repr(e)
         await self._report_long_run(rc, status)
+        try:  # آزادسازی تب مرورگر این اجرا (اگر بازی داشت)
+            from xagent_tools.builtin import computer as _computer
+
+            await _computer.release_session(run.id)
+        except Exception:  # noqa: BLE001
+            pass
         await self._checkpoint(rc)
         reply_to = rc.state.get("reply_to")
         if reply_to and self.telegram is not None and getattr(self.telegram, "connected", False):
