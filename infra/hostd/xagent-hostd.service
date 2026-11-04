@@ -9,6 +9,5 @@ ExecStart=/usr/bin/python3 /usr/local/lib/xagent/xagent-hostd --config /etc/xage
 # کارهای در حال اجرا در Session جدا هستند و با توقف این سرویس از بین نمی‌روند
 KillMode=process
 NoNewPrivileges=no
-ProtectHome=read-only
 PrivateTmp=yes
 UMask=0022
