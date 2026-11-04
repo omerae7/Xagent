@@ -195,8 +195,23 @@ class ModelEmbedder:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         from xagent_core.models import EMBED_DIM
+        from .base import ProviderError
+        from ..usage_ledger import begin_aux_attempt, finish_aux_attempt
 
-        return await self.bound.provider.embed(self.bound.model_name, texts, EMBED_DIM)
+        input_hint = max(256, sum(len(t) for t in texts) // 2)
+        aid = await begin_aux_attempt(self.bound, purpose="embedding",
+                                      input_hint=input_hint, output_hint=1)
+        try:
+            vectors = await self.bound.provider.embed(self.bound.model_name, texts, EMBED_DIM)
+        except BaseException as error:
+            await finish_aux_attempt(aid, unit_details={"texts": len(texts),
+                "input_characters": sum(len(t) for t in texts)}, model=self.bound,
+                error=error, known_rejected=isinstance(error, ProviderError) and error.status in (400, 401, 403, 404, 422))
+            raise
+        await finish_aux_attempt(aid, unit_details={"texts": len(texts),
+            "input_characters": sum(len(t) for t in texts)}, model=self.bound,
+            reported_usage=getattr(vectors, "usage", None))
+        return vectors
 
 
 async def test_model(session: AsyncSession, model: AIModel) -> tuple[bool, str, int]:
