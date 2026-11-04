@@ -54,6 +54,10 @@ _DURATION_PATTERNS = [
 _COUNT_PATTERN = re.compile(rf"(?:^|\s){NUM}\s*(?:بار|دفعه)(?!\s+در)")
 _DAILY_AT = re.compile(r"هر\s+روز\s+(?:صبح\s+|عصر\s+|شب\s+)?ساعت\s+(\d{1,2})(?::(\d{2}))?\s*(صبح|بعد از ظهر|عصر|شب)?")
 _DAILY_AT_EN = re.compile(r"\bevery\s+day\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b")
+# زمان یک‌باره: «فردا ساعت ۹:۳۰»، «پس‌فردا صبح ساعت ۸»، «امروز ساعت ۱۸»، «ساعت ۱۵ و نیم»، «tomorrow at 9:30»
+_DAY_WORD = re.compile(r"(پس ?فردا|فردا|امروز|امشب|day after tomorrow|tomorrow|today|tonight)")
+_AT_TIME = re.compile(r"(?:ساعت|at)\s+(\d{1,2})(?::(\d{2}))?(\s+و\s+نیم)?\s*(صبح|ظهر|بعد از ظهر|عصر|شب|am|pm)?")
+_REMINDER = re.compile(r"(یادم بنداز|یادآوری کن|یادآوری|به من یادآوری|remind me)")
 _IMMEDIATE = re.compile(r"(از\s+(?:همین\s+)?(?:الان|حالا)|همین\s+(?:الان|حالا)|\bstarting now\b|\bfrom now\b|\bright now\b)")
 _CONDITIONAL = re.compile(r"(اگر|اگه|در صورتی که|در صورت|\bif\b|\bwhenever\b)")
 _REPORT = re.compile(r"(گزارش|خبرم کن|خبر بده|اطلاع بده|بهم بگو|به من بگو|\breport\b|\bnotify\b|let me know|tell me)")
@@ -78,6 +82,9 @@ class MissionIntent:
     wants_reply: bool = False
     services: list[str] = field(default_factory=list)
     watch_source: str | None = None
+    # کار زمان‌دار یک‌باره (تسک ایجنت در موعد) — {"day_offset": 0|1|2|None, "hour": h, "minute": m}
+    one_shot: dict | None = None
+    reminder: bool = False
     matched: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -85,6 +92,11 @@ class MissionIntent:
 
     def describe(self) -> str:
         parts = []
+        if self.one_shot:
+            days = {0: "امروز", 1: "فردا", 2: "پس‌فردا"}.get(self.one_shot.get("day_offset"), "")
+            parts.append(f"اجرای یک‌باره {days} ساعت {self.one_shot['hour']:02d}:{self.one_shot['minute']:02d}".strip())
+            if self.reminder:
+                parts.append("یادآوری برای کارفرما (تسک انسانی)")
         if self.interval_seconds:
             parts.append(f"هر {_human(self.interval_seconds)}")
         if self.cron:
@@ -199,4 +211,42 @@ def parse_intent(text: str) -> MissionIntent:
     it.services = [name for name, pat in _SERVICES.items() if pat.search(t)]
     if it.recurring and "telegram" in it.services and re.search(r"(تلگرام|telegram|پیام|message)", t):
         it.watch_source = "telegram"
+    it.reminder = bool(_REMINDER.search(t))
+    if not it.recurring:
+        day = _DAY_WORD.search(t)
+        at = _AT_TIME.search(t)
+        if at or day:
+            offset = None
+            if day:
+                w = day.group(1).replace(" ", "")
+                offset = 2 if w in ("پسفردا", "dayaftertomorrow") else 1 if w in ("فردا", "tomorrow") else 0
+            hour, minute = (9, 0)
+            if at:
+                hour, minute = int(at.group(1)), int(at.group(2) or 0)
+                if at.group(3):
+                    minute = 30
+                suffix = (at.group(4) or "").strip()
+                if suffix in ("بعد از ظهر", "عصر", "شب", "pm") and hour < 12:
+                    hour += 12
+            elif day and day.group(1) in ("امشب", "tonight"):
+                hour = 20
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                it.one_shot = {"day_offset": offset, "hour": hour, "minute": minute}
+                it.matched.append((day.group(0) if day else "") + " " + (at.group(0) if at else ""))
     return it
+
+
+def resolve_one_shot(one_shot: dict, tz: str, now=None):  # noqa: ANN001, ANN201
+    """زمان محلی کار یک‌باره → UTC. بدون روز صریح، اگر ساعت امروز گذشته باشد فردا در نظر گرفته می‌شود."""
+    from datetime import UTC, timedelta
+
+    from xagent_core.timeutil import get_zone, now_utc
+
+    zone = get_zone(tz)
+    local_now = (now or now_utc()).astimezone(zone)
+    offset = one_shot.get("day_offset")
+    target = (local_now + timedelta(days=offset or 0)).replace(
+        hour=int(one_shot.get("hour", 9)), minute=int(one_shot.get("minute", 0)), second=0, microsecond=0)
+    if offset is None and target <= local_now:
+        target += timedelta(days=1)
+    return target.astimezone(UTC)

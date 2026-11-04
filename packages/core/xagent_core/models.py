@@ -336,8 +336,16 @@ class Task(IdMixin, TimestampMixin, Base):
     __tablename__ = "tasks"
     title: Mapped[str] = mapped_column(String(256))
     description: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(16), default="todo", index=True)  # todo|in_progress|waiting|done|cancelled
+    status: Mapped[str] = mapped_column(String(16), default="todo", index=True)  # todo|in_progress|waiting|done|failed|cancelled
     priority: Mapped[str] = mapped_column(String(8), default="normal")  # low|normal|high|urgent
+    # human = پیگیری/یادآوری (هرگز خودکار اجرا نمی‌شود) | agent = اجرای ایجنت در start_at (یا due_at)
+    # dependent = اجرای ایجنت پس از انجام تسک depends_on_id  (Migration 0006)
+    kind: Mapped[str] = mapped_column(String(12), default="human", server_default="human", index=True)
+    depends_on_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
+    missed_policy: Mapped[str] = mapped_column(String(12), default="run_late", server_default="run_late")  # run_late|skip
+    last_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     assignee_type: Mapped[str] = mapped_column(String(16), default="agent")  # agent | contact | owner
     assignee_contact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("contacts.id", ondelete="SET NULL")

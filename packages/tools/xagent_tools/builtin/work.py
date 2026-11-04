@@ -34,26 +34,56 @@ def _date(v: str | None, tz: str):
 
 # ── وظایف ──
 async def task_create(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
+    """تسک انسانی (پیگیری/یادآوری)، تسک اجرایی ایجنت در موعد، یا تسک وابسته به تسک دیگر."""
+    intent = ctx.extra.get("mission_intent") or {}
     assignee_id = None
     if a.get("assignee"):
         found = await find_contacts(ctx.session, a["assignee"], 1)
         assignee_id = found[0].id if found else None
+    kind = a.get("kind")
+    if kind not in ("human", "agent", "dependent"):
+        # پیش‌فرض قطعی از دستور کارفرما: «فردا ساعت ۹:۳۰ گزارش را تهیه کن» → اجرای ایجنت؛ «یادم بنداز» → انسانی
+        kind = "agent" if intent.get("one_shot") and not intent.get("reminder") and not assignee_id else "human"
+    if kind != "human" and (ctx.extra.get("principal") not in ("owner", None) or not ctx.trusted_owner):
+        return ToolResult(False, "تسک اجرایی خودکار فقط در اجرای مستقیم کارفرما ساخته می‌شود.")
+    execute_at = _date(a.get("execute_at"), ctx.timezone) if a.get("execute_at") else None
+    if execute_at is None and intent.get("one_shot"):
+        from xagent_agent.intent import resolve_one_shot
+
+        execute_at = resolve_one_shot(intent["one_shot"], ctx.timezone)
+    depends = _uuid(a.get("depends_on"))
+    if kind == "dependent" and depends is None:
+        return ToolResult(False, "تسک وابسته باید شناسه تسک پیش‌نیاز (depends_on) داشته باشد.")
+    if kind == "agent" and execute_at is None:
+        return ToolResult(False, "برای تسک اجرایی ایجنت زمان اجرا (execute_at شمسی) لازم است.")
     t = Task(
         title=a["title"][:256],
         description=a.get("description", ""),
         priority=a.get("priority", "normal"),
-        status=a.get("status", "todo"),
-        assignee_type="contact" if assignee_id else a.get("assignee_type", "agent"),
+        status="todo",
+        kind=kind,
+        assignee_type="contact" if assignee_id else ("agent" if kind != "human" else a.get("assignee_type", "owner")),
         assignee_contact_id=assignee_id,
-        due_at=_date(a.get("due"), ctx.timezone),
+        start_at=execute_at if kind != "human" else None,
+        due_at=_date(a.get("due"), ctx.timezone) or (execute_at if kind == "human" else None),
+        depends_on_id=depends,
+        missed_policy=a.get("missed_policy") if a.get("missed_policy") in ("run_late", "skip") else "run_late",
         created_by="agent",
         source={"run_id": str(ctx.run_id) if ctx.run_id else None},
     )
     ctx.session.add(t)
     await ctx.session.flush()
     await bus.publish("task.changed", {"id": str(t.id), "action": "create"})
-    due = f" — مهلت {jalali_str(t.due_at, ctx.timezone)}" if t.due_at else ""
-    return ToolResult(True, f"تسک «{t.title}» ساخته شد (شناسه {t.id}){due}", {"id": str(t.id)}, verified=True)
+    saved = (await ctx.session.execute(select(Task).where(Task.id == t.id))).scalar_one()
+    label = {"human": "تسک انسانی (یادآوری در موعد، بدون اجرای خودکار)", "agent": "تسک اجرایی ایجنت",
+             "dependent": "تسک وابسته (پس از انجام پیش‌نیاز)"}[saved.kind]
+    when = saved.start_at or saved.due_at
+    msg = (f"✅ {label} «{saved.title}» ثبت و از دیتابیس بازخوانی شد (شناسه {saved.id})"
+           + (f" — {'اجرا' if saved.kind != 'human' else 'موعد'}: {jalali_str(when, ctx.timezone)}" if when else ""))
+    if saved.kind == "agent":
+        msg += ". در موعد خودکار اجرا می‌شود و نتیجه در تسک و میز کار ثبت می‌شود؛ الان آن را انجام نده."
+    return ToolResult(True, msg, {"id": str(saved.id), "kind": saved.kind,
+                                  "execute_at": when.isoformat() if when else None}, verified=True)
 
 
 async def task_update(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
@@ -310,11 +340,16 @@ async def project_list(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
 
 
 TOOLS = [
-    Tool("task_create", "ساخت تسک جدید برای ایجنت، کارفرما یا یک همکار. تاریخ مهلت شمسی مانند 1404/08/20 14:00.",
-         obj({"title": s("عنوان"), "description": s("شرح"), "priority": s("low|normal|high|urgent"),
+    Tool("task_create",
+         "ساخت تسک: kind=human (پیگیری/یادآوری کارفرما یا همکار، بدون اجرای خودکار)، kind=agent (ایجنت در execute_at "
+         "خودکار اجرا می‌کند؛ مثل «فردا ساعت ۹:۳۰ گزارش را تهیه کن»)، kind=dependent (پس از انجام depends_on). "
+         "تاریخ شمسی مانند 1404/08/20 14:00.",
+         obj({"title": s("عنوان"), "description": s("شرح کامل کاری که باید انجام شود"), "priority": s("low|normal|high|urgent"),
+              "kind": s("human|agent|dependent"), "execute_at": s("زمان اجرای ایجنت (شمسی)"),
+              "depends_on": s("شناسه تسک پیش‌نیاز"), "missed_policy": s("run_late|skip"),
               "assignee": s("نام همکار (اختیاری)"), "assignee_type": s("agent|owner|contact"), "due": s("مهلت شمسی")},
              ["title"]), task_create, "tasks", category="routine_change", action="create", label="ساخت تسک"),
-    Tool("task_update", "به‌روزرسانی تسک (وضعیت: todo|in_progress|waiting|done|cancelled).",
+    Tool("task_update", "به‌روزرسانی تسک (وضعیت: todo|in_progress|waiting|done|failed|cancelled).",
          obj({"id": s("شناسه تسک"), "title": s("عنوان"), "description": s("شرح"), "status": s("وضعیت"),
               "priority": s("اولویت"), "due": s("مهلت شمسی")}, ["id"]), task_update, "tasks",
          category="routine_change", action="update", label="ویرایش تسک"),

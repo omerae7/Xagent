@@ -126,6 +126,11 @@ def classify(text: str, has_images: bool = False, has_audio: bool = False, trigg
             r.tool_groups.append(group)
     # تشخیص مأموریت زمان‌دار: «هر دقیقه»، «دقیقه‌ای یک بار»، «تا ۱۰ دقیقه آینده»، «every 2 minutes» …
     intent = parse_intent(text)
+    if intent.one_shot and not intent.recurring and trigger not in ("routine", "event"):
+        if "tasks" not in r.tool_groups:
+            r.tool_groups.append("tasks")
+        r.intent = intent.to_dict()
+        r.reasons.append("مأموریت زمان‌دار: " + intent.describe())
     if intent.recurring and trigger not in ("routine", "event"):
         for g in ("routines", *[sv for sv in intent.services if sv in ("telegram", "web", "tasks")]):
             if g not in r.tool_groups:

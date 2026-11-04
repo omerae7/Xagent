@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_core import bus, inbox
 from xagent_core.audit import notify
 from xagent_core.db import session_scope, utcnow
-from xagent_core.models import DreamReport, Mission, Routine, Run
+from xagent_core.models import DreamReport, Mission, Routine, Run, Task
 from xagent_core.settings_store import (
     DreamSettings,
     GeneralSettings,
@@ -247,6 +247,53 @@ async def _report_run(session: AsyncSession, r: Routine, run: Run, outcome: str,
     body = f"{when}\n{r.last_error or ''}\nوضعیت فعلی در صفحه روتین‌ها قابل پیگیری است."
     await inbox.post(session, kind="error", severity=sev, title=title, body=body,
                      data={"outcome": outcome, "stop_reason": run.stop_reason}, **common)
+
+
+# ───────────────────────── تسک‌های موعددار ─────────────────────────
+
+
+async def tick_tasks(telegram: Any = None) -> int:
+    """تسک‌های ایجنت/وابسته که موعدشان رسیده در صف می‌روند؛ تسک انسانی فقط یادآوری می‌شود. بدون LLM."""
+    from xagent_tools.tasks_exec import MISSED_GRACE, due_tasks, start_task_run
+
+    if await bus.is_stop_all():
+        return 0
+    created: list[uuid.UUID] = []
+    async with session_scope() as session:
+        now = utcnow()
+        for t, slot in await due_tasks(session, now):
+            if t.missed_policy == "skip" and slot is not None and now - slot > MISSED_GRACE:
+                t.status, t.result_summary = "cancelled", "موعد اجرا از دست رفت (سیاست: رد نوبت ازدست‌رفته)"
+                await inbox.post(session, kind="error", severity="important", title=f"موعد تسک «{t.title}» از دست رفت",
+                                 body=t.result_summary, link="/tasks", dedupe_key=f"task:{t.id}:missed",
+                                 telegram=telegram)
+                continue
+            run = await start_task_run(session, t, slot=slot)
+            if run is not None:
+                created.append(run.id)
+        # تسک انسانی: یادآوری یک‌باره در موعد (بدون اجرای خودکار)
+        reminders = (await session.execute(select(Task).where(
+            Task.kind == "human", Task.status.notin_(["done", "cancelled", "failed"]), Task.due_at.is_not(None),
+            Task.due_at <= now, Task.reminded_at.is_(None)).limit(50).with_for_update(skip_locked=True))).scalars().all()
+        for t in reminders:
+            t.reminded_at = now
+            await inbox.post(session, kind="report", severity="important", title=f"یادآوری: موعد «{t.title}» رسید",
+                             body=t.description or "", link="/tasks", dedupe_key=f"task:{t.id}:reminder",
+                             data={"task_id": str(t.id)}, telegram=telegram)
+    for rid in created:
+        await bus.enqueue_run(rid, "task")
+    if created:
+        await bus.publish("task.changed", {"action": "started", "count": len(created)})
+    return len(created)
+
+
+async def after_task_run(run_id, telegram: Any = None) -> None:  # noqa: ANN001
+    from xagent_tools.tasks_exec import settle_task
+
+    async with session_scope() as session:
+        run = await session.get(Run, run_id, with_for_update=True)
+        if run is not None:
+            await settle_task(session, run, telegram)
 
 
 # ───────────────────────── بازیابی اجراهای یتیم ─────────────────────────

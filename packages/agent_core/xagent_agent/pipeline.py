@@ -57,6 +57,7 @@ from .providers.registry import BoundModel
 from .stoploss import LoopController, StopLossEnforcer
 
 TOOL_TIMEOUT = 300
+FALLBACK_FROM = {"http_request", "web_fetch"}
 TERMINAL = {"succeeded", "failed", "stopped", "cancelled"}
 
 
@@ -207,6 +208,8 @@ class AgentRunner:
                 elapsed_offset=rc.state.get("elapsed_base", 0),
             )
 
+        if rc.run.parent_run_id is not None and await bus.is_run_cancelled(rc.run.parent_run_id):
+            raise Paused("stopped", "مأموریت والد توسط کارفرما متوقف شد؛ کار کارمند هم متوقف شد.", "parent_cancelled")
         v = await check()
         if not v.ok and v.code == "steps" and loop is not None and enforcer.try_extend(
                 loop, Decimal(rc.run.cost_usd or 0), rc.run.steps_count):
@@ -530,7 +533,9 @@ class AgentRunner:
         ]
         dyn.append(await self._self_knowledge(rc, chain, groups, employee))
         intent = route.get("intent")
-        if intent and rc.is_owner:
+        if intent and rc.is_owner and intent.get("one_shot") and not intent.get("recurring"):
+            dyn.append(prompts.ONE_SHOT_GUIDE.format(describe=s.get("intent_desc") or ""))
+        elif intent and rc.is_owner:
             dyn.append(prompts.MISSION_INTENT_GUIDE.format(
                 describe=s.get("intent_desc") or "", interval=intent.get("interval_seconds") or "-",
                 cron=intent.get("cron") or "-", duration=intent.get("duration_minutes") or "-",
@@ -905,6 +910,12 @@ class AgentRunner:
                                     duration_ms=dur)
             digest = hashlib.sha1(result.output[:4000].encode(errors="ignore")).hexdigest()
             signal = loop.observe(name, args, result.ok, digest)
+            if not result.ok and name in FALLBACK_FROM and not s.get("mission_id"):
+                await self._fallback_method(rc, tool_map, transcript, name, args, result.output)
+            # Checkpoint پس از هر ابزار: Crash بعدی همین گام انجام‌شده را تکرار نمی‌کند
+            s["transcript"] = [m.to_json() for m in transcript]
+            s["loop"] = loop.to_state()
+            await self._checkpoint(rc)
             if signal == "abort":
                 s["abort_reason"] = "کنترلر حلقه: تکرار بی‌نتیجه یا خطای پیاپی؛ اجرا برای جلوگیری از هدر رفتن منابع متوقف شد."
                 return
@@ -916,6 +927,35 @@ class AgentRunner:
                 await self._step(rc, "recover", "تغییر استراتژی", detail={"diagnosis": self._diagnose(result.output)})
                 transcript.append(LLMMessage("user", prompts.RECOVERY_NOTE.format(
                     reason="خطای تکراری", diagnosis=self._diagnose(result.output))))
+
+    async def _fallback_method(self, rc: RunCtx, tool_map: dict[str, Tool], transcript: list[LLMMessage], name: str,
+                               args: dict, output: str) -> None:
+        """انتخاب روش جایگزین قطعی پس از شکست API/HTTP: نبود یا خرابی API به‌تنهایی دلیل اعلام ناتوانی نیست.
+
+        ترتیب: API مستقیم → دریافت HTTP صفحه → مرورگر ساختاریافته (DOM) → (در صورت لزوم) بینایی/دسکتاپ.
+        فقط ابزارهایی بارگذاری می‌شوند که برای این اجرا مجازند؛ اقدام حساس همچنان از Harness و سیاست اثرمحور عبور می‌کند.
+        """
+        s = rc.state
+        o = output.lower()
+        transient = any(k in o for k in ("500", "502", "503", "504", "timeout", "پاسخ نداد", "connect", "اتصال", "429"))
+        url = args.get("url") or ""
+        if not transient or not url or s.get("fallback_used", {}).get(name):
+            return
+        s.setdefault("fallback_used", {})[name] = True
+        nxt = "web_fetch" if name == "http_request" else "browser_open"
+        if nxt not in tool_map:
+            groups = ["web"] if nxt == "web_fetch" else ["browser"]
+            emp = await self._employee(rc)
+            for t in await self._tools_for(rc, sorted(set(groups) | set(s.get("extra_groups", []))), rc.run.input, emp):
+                tool_map.setdefault(t.name, t)
+            s["extra_groups"] = sorted(set(s.get("extra_groups", [])) | set(groups))
+            s["tools_reload"] = True
+        if nxt not in tool_map:
+            return
+        await self._step(rc, "recover", f"روش جایگزین: {name} ناموفق ← {nxt}", detail={"url": url})
+        transcript.append(LLMMessage("user", prompts.RECOVERY_NOTE.format(
+            reason=f"{name} برای این نشانی ناموفق بود (خطای موقت/سرور)",
+            diagnosis=f"روش جایگزین مجاز: {nxt} با همان نشانی {url}؛ نتیجه را از داده مشاهده‌شده تأیید کن.")))
 
     async def _mission_gate(self, rc: RunCtx, cid: str, tool: Tool, args: dict, category: str | None, rules: dict,
                             transcript: list[LLMMessage], loop: LoopController) -> str:

@@ -35,7 +35,14 @@ from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_tools import installer
 
 from .inbox import process_event
-from .scheduler import after_routine_run, claim_scheduled_dream, reconcile_runs, tick_routines
+from .scheduler import (
+    after_routine_run,
+    after_task_run,
+    claim_scheduled_dream,
+    reconcile_runs,
+    tick_routines,
+    tick_tasks,
+)
 from .telegram import TelegramBridge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -71,6 +78,7 @@ class Worker:
                 log.exception("خطای اجرای %s", run_id)
             try:
                 await after_routine_run(run_id, self.telegram)
+                await after_task_run(run_id, self.telegram)
                 async with session_scope() as session:
                     run = await session.get(Run, run_id)
                     if run and run.conversation_id:
@@ -209,7 +217,7 @@ class Worker:
             try:
                 if self.telegram._pending:
                     await self.telegram.flush_pending()
-                n = await tick_routines(self.telegram)
+                n = await tick_routines(self.telegram) + await tick_tasks(self.telegram)
                 if n:
                     log.info("%d روتین زمان‌بندی شد", n)
                 if loop.time() - last_reconcile > 60:

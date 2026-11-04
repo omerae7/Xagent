@@ -15,7 +15,6 @@ from xagent_core.audit import audit
 from xagent_core.db import utcnow
 from xagent_core.models import (
     Contact,
-    Conversation,
     CRMInteraction,
     Mission,
     Project,
@@ -34,6 +33,7 @@ from xagent_tools.schedule import (
     display_state,
     validate_routine,
 )
+from xagent_tools.tasks_exec import start_task_run
 from xagent_tools.watch import normalize_watch
 
 from ..deps import current_user, get_session, owner_user, parse_uuid, ser
@@ -45,7 +45,10 @@ router = APIRouter(prefix="/api", tags=["work"])
 class TaskIn(BaseModel):
     title: str | None = Field(default=None, max_length=256)
     description: str | None = None
-    status: str | None = Field(default=None, pattern="^(todo|in_progress|waiting|done|cancelled)$")
+    status: str | None = Field(default=None, pattern="^(todo|in_progress|waiting|done|failed|cancelled)$")
+    kind: str | None = Field(default=None, pattern="^(human|agent|dependent)$")
+    depends_on_id: str | None = None
+    missed_policy: str | None = Field(default=None, pattern="^(run_late|skip)$")
     priority: str | None = Field(default=None, pattern="^(low|normal|high|urgent)$")
     assignee_type: str | None = Field(default=None, pattern="^(agent|contact|owner)$")
     assignee_contact_id: str | None = None
@@ -58,7 +61,8 @@ class TaskIn(BaseModel):
 
 
 def _apply_task(t: Task, body: TaskIn) -> None:
-    for f in ("title", "description", "status", "priority", "assignee_type", "start_at", "due_at", "tags", "sort_order"):
+    for f in ("title", "description", "status", "priority", "assignee_type", "start_at", "due_at", "tags", "sort_order",
+              "kind", "missed_policy"):
         v = getattr(body, f)
         if v is not None:
             setattr(t, f, v)
@@ -66,23 +70,20 @@ def _apply_task(t: Task, body: TaskIn) -> None:
         t.assignee_contact_id = parse_uuid(body.assignee_contact_id) if body.assignee_contact_id else None
     if body.project_id is not None:
         t.project_id = parse_uuid(body.project_id) if body.project_id else None
+    if body.depends_on_id is not None:
+        t.depends_on_id = parse_uuid(body.depends_on_id) if body.depends_on_id else None
+    if t.kind == "dependent" and t.depends_on_id is None:
+        raise HTTPException(400, "تسک وابسته باید پیش‌نیاز (depends_on_id) داشته باشد")
+    if body.start_at is not None or body.due_at is not None:
+        t.reminded_at = None
     if t.status == "done" and t.completed_at is None:
         t.completed_at = utcnow()
     if t.status != "done":
         t.completed_at = None
 
 
-async def _run_task(session: AsyncSession, t: Task) -> Run:
-    conv = Conversation(title=f"تسک: {t.title[:50]}", channel="web", task_id=t.id)
-    session.add(conv)
-    await session.flush()
-    run = Run(conversation_id=conv.id, task_id=t.id, trigger="api",
-              input=f"تسک «{t.title}» را انجام بده.\n{t.description or ''}\n(شناسه تسک: {t.id} — در پایان وضعیت تسک را به‌روزرسانی کن)",
-              state={"trusted": True, "principal": "owner", "requested_by": "task"})
-    session.add(run)
-    t.status = "in_progress"
-    await session.flush()
-    return run
+async def _run_task(session: AsyncSession, t: Task) -> Run | None:
+    return await start_task_run(session, t, requested_by="task:run_now")
 
 
 @router.get("/tasks")
