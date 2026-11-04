@@ -96,6 +96,35 @@ bash "$REPO/infra/updater/bootstrap.sh" --dir "$T" --ref main --no-update >/dev/
 [ -x "$XAGENT_LIB/xagent-update" ] && [ -L "$XAGENT_BIN/xagent" ] || fail "bootstrap ابزار ثابت را نصب نکرد"
 pass "۰. نصب پایه (${BASE:0:12}) و نصب ابزار ثابت با bootstrap"
 
+# ── ۰ب. کارگزار فرمان میزبان واقعی (Docker و xagentctl واقعی؛ در CI با فعال‌سازی سوکت systemd) ──
+HS="$T/run/hostd/hostd.sock"
+hc() { python3 "$REPO/tests/updater/hostd_client.py" "$HS" "$T/app/.env" "$@"; }
+HOSTD_PID=""
+if [ ! -S "$HS" ]; then
+  python3 "$XAGENT_LIB/xagent-hostd" --config /etc/xagent/hostd.json >"$W/hostd.log" 2>&1 & HOSTD_PID=$!
+  for _ in $(seq 1 50); do [ -S "$HS" ] && break; sleep 0.2; done
+fi
+[ -S "$HS" ] || fail "۰ب. سوکت کارگزار میزبان ساخته نشد"
+hc system.status >"$W/h-status.json" && grep -q 'CPU:' "$W/h-status.json" || fail "۰ب. system.status اجرا نشد"
+hc services.status >"$W/h-services.json" && grep -q 'api' "$W/h-services.json" || fail "۰ب. services.status اجرا نشد"
+hc xagent.status >"$W/h-xstatus.json" || fail "۰ب. xagent status از مسیر میزبان اجرا نشد"
+hc service.restart '{"service":"worker"}' >"$W/h-restart.json" && grep -q 'سالم است' "$W/h-restart.json" \
+  || fail "۰ب. Restart مجاز Worker با بررسی سلامت انجام نشد ($(head -c 400 "$W/h-restart.json"))"
+PRE_HEAD="$(head_commit)"
+hc update.check >"$W/h-dryrun.json" || fail "۰ب. Dry Run آپدیت از مسیر میزبان اجرا نشد"
+[ "$(head_commit)" = "$PRE_HEAD" ] && dc ps --format '{{.Service}} {{.Image}}' | grep -q "api xagent/backend:${BASE:0:12}" \
+  || fail "۰ب. Dry Run نباید تغییری ایجاد کند"
+hc logs.service '{"service":"api","lines":200}' >"$W/h-logs.json" || fail "۰ب. لاگ API از مسیر میزبان دریافت نشد"
+for k in POSTGRES_PASSWORD XAGENT_SECRET_KEY RUNNER_TOKEN DESKTOP_TOKEN; do
+  v="$(grep "^$k=" "$T/app/.env" | cut -d= -f2)"; ! grep -qF "$v" "$W"/h-*.json || fail "۰ب. مقدار $k در خروجی میزبان نشت کرد"
+done
+if hc exec.approved '{"argv":["/usr/bin/id"],"run_as":"root"}' >"$W/h-exec.json"; then fail "۰ب. اجرای فرمان root بدون مجوز نباید ممکن باشد"; fi
+grep -q 'approval_required' "$W/h-exec.json" || fail "۰ب. رد اجرای بدون مجوز باید علت approval_required داشته باشد"
+dc exec -T api python -c "import asyncio; from xagent_api import hostops; r=asyncio.run(hostops.hostd_call('catalog')); assert r['ok'] and len(r['ops'])>20, r" \
+  || fail "۰ب. کانتینر API از طریق سوکت فقط‌خواندنی به کارگزار میزبان دسترسی ندارد"
+! dc exec -T worker test -e /run/xagent-hostd/hostd.sock || fail "۰ب. Worker نباید به سوکت میزبان دسترسی داشته باشد"
+pass "۰ب. کارگزار میزبان: اجرای مجاز، Restart با بررسی سلامت، Dry Run بدون تغییر، بدون نشت اسرار، رد فرمان بدون مجوز، دسترسی فقط از API"
+
 # ── ۱. Migration خراب + تغییرات محلی (اصلاح ۷) ──
 git -C "$WORK" checkout -q -B e2e-broken-mig "$BASE"
 mkmig e2e1 "CREATE TABLE e2e_tmp(id int)" "SELECT * FROM e2e_table_that_does_not_exist"
@@ -189,6 +218,7 @@ for k in POSTGRES_PASSWORD XAGENT_SECRET_KEY RUNNER_TOKEN DESKTOP_TOKEN; do
 done
 pass "۷. هیچ سری در گزارش‌های به‌روزرسانی دیده نشد"
 
+[ -n "$HOSTD_PID" ] && kill "$HOSTD_PID" 2>/dev/null || true
 dc down -v >/dev/null 2>&1 || true
 if [ "${#SOFT_FAILS[@]}" -gt 0 ]; then
   echo -e "\033[1;31mموارد ناموفق (${#SOFT_FAILS[@]}):\033[0m"; printf ' - %s\n' "${SOFT_FAILS[@]}"; exit 1

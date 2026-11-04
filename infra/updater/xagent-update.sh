@@ -60,7 +60,16 @@ status() {
 }
 # فایل‌های کنترل باید برای API (کاربر غیر root داخل کانتینر) قابل نوشتن بمانند
 fixown() { chown --reference="$CTL" "$@" 2>/dev/null || true; }
-die() { echo -e "${c_r}✗ $1${c_o}" >&2; status "failed" "$1"; cleanup_worktree; exit 1; }
+QUIESCED=0
+DEPLOYED=0
+die() {
+  echo -e "${c_r}✗ $1${c_o}" >&2
+  if [ "$QUIESCED" = "1" ] && [ "$DEPLOYED" = "0" ]; then
+    echo "  پنجره نگهداری بسته می‌شود؛ سرویس‌های نسخه فعلی دوباره اجرا می‌شوند…"
+    dc_app up -d >/dev/null 2>&1 || true
+  fi
+  status "failed" "$1"; cleanup_worktree; exit 1
+}
 
 
 [ -d "$APP/.git" ] || { echo "مخزن برنامه در $APP یافت نشد."; exit 1; }
@@ -106,9 +115,27 @@ health_all() {
     sleep 3
   done
   health_worker || { echo "  Worker ضربان قلب نفرستاد"; return 1; }
-  if dc_app exec -T web wget -q -O /dev/null --no-check-certificate https://localhost/ 2>/dev/null \
-     || curl -fsSk -o /dev/null https://127.0.0.1/ 2>/dev/null; then ok "پنل وب پاسخ می‌دهد"; else warn "پاسخ پنل وب تأیید نشد (ممکن است به‌خاطر دامنه باشد)"; fi
+  health_web "${1:-$APP}" || return 1
   return 0
+}
+# پنل وب: صفحه اصلی پنل و پروکسی API از درون Caddy روی پورت سلامت داخلی (منتشر نمی‌شود)
+web_strict() { grep -q ':8088' "$1/infra/caddy/Caddyfile" 2>/dev/null; }
+health_web() {
+  local dir="$1" i
+  if ! web_strict "$dir"; then
+    # نسخه‌های قدیمی بدون پورت سلامت: بررسی سازگار (فقط هشدار)
+    if dc_app exec -T web wget -q -O /dev/null --no-check-certificate https://localhost/ 2>/dev/null; then ok "پنل وب پاسخ می‌دهد"
+    else warn "نسخه قدیمی پورت سلامت پنل ندارد؛ پاسخ پنل تأیید نشد"; fi
+    return 0
+  fi
+  for i in $(seq 1 "$HEALTH_TRIES"); do
+    if dc_app exec -T web wget -q -O - http://127.0.0.1:8088/ 2>/dev/null | grep -q 'id="root"' \
+       && dc_app exec -T web wget -q -O - http://127.0.0.1:8088/api/health 2>/dev/null | grep -q '"ok":true'; then
+      ok "پنل وب و پروکسی API سالم‌اند"; return 0
+    fi
+    sleep 3
+  done
+  echo "  پنل وب سالم نیست (صفحه پنل یا مسیر /api از طریق Caddy پاسخ نداد)"; return 1
 }
 alembic_rev() {
   dc_app exec -T postgres psql -U xagent -d "${1:-xagent}" -tAc "SELECT version_num FROM alembic_version" 2>/dev/null | tr -d '[:space:]'
@@ -151,29 +178,18 @@ if [ "$YES" != "1" ] && [ -t 0 ]; then
   read -rp "ادامه به‌روزرسانی؟ [y/N] " a; [ "$a" = "y" ] || { status "cancelled" "لغو توسط کاربر"; exit 0; }
 fi
 
-# ───────────── ۴. حفظ تغییرات محلی ─────────────
+# ───────────── ۴. تغییرات محلی ─────────────
 step "بررسی تغییرات محلی"
+LOCAL_CHANGES=0
 if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+  LOCAL_CHANGES=1
   PATCH="$BK/local-changes-$STAMP.patch"
   { git diff HEAD; git ls-files --others --exclude-standard | sed 's/^/# untracked: /'; } > "$PATCH"
-  git -c user.name="X Agent Updater" -c user.email=updater@xagent.local stash push --include-untracked -m "xagent-update-$STAMP" >/dev/null || die "حفظ تغییرات محلی ناموفق بود"
-  warn "تغییرات محلی در $PATCH و git stash («xagent-update-$STAMP») حفظ شدند"
+  chmod 600 "$PATCH"
+  warn "تغییرات محلی در $PATCH ثبت شد؛ پوشه برنامه تا مرحله تثبیت دست‌نخورده می‌ماند"
 else
   ok "تغییر محلی وجود ندارد"
 fi
-
-# ───────────── ۵. پشتیبان ─────────────
-step "پشتیبان‌گیری از دیتابیس و پیکربندی"
-DB_BACKUP="$BK/db-$STAMP.dump"
-dc_app exec -T postgres pg_dump -U xagent -d xagent -Fc > "$DB_BACKUP" || die "پشتیبان‌گیری دیتابیس ناموفق بود"
-dc_app exec -T postgres pg_restore --list < "$DB_BACKUP" >/dev/null || die "فایل پشتیبان دیتابیس معتبر نیست"
-CFG_BACKUP="$BK/config-$STAMP.tar.gz"
-tar -czf "$CFG_BACKUP" -C "$XAGENT_HOME" app/.env data/control 2>/dev/null || die "پشتیبان‌گیری پیکربندی ناموفق بود"
-chmod 600 "$DB_BACKUP" "$CFG_BACKUP"
-ok "دیتابیس: $DB_BACKUP ($(du -h "$DB_BACKUP" | cut -f1))"
-ok "پیکربندی و اسرار: $CFG_BACKUP"
-ls -1t "$BK"/db-*.dump 2>/dev/null | tail -n +8 | xargs -r rm -f
-ls -1t "$BK"/config-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm -f
 PREV_REV="$(alembic_rev)"
 
 # ───────────── ۶. worktree جدا ─────────────
@@ -202,9 +218,13 @@ CHECK_DB="xagent_migcheck_${STAMP//-/_}"
 dc_app exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "CREATE DATABASE $CHECK_DB OWNER xagent" >/dev/null \
   || die "ساخت دیتابیس آزمون ناموفق بود (فضای دیسک؟)"
 drop_check() { dc_app exec -T postgres psql -U xagent -d postgres -c "DROP DATABASE IF EXISTS $CHECK_DB" >/dev/null 2>&1; }
-if ! dc_app exec -T postgres pg_restore --exit-on-error -U xagent -d "$CHECK_DB" < "$DB_BACKUP" >/dev/null; then
-  drop_check; die "بازیابی کپی دیتابیس ناموفق بود"
+PRECHECK="$BK/precheck-$STAMP.dump"
+dc_app exec -T postgres pg_dump -U xagent -d xagent -Fc > "$PRECHECK" || { rm -f "$PRECHECK"; drop_check; die "تهیه کپی آزمایشی دیتابیس ناموفق بود"; }
+chmod 600 "$PRECHECK"
+if ! dc_app exec -T postgres pg_restore --exit-on-error -U xagent -d "$CHECK_DB" < "$PRECHECK" >/dev/null; then
+  rm -f "$PRECHECK"; drop_check; die "بازیابی کپی دیتابیس ناموفق بود"
 fi
+rm -f "$PRECHECK"
 PGPASS="$(envget POSTGRES_PASSWORD)"
 if ! dc_new run --rm --no-deps -e "XAGENT_DATABASE_URL=postgresql+asyncpg://xagent:${PGPASS}@postgres:5432/$CHECK_DB" api migrate; then
   drop_check; die "Migration نسخه جدید روی کپی دیتابیس شکست خورد؛ دیتابیس اصلی دست‌نخورده است"
@@ -213,7 +233,26 @@ NEW_REV="$(alembic_rev "$CHECK_DB")"
 drop_check
 ok "Migration روی کپی موفق بود (${PREV_REV:-?} → ${NEW_REV:-?})"
 
-# ───────────── ۱۰. استقرار ─────────────
+# ───────────── ۱۰. پنجره نگهداری و پشتیبان قطعی ─────────────
+# نوشتن داده متوقف می‌شود تا پشتیبان دقیقاً آخرین وضعیت باشد و هیچ داده‌ای بین پشتیبان و استقرار از دست نرود
+step "پنجره نگهداری: توقف نوشتن داده و پشتیبان‌گیری نهایی"
+status "running" "پنجره نگهداری"
+QUIESCED=1
+dc_app stop worker api >/dev/null 2>&1 || die "توقف موقت API/Worker ناموفق بود"
+ok "API و Worker موقتاً متوقف شدند (اجراهای در حال انجام از Checkpoint ادامه می‌یابند)"
+DB_BACKUP="$BK/db-$STAMP.dump"
+dc_app exec -T postgres pg_dump -U xagent -d xagent -Fc > "$DB_BACKUP" || die "پشتیبان‌گیری دیتابیس ناموفق بود"
+dc_app exec -T postgres pg_restore --list < "$DB_BACKUP" >/dev/null || die "فایل پشتیبان دیتابیس معتبر نیست"
+CFG_BACKUP="$BK/config-$STAMP.tar.gz"
+tar -czf "$CFG_BACKUP" -C "$XAGENT_HOME" app/.env data/control 2>/dev/null || die "پشتیبان‌گیری پیکربندی ناموفق بود"
+chmod 600 "$DB_BACKUP" "$CFG_BACKUP"
+ok "دیتابیس: $DB_BACKUP ($(du -h "$DB_BACKUP" | cut -f1))"
+ok "پیکربندی و اسرار: $CFG_BACKUP"
+ls -1t "$BK"/db-*.dump 2>/dev/null | tail -n +8 | xargs -r rm -f
+ls -1t "$BK"/config-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm -f
+[ "$(alembic_rev)" = "$PREV_REV" ] || die "نسخه Schema در حین به‌روزرسانی تغییر کرد؛ متوقف شد"
+
+# ───────────── ۱۱. استقرار ─────────────
 step "استقرار نسخه جدید"
 status "running" "استقرار"
 OLD_PREVIOUS_TAG="$(envget XAGENT_PREVIOUS_IMAGE_TAG)"
@@ -228,8 +267,17 @@ rollback() {
   envset XAGENT_PREVIOUS_IMAGE_TAG "${OLD_PREVIOUS_TAG:-$PREV_TAG}"
   local cur_rev; cur_rev="$(alembic_rev)"
   if [ -n "$cur_rev" ] && [ "$cur_rev" != "$PREV_REV" ]; then
-    echo "  Migration اجرا شده بود؛ بازیابی مرحله‌ای دیتابیس از پشتیبان (دیتابیس فعلی حذف نمی‌شود)…"
     dc_app stop api worker >/dev/null 2>&1
+    echo "  Migration اجرا شده بود؛ تلاش برای بازگرداندن Schema با downgrade (داده‌های جدید حفظ می‌شوند)…"
+    if dc_new run --rm --no-deps -w /app/services/api --entrypoint alembic api downgrade "$PREV_REV" >/dev/null 2>&1 \
+       && [ "$(alembic_rev)" = "$PREV_REV" ]; then
+      ok "Schema با downgrade به $PREV_REV برگشت؛ همه داده‌ها (از جمله داده‌های ثبت‌شده در حین به‌روزرسانی) حفظ شدند"
+      cur_rev="$PREV_REV"
+    else
+      echo "  downgrade ممکن نبود؛ بازیابی مرحله‌ای دیتابیس از پشتیبان پنجره نگهداری (دیتابیس فعلی حذف نمی‌شود)…"
+    fi
+  fi
+  if [ -n "$cur_rev" ] && [ "$cur_rev" != "$PREV_REV" ]; then
     local staging="xagent_restore_${STAMP//-/_}" failed="xagent_failed_${STAMP//-/_}"
     dc_app exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "CREATE DATABASE $staging OWNER xagent" >/dev/null &&
     dc_app exec -T postgres pg_restore --exit-on-error -U xagent -d "$staging" < "$DB_BACKUP" >/dev/null &&
@@ -243,7 +291,7 @@ rollback() {
     echo "  دیتابیس نسخه قبل بازیابی شد؛ دیتابیس تغییریافته با نام $failed برای بررسی نگه داشته شد."
   fi
   dc_app up -d --remove-orphans >/dev/null 2>&1
-  if health_all; then
+  if health_all "$APP"; then
     status "rolled_back" "$reason؛ نسخه قبلی ($PREV_SHORT) با موفقیت بازگردانده شد"
     echo -e "${c_y}↩ نسخه قبلی بازگردانده شد. گزارش: $LOG${c_o}"
   else
@@ -255,11 +303,12 @@ rollback() {
 }
 
 dc_app exec -T redis redis-cli DEL xagent:worker:heartbeat >/dev/null 2>&1 || true
+DEPLOYED=1
 dc_new up -d --remove-orphans || rollback "اجرای سرویس‌های جدید ناموفق بود"
 
 # ───────────── ۱۰ب. سلامت ─────────────
 step "بررسی سلامت نسخه جدید"
-health_all || rollback "نسخه جدید آزمون سلامت را رد کرد"
+health_all "$WT" || rollback "نسخه جدید آزمون سلامت را رد کرد"
 CUR_REV="$(alembic_rev)"
 [ -z "$NEW_REV" ] || [ "$CUR_REV" = "$NEW_REV" ] || rollback "نسخه Schema دیتابیس با انتظار یکسان نیست ($CUR_REV ≠ $NEW_REV)"
 ok "Schema دیتابیس: $CUR_REV"
@@ -272,8 +321,21 @@ if [ "$REF" != "$BRANCH" ] && git show-ref --verify -q "refs/remotes/origin/$REF
   ok "شاخه منبع به‌روزرسانی از «$BRANCH» به «$REF» تغییر کرد"
   BRANCH="$REF"
 fi
-git checkout -q -B "$BRANCH" "$TARGET" 2>/dev/null || git checkout -q --detach "$TARGET"
-if [ -n "${PATCH:-}" ]; then
+STASHED=0
+if [ "$LOCAL_CHANGES" = "1" ]; then
+  if git -c user.name="X Agent Updater" -c user.email=updater@xagent.local stash push --include-untracked -m "xagent-update-$STAMP" >/dev/null; then
+    STASHED=1
+  else
+    rollback "حفظ تغییرات محلی پیش از تثبیت ناموفق بود (تغییرات در $PATCH و پوشه برنامه باقی است)"
+  fi
+fi
+if ! { git checkout -q -B "$BRANCH" "$TARGET" 2>/dev/null || git checkout -q --detach "$TARGET"; }; then
+  if [ "$STASHED" = "1" ] && ! git -c user.name="X Agent Updater" -c user.email=updater@xagent.local stash pop -q 2>/dev/null; then
+    rollback "تثبیت ناموفق بود و بازگرداندن خودکار تغییرات محلی هم ممکن نشد؛ تغییرات در stash «xagent-update-$STAMP» و فایل $PATCH حفظ‌اند (بازیابی: git -C $APP stash pop)"
+  fi
+  rollback "تثبیت نسخه در پوشه برنامه ناموفق بود؛ تغییرات محلی سر جای خود بازگردانده شدند"
+fi
+if [ "$STASHED" = "1" ]; then
   # فایل‌های ردیابی‌نشده اپراتور اگر با نسخه جدید تداخل ندارند برگردانده می‌شوند؛
   # تغییرات فایل‌های برنامه در stash/patch می‌مانند تا با کد جدید تداخل نکنند.
   SREF="$(git stash list --format='%gd %s' | awk -v m="xagent-update-$STAMP" '$0 ~ m {print $1; exit}')"
@@ -295,6 +357,9 @@ if [ -w "$(dirname "$LIB")" ] || [ "$(id -u)" = "0" ]; then
   install -m 0755 "$APP/infra/scripts/xagentctl" "$LIB/xagentctl"
   install -m 0755 "$APP/infra/updater/xagent-update.sh" "$LIB/xagent-update"
   ln -sf "$LIB/xagentctl" "${XAGENT_BIN:-/usr/local/bin}/xagent" 2>/dev/null || true
+  if [ -f "$APP/infra/hostd/install-hostd.sh" ] && [ -z "${XAGENT_SKIP_HOSTD:-}" ]; then
+    bash "$APP/infra/hostd/install-hostd.sh" "$XAGENT_HOME" "$LIB" "$APP/infra/hostd" || warn "به‌روزرسانی کارگزار فرمان میزبان ناموفق بود"
+  fi
 fi
 printf '{"version":"%s","commit":"%s","image_tag":"%s","previous_version":"%s","previous_commit":"%s","previous_image_tag":"%s","previous_db_revision":"%s","db_revision":"%s","db_backup":"%s","updated_at":"%s"}\n' \
   "$NEW_VERSION" "$TARGET" "$NEW_SHORT" "$PREV_VERSION" "$PREV" "$PREV_TAG" "$PREV_REV" "$CUR_REV" "$DB_BACKUP" "$(date -u +%FT%TZ)" > "$CTL/version.json"

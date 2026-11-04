@@ -19,6 +19,13 @@ dc() { docker compose --project-directory "$APP" -f "$APP/compose.yaml" --env-fi
 need_root() { [ "$(id -u)" = "0" ] || { echo "این دستور به sudo نیاز دارد: sudo xagent $*"; exit 1; }; }
 envget() { grep -E "^$1=" "$APP/.env" | tail -1 | cut -d= -f2-; }
 
+# قفل عملیاتی مشترک: به‌روزرسانی، بازگشت، پشتیبان‌گیری و بازیابی هرگز هم‌زمان اجرا نمی‌شوند
+op_lock() {
+  mkdir -p "$CTL"
+  exec 8>"$CTL/update.lock"
+  flock -n 8 || { echo "به‌روزرسانی یا بازگشت دیگری در حال اجراست؛ پس از پایان آن دوباره تلاش کنید."; exit 3; }
+}
+
 health() {
   dc exec -T api python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=4).read().decode())"
 }
@@ -52,6 +59,7 @@ case "${1:-status}" in
     XAGENT_HOME="$XAGENT_HOME" XAGENT_LIB="$LIB" bash "$TMP" "$@" ;;
   rollback)
     need_root rollback
+    op_lock
     [ -f "$CTL/version.json" ] || { echo "اطلاعات نسخه قبلی موجود نیست."; exit 1; }
     vj() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$CTL/version.json" "$1"; }
     CUR_COMMIT="$(vj commit)"; CUR_TAG="$(vj image_tag)"; PREV_COMMIT="$(vj previous_commit)"; PREV_TAG="$(vj previous_image_tag)"
@@ -65,10 +73,9 @@ case "${1:-status}" in
     echo "بازگشت از ${CUR_COMMIT:0:12} به نسخه قبلی ${PREV_COMMIT:0:12} (ایمیج $PREV_TAG)."
     if [ "$NEED_DB" = "1" ]; then
       [ -f "$BACKUP" ] || BACKUP="$(ls -1t "$XAGENT_HOME"/backups/db-*.dump 2>/dev/null | head -1)"
-      [ -f "$BACKUP" ] || { echo "پشتیبان دیتابیس پیش از به‌روزرسانی یافت نشد؛ بازگشت امن ممکن نیست."; exit 1; }
-      echo "⚠ Schema دیتابیس ($CUR_REV) برای نسخه قبلی ناشناخته است؛ دیتابیس از پشتیبان پیش از به‌روزرسانی بازیابی می‌شود:"
-      echo "   $BACKUP (Schema ${PREV_REV:-?}، $UPD_AT)"
-      echo "   دیتابیس فعلی حذف نمی‌شود و با نام xagent_after_update_* نگه داشته می‌شود."
+      echo "⚠ Schema دیتابیس ($CUR_REV) برای نسخه قبلی ناشناخته است."
+      echo "   ابتدا Schema با downgrade نسخه فعلی به ${PREV_REV:-نسخه قبل} برگردانده می‌شود تا همه داده‌ها (از جمله داده‌های پس از به‌روزرسانی) حفظ شوند."
+      echo "   اگر downgrade ممکن نباشد: بازیابی از پشتیبان پیش از به‌روزرسانی (${BACKUP:-ناموجود}، $UPD_AT)؛ داده‌های پس از آن در xagent_after_update_* نگه داشته می‌شوند."
     fi
     if [ "${2:-}" != "--yes" ]; then read -rp "ادامه؟ [y/N] " a; [ "$a" = "y" ] || exit 1; fi
     if [ -n "$(git status --porcelain)" ]; then git -c user.name="X Agent Updater" -c user.email=updater@xagent.local stash push --include-untracked -m "xagent-rollback-$(date +%s)" >/dev/null && echo "تغییرات محلی در git stash حفظ شدند."; fi
@@ -76,6 +83,20 @@ case "${1:-status}" in
     if [ "$NEED_DB" = "1" ]; then
       psql_su() { dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "$1" >/dev/null; }
       dc stop api worker
+      # پشتیبان ایمنی از وضعیت فعلی پیش از هر تغییر Schema
+      SAFETY="$XAGENT_HOME/backups/pre-rollback-$S.dump"
+      dc exec -T postgres pg_dump -U xagent -d xagent -Fc > "$SAFETY" && chmod 600 "$SAFETY" || { echo "✗ پشتیبان ایمنی ناموفق بود؛ بازگشت متوقف شد."; dc start api worker; exit 1; }
+      echo "پشتیبان ایمنی وضعیت فعلی: $SAFETY"
+      if [ -n "$PREV_REV" ] && dc run --rm --no-deps -w /app/services/api --entrypoint alembic api downgrade "$PREV_REV" >/dev/null 2>&1 \
+         && [ "$(dc exec -T postgres psql -U xagent -d xagent -tAc 'SELECT version_num FROM alembic_version' | tr -d '[:space:]')" = "$PREV_REV" ]; then
+        echo "✓ Schema با downgrade به $PREV_REV برگشت؛ همه داده‌ها حفظ شدند."
+        NEED_DB=0
+      else
+        [ -f "$BACKUP" ] || { echo "✗ downgrade ممکن نبود و پشتیبان پیش از به‌روزرسانی یافت نشد؛ نسخه فعلی دوباره اجرا می‌شود."; dc start api worker; exit 1; }
+        echo "downgrade ممکن نبود؛ بازیابی از پشتیبان پیش از به‌روزرسانی…"
+      fi
+    fi
+    if [ "$NEED_DB" = "1" ]; then
       psql_su "CREATE DATABASE xagent_restore_$S OWNER xagent" &&
       dc exec -T postgres pg_restore --exit-on-error -U xagent -d "xagent_restore_$S" < "$BACKUP" &&
       psql_su "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='xagent' AND pid<>pg_backend_pid()" &&
@@ -98,9 +119,11 @@ case "${1:-status}" in
     done
     echo "✗ نسخه قبلی سالم نشد؛ xagent logs api"; exit 1 ;;
   backup)
+    op_lock
     f="$XAGENT_HOME/backups/db-$(date +%Y%m%d-%H%M%S).dump"; mkdir -p "$XAGENT_HOME/backups"
     dc exec -T postgres pg_dump -U xagent -d xagent -Fc > "$f" && chmod 600 "$f" && echo "✓ $f" ;;
   restore)
+    op_lock
     [ -f "${2:-}" ] || { echo "مسیر فایل پشتیبان را بدهید"; exit 1; }
     read -rp "دیتابیس فعلی با «$2» جایگزین شود؟ (نسخه فعلی با نام دیگر نگه داشته می‌شود) [y/N] " a; [ "$a" = "y" ] || exit 1
     S="$(date +%Y%m%d_%H%M%S)"
