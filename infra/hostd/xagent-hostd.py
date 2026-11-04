@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -31,6 +32,7 @@ import sys
 import threading
 import time
 import uuid
+from urllib.parse import urlsplit
 
 VERSION = "1"
 MAX_OUTPUT = 512 * 1024
@@ -207,8 +209,9 @@ def op_table(cfg) -> dict:
         "diag.dns": (1, "حل نام دامنه", lambda a: [ex("getent", "ahosts", a_re(a.get("host"), RE_HOST, "host"))], ["host"], 20),
         "diag.ping": (1, "ping", lambda a: [ex("ping", "-c", "3", "-W", "2", a_re(a.get("host"), RE_HOST, "host"))], ["host"], 20),
         "diag.http": (1, "بررسی پاسخ HTTP یک نشانی عمومی", lambda a: [ex(
-            "curl", "-sS", "-o", "/dev/null", "--proto", "=http,https", "--max-time", "10", "-w",
-            "HTTP %{http_code} in %{time_total}s\n", _public_url(a.get("url")))], ["url"], 20),
+            "curl", "-q", "--noproxy", "*", "-sS", "-o", "/dev/null", "--proto", "=http,https",
+            "--max-redirs", "0", "--max-time", "10", "-w", "HTTP %{http_code} in %{time_total}s\n",
+            *_public_http_args(a.get("url")))], ["url"], 20),
         # ── سطح ۲: اصلاح کم‌ریسک (خودکار مشروط، با سقف تعداد) ──
         "service.restart": (2, "Restart سرویس برنامه و بررسی سلامت", lambda a: [
             ex(*dc(cfg), "restart", a_enum(a.get("service"), SERVICES_APP, "service"), t=120),
@@ -256,6 +259,47 @@ def _public_url(v):
             or host.endswith((".local", ".internal", ".localhost", ".lan"))):
         raise BadArgs("only public domain names are allowed")
     return v
+
+
+def _public_http_args(v):
+    """Resolve the destination once and pin curl to a vetted public IP.
+
+    Curl does not follow redirects (no -L), cannot use configured proxies (-q,
+    --noproxy), and keeps the original hostname for TLS SNI and Host validation.
+    Reject mixed DNS records, including any private answer, rather than picking
+    only the public records and overlooking a DNS-rebinding candidate.
+    """
+    url = _public_url(v)
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise BadArgs("invalid HTTP port") from exc
+    if not host or not 1 <= port <= 65535:
+        raise BadArgs("invalid HTTP destination")
+    try:
+        answers = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError) as exc:
+        raise BadArgs("destination DNS resolution failed") from exc
+    valid = []
+    for family, _type, _proto, _canon, sockaddr in answers:
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            continue
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError as exc:
+            raise BadArgs("invalid DNS address") from exc
+        if (not ip.is_global or getattr(ip, "ipv4_mapped", None)
+                or getattr(ip, "sixtofour", None) or getattr(ip, "teredo", None)):
+            raise BadArgs("destination resolves to a non-public IP")
+        valid.append(ip)
+    if not valid:
+        raise BadArgs("no public destination address")
+    address = str(valid[0])
+    if valid[0].version == 6:
+        address = f"[{address}]"
+    return ["--resolve", f"{host}:{port}:{address}", url]
 
 
 def _pkg_list(v):
@@ -527,21 +571,30 @@ class Broker:
         self.cfg = cfg
         self.nonces: dict[str, float] = {}
         self.lock = threading.Lock()
-        self._env_mtime = 0.0
+        self._env_stamp = None
         self._keys = (b"", b"")
         self.used_grants_path = os.path.join(cfg["run_dir"], "used-grants")
 
     def keys(self) -> tuple[bytes, bytes]:
+        # Missing/unreadable .env must NEVER authenticate against an empty key.
+        # Check on every request: a removed file must invalidate cached keys.
         try:
-            m = os.stat(self.cfg["env_file"]).st_mtime
-        except OSError:
-            m = 0.0
-        if m != self._env_mtime:
+            stat = os.stat(self.cfg["env_file"])
+        except OSError as exc:
+            self._keys = (b"", b"")
+            self._env_stamp = None
+            raise PermissionError("XAGENT_SECRET_KEY configuration unavailable") from exc
+        stamp = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        if stamp != self._env_stamp:
             secret = read_env(self.cfg["env_file"]).get("XAGENT_SECRET_KEY", "")
             if len(secret) < 16:
+                self._keys = (b"", b"")
+                self._env_stamp = None
                 raise PermissionError("XAGENT_SECRET_KEY not configured")
             self._keys = (derive(secret, b"xagent-hostd-request-v1"), derive(secret, b"xagent-hostd-grant-v1"))
-            self._env_mtime = m
+            self._env_stamp = stamp
+        if not all(self._keys):
+            raise PermissionError("XAGENT_SECRET_KEY not loaded")
         return self._keys
 
     def audit(self, entry: dict) -> None:
