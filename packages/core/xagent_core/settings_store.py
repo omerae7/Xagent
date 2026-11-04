@@ -57,6 +57,13 @@ class StopLossSettings(BaseModel):
     monthly_cost_usd: float = 60.0
     max_steps_simple: int = 6
     max_steps_complex: int = 25
+    # بودجه اجرایی تطبیقی: مأموریت‌های تعاملی (مرورگر/دسکتاپ) پایه بزرگ‌تری دارند و در صورت
+    # پیشرفت واقعی (مشاهده جدید، بدون خطای پیاپی، هزینه زیر سقف) حداکثر step_extensions بار تمدید
+    # می‌شوند؛ هیچ تمدیدی از max_steps_hard، سقف هزینه یا سقف کارمند عبور نمی‌کند.
+    max_steps_interactive: int = Field(30, ge=1, le=200)
+    max_steps_hard: int = Field(60, ge=1, le=300)
+    step_extensions: int = Field(2, ge=0, le=5)
+    no_progress_limit: int = Field(6, ge=2, le=50)
     max_runtime_seconds: int = 900
     max_repeat_same_action: int = 2
     max_consecutive_errors: int = 3
@@ -116,6 +123,17 @@ class HostSettings(BaseModel):
     exec_session_minutes: int = Field(15, ge=1, le=60)
 
 
+class ReportSettings(BaseModel):
+    """گزارش‌دهی پیش‌دستانه به میز کار کارفرما."""
+
+    # حداقل شدت برای ارسال هم‌زمان به تلگرام کارفرما (Saved Messages)؛ off یعنی فقط پنل
+    telegram_min_severity: Literal["off", "info", "important", "critical"] = "critical"
+    # اجرای موفق روتین‌های غیرپایشی (مثلاً «گزارش روزانه») در میز کار ثبت شود
+    routine_success: bool = True
+    # گفتگوهایی که بیش از این مدت طول بکشند پس از پایان در میز کار گزارش می‌شوند
+    long_run_seconds: int = Field(120, ge=10, le=86400)
+
+
 class EmbeddingSettings(BaseModel):
     provider: Literal["local_hash", "model"] = "local_hash"
 
@@ -128,6 +146,7 @@ DEFAULTS: dict[str, type[BaseModel]] = {
     "dream": DreamSettings,
     "telegram": TelegramSettings,
     "host": HostSettings,
+    "reports": ReportSettings,
 }
 
 

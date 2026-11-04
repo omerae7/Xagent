@@ -202,6 +202,10 @@ class Run(IdMixin, Base):
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=0)
     lease_owner: Mapped[str | None] = mapped_column(String(64))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # کلید یکتای نوبت روتین (routine:<id>:<slot>) — مانع اجرای تکراری یک نوبت حتی پس از ری‌استارت
+    dedupe_key: Mapped[str | None] = mapped_column(String(160), unique=True)
+    # نتیجه ساختاریافته: changed | no_change | error | partial | blocked
+    outcome: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = _ts(index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -373,6 +377,91 @@ class Routine(IdMixin, TimestampMixin, Base):
     circuit_open_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[str] = mapped_column(String(16), default="owner")
     run_count: Mapped[int] = mapped_column(Integer, default=0)
+    # ── چرخه حیات مأموریت (Migration 0005) ──
+    # active | paused | disabled | completed | failed | cancelled | expired
+    # (در حال اجرا / منتظر موعد / منتظر تأیید از اجرای جاری مشتق می‌شوند، نه ذخیره)
+    status: Mapped[str] = mapped_column(String(16), default="active", server_default="active", index=True)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # بازه نیمه‌باز [starts_at, end_at)
+    max_runs: Mapped[int | None] = mapped_column(Integer)  # شامل اجرای فوری اولیه
+    success_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    no_change_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completion_reason: Mapped[str | None] = mapped_column(String(32))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))  # سقف هزینه کل عمر روتین
+    spent_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=0, server_default="0")
+    # برنامه قطعی پیش‌بررسی (بدون LLM): {"source": "telegram", "chats": [...], "private_only": true} | {"source": "url", ...}
+    watch: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    watch_state: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    mission_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("missions.id", ondelete="SET NULL"), index=True)
+    report_policy: Mapped[str] = mapped_column(String(16), default="important", server_default="important")
+
+
+class Mission(IdMixin, TimestampMixin, Base):
+    """مجوز مأموریت محدود و قابل‌ممیزی (Scoped Mission Authorization).
+
+    فقط از هویت احرازشده کارفرما (سمت سرور) ساخته می‌شود؛ متن پیام یا داده غیرقابل‌اعتماد نمی‌تواند
+    آن را بسازد یا گسترش دهد. اقدامات داخل محدوده در هر نوبت دوباره تأیید نمی‌خواهند؛ خارج از محدوده
+    طبق سیاست out_of_scope فقط گزارش یا درخواست تأیید می‌شوند.
+    """
+
+    __tablename__ = "missions"
+    title: Mapped[str] = mapped_column(String(200))
+    owner: Mapped[str] = mapped_column(String(64))  # نام کاربری کارفرمای احرازشده
+    created_by_run: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    # pending (منتظر تأیید) | active | revoked | expired | completed
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    scope: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    max_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    max_runs: Mapped[int | None] = mapped_column(Integer)
+    max_actions: Mapped[int | None] = mapped_column(Integer)
+    actions_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(String(64))
+
+
+class MissionAction(IdMixin, Base):
+    """سابقه هر اقدام بیرونی مأموریت؛ کلید یکتا از پاسخ تکراری به یک پیام جلوگیری می‌کند."""
+
+    __tablename__ = "mission_actions"
+    ts: Mapped[datetime] = _ts(index=True)
+    mission_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    routine_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    action: Mapped[str] = mapped_column(String(32))  # telegram_reply | telegram_send | ...
+    target: Mapped[str] = mapped_column(String(160))
+    ref: Mapped[str | None] = mapped_column(String(64))
+    dedupe_key: Mapped[str | None] = mapped_column(String(200), unique=True)
+    status: Mapped[str] = mapped_column(String(16), default="sent")  # sent | blocked | failed | duplicate
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
+class InboxItem(IdMixin, Base):
+    """میز کار و گزارش‌های ایجنت: نتایج مهم، خطاها، تأییدها و پایان مأموریت‌ها — متصل به Run واقعی."""
+
+    __tablename__ = "inbox_items"
+    ts: Mapped[datetime] = _ts(index=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)  # report|error|approval|mission|message|long_task|employee
+    severity: Mapped[str] = mapped_column(String(12), default="info")  # info | important | critical
+    title: Mapped[str] = mapped_column(String(256))
+    body: Mapped[str] = mapped_column(Text, default="")
+    run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    routine_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    mission_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    link: Mapped[str | None] = mapped_column(String(256))
+    dedupe_key: Mapped[str | None] = mapped_column(String(200), unique=True)
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    delivery: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
 
 # ───────────────────────────── حافظه ۵ لایه ─────────────────────────────

@@ -19,8 +19,22 @@ def get_zone(tz: str | None) -> ZoneInfo:
         return ZoneInfo("Asia/Tehran")
 
 
+# ساعت مجازی فقط برای تست‌های قطعی زمان‌بند (Virtual Clock)؛ در اجرای عادی همیشه None است.
+_FAKE_NOW: datetime | None = None
+
+
 def now_utc() -> datetime:
+    if _FAKE_NOW is not None:
+        return _FAKE_NOW
     return datetime.now(UTC)
+
+
+def set_fake_now(value: datetime | None) -> None:
+    """تنظیم ساعت مجازی (فقط تست). مقدار None به ساعت واقعی برمی‌گردد."""
+    global _FAKE_NOW
+    if value is not None and value.tzinfo is None:
+        raise ValueError("ساعت مجازی باید آگاه از منطقه زمانی باشد")
+    _FAKE_NOW = value
 
 
 def to_local(dt: datetime, tz: str | None) -> datetime:

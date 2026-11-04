@@ -78,7 +78,7 @@ async def process_event(event_id: uuid.UUID, bridge: TelegramBridge | None) -> s
                 decision["actions"].append(f"crm:{contact.id}")
 
         routines = (await session.execute(select(Routine).where(
-            Routine.trigger_type == "event", Routine.enabled.is_(True), Routine.paused.is_(False),
+            Routine.trigger_type == "event", Routine.status == "active",
             Routine.circuit_state != "open"))).scalars().all()
         stop = await bus.is_stop_all()
         created: list[uuid.UUID] = []

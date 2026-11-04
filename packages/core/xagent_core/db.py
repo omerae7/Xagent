@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import DateTime, MetaData, Uuid, func
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -23,7 +23,9 @@ NAMING = {
 
 
 def utcnow() -> datetime:
-    return datetime.now(UTC)
+    from .timeutil import now_utc
+
+    return now_utc()
 
 
 class Base(DeclarativeBase):

@@ -13,10 +13,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_core import bus
 from xagent_core.audit import audit
 from xagent_core.db import utcnow
-from xagent_core.models import Contact, Conversation, CRMInteraction, Project, Routine, Run, Task, User
+from xagent_core.models import (
+    Contact,
+    Conversation,
+    CRMInteraction,
+    Mission,
+    Project,
+    Routine,
+    Run,
+    Task,
+    User,
+)
 from xagent_core.text import normalize_fa
 from xagent_crm import contact_overview, log_interaction, upsert_contact
-from xagent_tools.schedule import compute_next_run, validate_routine
+from xagent_tools.lifecycle import active_run, claim_occurrence, finalize_routine, routine_conversation
+from xagent_tools.schedule import (
+    TERMINAL_STATUSES,
+    apply_window,
+    compute_next_run,
+    display_state,
+    validate_routine,
+)
+from xagent_tools.watch import normalize_watch
 
 from ..deps import current_user, get_session, owner_user, parse_uuid, ser
 
@@ -146,36 +164,103 @@ class RoutineIn(BaseModel):
     time_sensitive: bool | None = None
     max_steps: int | None = Field(default=None, ge=1, le=200)
     max_cost_usd: float | None = Field(default=None, ge=0, le=50)
+    # چرخه حیات مأموریت
+    starts_at: datetime | None = None
+    end_at: datetime | None = None
+    duration_minutes: float | None = Field(default=None, gt=0, le=60 * 24 * 90)
+    max_runs: int | None = Field(default=None, ge=1, le=100_000)
+    budget_usd: float | None = Field(default=None, ge=0, le=500)
+    watch: dict[str, Any] | None = None
+    report_policy: str | None = Field(default=None, pattern="^(all|important|errors|off)$")
+    run_now: bool = False
 
 
 def _apply_routine(r: Routine, body: RoutineIn) -> None:
     for f in ("name", "description", "instruction", "trigger_type", "cron_expr", "interval_seconds", "run_at",
-              "event_filter", "timezone", "enabled", "time_sensitive", "max_steps", "max_cost_usd"):
+              "event_filter", "timezone", "time_sensitive", "max_steps", "max_cost_usd", "budget_usd",
+              "report_policy"):
         v = getattr(body, f)
         if v is not None:
             setattr(r, f, v)
+    if body.watch is not None:
+        try:
+            r.watch = normalize_watch(body.watch)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+    if body.enabled is not None and r.status in ("active", "disabled"):
+        r.enabled = body.enabled
+        r.status = "active" if body.enabled else "disabled"
+
+
+async def ser_routine(session: AsyncSession, r: Routine) -> dict[str, Any]:
+    active = await active_run(session, r.id)
+    extra: dict[str, Any] = {
+        "display_state": display_state(r, active.status if active else None),
+        "active_run_id": active.id if active else None,
+        "remaining_runs": max(0, r.max_runs - (r.run_count or 0)) if r.max_runs else None,
+        "mission": None,
+    }
+    if r.mission_id:
+        m = await session.get(Mission, r.mission_id)
+        if m is not None:
+            extra["mission"] = {"id": str(m.id), "status": m.status, "scope": m.scope, "title": m.title,
+                                "expires_at": m.expires_at, "actions_count": m.actions_count,
+                                "max_actions": m.max_actions}
+    return ser(r, extra=extra)
+
+
+async def _run_now(session: AsyncSession, r: Routine) -> tuple[Any, str | None]:
+    """اجرای فوری اولیه به‌عنوان نوبت اول همان قرارداد شمارش (زمان‌بند آن را تکرار نمی‌کند)."""
+    if r.trigger_type not in ("interval", "cron"):
+        return None, "trigger"
+    if await bus.is_stop_all():
+        return None, "stop_all"
+    now = utcnow()
+    slot = r.starts_at if r.trigger_type == "interval" and r.starts_at and r.starts_at <= now else now
+    run_id = await claim_occurrence(session, r, slot)
+    r.next_run_at = compute_next_run(r, now)
+    return run_id, None if run_id else "duplicate"
 
 
 @router.get("/routines")
 async def list_routines(_: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     rows = (await session.execute(select(Routine).order_by(Routine.created_at.desc()))).scalars().all()
-    return {"items": [ser(r) for r in rows]}
+    return {"items": [await ser_routine(session, r) for r in rows]}
+
+
+@router.get("/routines/{rid}")
+async def get_routine(rid: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    r = await session.get(Routine, parse_uuid(rid))
+    if r is None:
+        raise HTTPException(404, "روتین یافت نشد")
+    return await ser_routine(session, r)
 
 
 @router.post("/routines")
 async def create_routine(body: RoutineIn, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
     if not body.name or not body.instruction:
         raise HTTPException(400, "نام و دستور روتین لازم است")
-    r = Routine(name=body.name, instruction=body.instruction, created_by="owner")
+    r = Routine(name=body.name, instruction=body.instruction, created_by="owner", status="active", run_count=0,
+                watch={}, watch_state={})
     _apply_routine(r, body)
+    apply_window(r, start=body.starts_at, duration_minutes=body.duration_minutes, end_at=body.end_at,
+                 max_runs=body.max_runs)
     if err := validate_routine(r):
         raise HTTPException(400, err)
-    r.next_run_at = compute_next_run(r)
     session.add(r)
     await session.flush()
-    await audit(session, user.username, "routine.create", str(r.id), {"name": r.name})
+    r.next_run_at = compute_next_run(r, first=True)
+    run_id, blocked = (await _run_now(session, r)) if body.run_now else (None, None)
+    await audit(session, user.username, "routine.create", str(r.id), {"name": r.name, "run_now": body.run_now})
+    await session.commit()
+    if run_id:
+        await bus.enqueue_run(run_id, "routine")
     await bus.publish("routine.changed", {"id": str(r.id), "action": "create"})
-    return ser(r)
+    await session.refresh(r)
+    out = await ser_routine(session, r)
+    out["run_id"] = str(run_id) if run_id else None
+    out["run_now_blocked"] = blocked
+    return out
 
 
 @router.patch("/routines/{rid}")
@@ -185,12 +270,20 @@ async def update_routine(rid: str, body: RoutineIn, user: User = Depends(owner_u
     if r is None:
         raise HTTPException(404, "روتین یافت نشد")
     _apply_routine(r, body)
+    new_window = body.duration_minutes or body.end_at or body.max_runs or body.starts_at
+    if new_window:
+        if body.duration_minutes and not body.starts_at:
+            r.starts_at = utcnow()
+        apply_window(r, start=body.starts_at, duration_minutes=body.duration_minutes, end_at=body.end_at,
+                     max_runs=body.max_runs)
+        if r.status in TERMINAL_STATUSES:  # تمدید مأموریت پایان‌یافته با پنجره جدید
+            r.status, r.enabled, r.completed_at, r.completion_reason = "active", True, None, None
     if err := validate_routine(r):
         raise HTTPException(400, err)
-    r.next_run_at = compute_next_run(r)
+    r.next_run_at = compute_next_run(r, first=bool(new_window))
     await audit(session, user.username, "routine.update", str(r.id))
     await bus.publish("routine.changed", {"id": str(r.id), "action": "update"})
-    return ser(r)
+    return await ser_routine(session, r)
 
 
 @router.post("/routines/{rid}/{action}")
@@ -200,18 +293,25 @@ async def routine_action(rid: str, action: str, user: User = Depends(owner_user)
     if r is None:
         raise HTTPException(404, "روتین یافت نشد")
     run = None
+    if action in ("pause", "resume", "test") and r.status in TERMINAL_STATUSES:
+        raise HTTPException(409, "این مأموریت پایان یافته است؛ برای اجرای دوباره مهلت یا سقف جدید تعیین کنید.")
     if action == "pause":
-        r.paused = True
+        r.paused, r.status = True, "paused"
     elif action == "resume":
-        r.paused = False
+        r.paused, r.status, r.enabled = False, "active", True
         r.circuit_state = "closed"
         r.consecutive_failures = 0
         r.circuit_open_until = None
+        r.last_error = None
         r.next_run_at = compute_next_run(r)
+    elif action == "cancel":
+        await finalize_routine(session, r, utcnow(), "owner_cancelled", status="cancelled")
     elif action == "test":
-        conv = await _routine_conversation(session, r)
+        conv = await routine_conversation(session, r)
         run = Run(conversation_id=conv.id, routine_id=r.id, trigger="routine", input=r.instruction,
-                  state={"trusted": True, "principal": "owner", "requested_by": "routine_test", "test_run": True,
+                  state={"trusted": True, "principal": "mission" if r.mission_id else "owner",
+                         "mission_id": str(r.mission_id) if r.mission_id else None,
+                         "requested_by": "routine_test", "test_run": True,
                          "max_cost": float(r.max_cost_usd) if r.max_cost_usd else None,
                          "max_steps": r.max_steps})
         session.add(run)
@@ -222,17 +322,9 @@ async def routine_action(rid: str, action: str, user: User = Depends(owner_user)
     if run:
         await bus.enqueue_run(run.id, "test")
     await bus.publish("routine.changed", {"id": str(r.id), "action": action})
-    return ser(r, extra={"run_id": run.id if run else None})
-
-
-async def _routine_conversation(session: AsyncSession, r: Routine) -> Conversation:
-    conv = (await session.execute(select(Conversation).where(
-        Conversation.channel == "routine", Conversation.external_ref == str(r.id)))).scalar_one_or_none()
-    if conv is None:
-        conv = Conversation(title=f"روتین: {r.name}", channel="routine", external_ref=str(r.id))
-        session.add(conv)
-        await session.flush()
-    return conv
+    out = await ser_routine(session, r)
+    out["run_id"] = str(run.id) if run else None
+    return out
 
 
 @router.delete("/routines/{rid}")
@@ -250,7 +342,7 @@ async def delete_routine(rid: str, user: User = Depends(owner_user), session: As
 async def routine_runs(rid: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     rows = (await session.execute(select(Run).where(Run.routine_id == parse_uuid(rid))
                                   .order_by(Run.created_at.desc()).limit(50))).scalars().all()
-    return {"items": [ser(r, exclude={"plan", "goal"}) for r in rows]}
+    return {"items": [ser(r, exclude={"plan", "goal", "state"}) for r in rows]}
 
 
 # ───────────── CRM ─────────────

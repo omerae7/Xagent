@@ -14,6 +14,8 @@ from typing import Literal
 
 from xagent_core.text import normalize_fa
 
+from .intent import parse_intent
+
 Complexity = Literal["trivial", "simple", "complex"]
 
 
@@ -28,6 +30,8 @@ class Route:
     tool_groups: list[str] = field(default_factory=list)
     memory_layers: list[str] = field(default_factory=lambda: ["behavioral", "semantic", "working"])
     reasons: list[str] = field(default_factory=list)
+    # مأموریت زمان‌دار تشخیص‌داده‌شده (قطعی، بدون LLM) — مبنای انتخاب ابزار و پیش‌فرض‌های روتین
+    intent: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -74,7 +78,7 @@ _RISK_MARKERS = {
 }
 _TOOL_GROUP_MARKERS = {
     "tasks": r"(تسک|کار(ها)?ی?|وظیفه|یادآوری|todo|task|ددلاین|مهلت)",
-    "routines": r"(روتین|هر (روز|هفته|ساعت|ماه)|زمان ?بندی|cron|routine|schedule)",
+    "routines": r"(روتین|هر (روز|هفته|ساعت|ماه|دقیقه)|زمان ?بندی|cron|routine|schedule)",
     "crm": r"(همکار|مخاطب|مشتری|پروژه|crm|contact)",
     "telegram": r"(تلگرام|telegram|پیام|چت)",
     "web": r"(سایت|وب|لینک|http|www\.|جست ?و ?جو|اینترنت|خبر|قیمت|بگرد|سرچ|پیدا کن|بررسی آنلاین|نرخ ارز|دلار|یورو|بورس)",
@@ -84,9 +88,10 @@ _TOOL_GROUP_MARKERS = {
     "memory": r"(یادت|حافظه|قبلا|دفعه (قبل|پیش)|سابقه|تاریخچه|history|remember)",
     "episodes": r"(دیروز|هفته (پیش|گذشته)|ماه (پیش|گذشته)|چه کارهایی|گزارش کار|سابقه)",
     "system": r"(نصب|اجرا کن|ترمینال|اسکریپت|shell|bash)",
-    "host": r"(سرور|vps|میزبان|ری ?استارت|restart|لاگ|log|دیسک|disk|رم\b|ram|cpu|پردازنده|حافظه سرور|docker|داکر|"
-            r"کانتینر|systemd|سرویس|آپدیت|به ?روز ?رسانی|update|رول ?بک|rollback|بکاپ|پشتیبان|backup|نسخه|ترمینال|"
-            r"لینوکس|linux|پورت|فایروال|uptime|doctor|xagent)",
+    # مرز کلمه لازم است: «ram» داخل «telegram» و «رم» داخل «خبرم» نباید ابزار سرور را فعال کند
+    "host": r"(سرور|\bvps\b|میزبان|ری ?استارت|\brestart\b|\bلاگ|\blogs?\b|دیسک|\bdisk\b|\bرم\b|\bram\b|\bcpu\b|"
+            r"پردازنده|حافظه سرور|docker|داکر|کانتینر|systemd|سرویس|آپدیت|به ?روز ?رسانی|\bupdate\b|رول ?بک|"
+            r"rollback|بکاپ|پشتیبان|backup|نسخه|ترمینال|لینوکس|linux|پورت|فایروال|uptime|doctor|xagent)",
     "admin": r"(تنظیم|مدل|کارمند|ابزار|خطا|ارور|مشکل|عیب|اصلاح|درست کن|ارائه ?دهنده|مسیریابی|api|کلید|خودت|سیستم|"
              r"وضعیت|سلامت|بهینه|هزینه|فعال کن|غیرفعال|کشف|آزمون|تست کن|config|setting|model|employee|debug|fix)",
 }
@@ -119,6 +124,14 @@ def classify(text: str, has_images: bool = False, has_audio: bool = False, trigg
     for group, pat in _TOOL_GROUP_MARKERS.items():
         if re.search(pat, t):
             r.tool_groups.append(group)
+    # تشخیص مأموریت زمان‌دار: «هر دقیقه»، «دقیقه‌ای یک بار»، «تا ۱۰ دقیقه آینده»، «every 2 minutes» …
+    intent = parse_intent(text)
+    if intent.recurring and trigger not in ("routine", "event"):
+        for g in ("routines", *[sv for sv in intent.services if sv in ("telegram", "web", "tasks")]):
+            if g not in r.tool_groups:
+                r.tool_groups.append(g)
+        r.intent = intent.to_dict()
+        r.reasons.append("مأموریت زمان‌دار: " + intent.describe())
     if "admin" in r.tool_groups:
         r.reasons.append("درخواست اداره/عیب‌یابی سیستم")
     risky = [cat for cat, pat in _RISK_MARKERS.items() if re.search(pat, t)]

@@ -74,14 +74,54 @@ class StopLossEnforcer:
     started_monotonic: float = field(default_factory=time.monotonic)
     max_cost_override: float | None = None
     max_steps_override: int | None = None
+    # بودجه اجرایی تطبیقی (به‌جای سقف ثابت): حد فعلی، سقف سخت و تعداد تمدید باقی‌مانده
+    step_limit: int | None = None
+    hard_limit: int | None = None
+    extensions_left: int = 0
 
     @property
     def max_steps(self) -> int:
         if self.max_steps_override:
             return self.max_steps_override
+        if self.step_limit:
+            return self.step_limit
         if self.complexity == "complex":
             return self.settings.max_steps_complex
         return self.settings.max_steps_simple
+
+    def configure(self, groups: list[str] | set[str], state: dict | None = None) -> None:
+        """تعیین بودجه گام بر اساس نوع مأموریت؛ سقف صریح کارفرما/کارمند هرگز تمدید نمی‌شود."""
+        if state:
+            self.step_limit = state.get("limit")
+            self.hard_limit = state.get("hard")
+            self.extensions_left = int(state.get("ext_left", 0))
+            return
+        base, hard = adaptive_step_budget(self.settings, self.complexity, groups)
+        self.step_limit, self.hard_limit = base, hard
+        self.extensions_left = self.settings.step_extensions if not self.max_steps_override else 0
+
+    def escalate(self) -> None:
+        """ارتقا به مدیر: حداقل بودجه کار پیچیده (بدون عبور از سقف سخت)."""
+        if self.step_limit is not None:
+            self.step_limit = min(max(self.step_limit, self.settings.max_steps_complex),
+                                  self.hard_limit or self.settings.max_steps_complex)
+
+    def try_extend(self, loop: LoopController, cost: Decimal, steps: int) -> bool:
+        """تمدید فقط با پیشرفت واقعی، بدون خطای پیاپی، هزینه زیر ۷۰٪ سقف و زیر سقف سخت."""
+        if self.max_steps_override or not self.step_limit or self.extensions_left <= 0:
+            return False
+        hard = self.hard_limit or self.step_limit
+        if steps >= hard or float(cost) >= 0.7 * self.max_cost:
+            return False
+        if loop.consecutive_errors > 0 or loop.progress_ratio() < 0.5:
+            return False
+        grow = max(4, self.step_limit // 2)
+        self.step_limit = min(hard, self.step_limit + grow)
+        self.extensions_left -= 1
+        return True
+
+    def budget_state(self) -> dict:
+        return {"limit": self.step_limit, "hard": self.hard_limit, "ext_left": self.extensions_left}
 
     @property
     def max_cost(self) -> float:
@@ -112,6 +152,20 @@ class StopLossEnforcer:
 
 
 Signal = Literal["ok", "change_strategy", "escalate", "abort"]
+INTERACTIVE_GROUPS = {"browser", "desktop"}
+
+
+def adaptive_step_budget(sl: StopLossSettings, complexity: str, groups: list[str] | set[str]) -> tuple[int, int]:
+    """(بودجه پایه، سقف سخت) بر اساس پیچیدگی و نوع ابزار.
+
+    مأموریت مرورگر/دسکتاپ ذاتاً تعاملات زیادی دارد (باز کردن، خواندن، کلیک، تایپ…)؛ سقف ۶ گام
+    کار ساده آن را نیمه‌کاره می‌گذاشت. هزینه، توکن، زمان و کنترل حلقه همچنان مستقل اعمال می‌شوند.
+    """
+    base = sl.max_steps_complex if complexity == "complex" else sl.max_steps_simple
+    if INTERACTIVE_GROUPS & set(groups):
+        base = max(base, sl.max_steps_interactive)
+    hard = max(base, sl.max_steps_hard)
+    return base, hard
 
 
 @dataclass
@@ -125,18 +179,31 @@ class LoopController:
     escalated: bool = False
     no_progress_steps: int = 0
     interventions: int = 0
+    no_progress_limit: int = 6
+    recent: list[int] = field(default_factory=list)  # ۱ = گام با مشاهده جدید، ۰ = بدون پیشرفت
 
     @staticmethod
     def signature(tool: str, args: dict) -> str:
         blob = json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
         return tool + ":" + hashlib.sha1(blob.encode()).hexdigest()[:12]
 
-    def observe(self, tool: str, args: dict, ok: bool) -> Signal:
-        sig = self.signature(tool, args)
+    def progress_ratio(self, window: int = 6) -> float:
+        tail = self.recent[-window:]
+        return (sum(tail) / len(tail)) if tail else 1.0
+
+    def observe(self, tool: str, args: dict, ok: bool, digest: str | None = None) -> Signal:
+        """digest = اثرانگشت مشاهده نتیجه؛ تکرار یک اقدام با مشاهده جدید (مثلاً «صفحه بعد») پیشرفت است،
+        نه حلقه. فقط تکرار اقدام با مشاهده یکسان یا خطا «بدون پیشرفت» شمرده می‌شود."""
+        sig = self.signature(tool, args) + (f"@{digest[:10]}" if digest else "")
         self.seen[sig] = self.seen.get(sig, 0) + 1
         self.consecutive_errors = 0 if ok else self.consecutive_errors + 1
         repeat = self.seen[sig]
+        progressed = ok and repeat == 1
+        self.recent = (self.recent + [1 if progressed else 0])[-20:]
+        self.no_progress_steps = 0 if progressed else self.no_progress_steps + 1
         if repeat > self.max_repeat + 1 or self.consecutive_errors > self.max_consecutive_errors + 1:
+            return "abort"
+        if self.no_progress_steps >= self.no_progress_limit:
             return "abort"
         if self.consecutive_errors >= self.max_consecutive_errors or repeat > self.max_repeat:
             self.interventions += 1
@@ -155,14 +222,18 @@ class LoopController:
             "consecutive_errors": self.consecutive_errors,
             "escalated": self.escalated,
             "interventions": self.interventions,
+            "recent": self.recent,
+            "no_progress": self.no_progress_steps,
         }
 
     @classmethod
-    def from_state(cls, d: dict | None, max_repeat: int, max_errors: int) -> LoopController:
-        lc = cls(max_repeat=max_repeat, max_consecutive_errors=max_errors)
+    def from_state(cls, d: dict | None, max_repeat: int, max_errors: int, no_progress_limit: int = 6) -> LoopController:
+        lc = cls(max_repeat=max_repeat, max_consecutive_errors=max_errors, no_progress_limit=no_progress_limit)
         if d:
             lc.seen = dict(d.get("seen", {}))
             lc.consecutive_errors = int(d.get("consecutive_errors", 0))
             lc.escalated = bool(d.get("escalated", False))
             lc.interventions = int(d.get("interventions", 0))
+            lc.recent = list(d.get("recent", []))
+            lc.no_progress_steps = int(d.get("no_progress", 0))
         return lc

@@ -35,7 +35,7 @@ from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_tools import installer
 
 from .inbox import process_event
-from .scheduler import after_routine_run, claim_scheduled_dream, tick_routines
+from .scheduler import after_routine_run, claim_scheduled_dream, reconcile_runs, tick_routines
 from .telegram import TelegramBridge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -56,19 +56,11 @@ class Worker:
         self.active: set[asyncio.Task] = set()
 
     async def recover(self) -> None:
-        """Runهای در حال اجرا که Worker قبلی آن‌ها را رها کرده دوباره در صف قرار می‌گیرند."""
-        async with session_scope() as session:
-            stale = (await session.execute(select(Run).where(Run.status.in_(["running", "queued"])))).scalars().all()
-            ids = []
-            for r in stale:
-                if await bus.get_redis().exists(f"xagent:lease:run:{r.id}"):
-                    continue
-                r.status = "queued"
-                ids.append(r.id)
-        for rid in ids:
-            await bus.enqueue_run(rid, "recover")
-        if ids:
-            log.info("%d اجرای معلق بازیابی شد", len(ids))
+        """Runهایی که Worker قبلی رها کرده (بدون Lease زنده) فوراً دوباره در صف قرار می‌گیرند.
+
+        اجراهایی که Lease قبلی‌شان هنوز منقضی نشده، در reconcile دوره‌ای زمان‌بند بازیابی می‌شوند.
+        """
+        await reconcile_runs(stale_after_seconds=0)
 
     async def _execute(self, run_id: uuid.UUID) -> None:
         async with self.sem:
@@ -78,7 +70,7 @@ class Worker:
             except Exception:  # noqa: BLE001
                 log.exception("خطای اجرای %s", run_id)
             try:
-                await after_routine_run(run_id)
+                await after_routine_run(run_id, self.telegram)
                 async with session_scope() as session:
                     run = await session.get(Run, run_id)
                     if run and run.conversation_id:
@@ -211,12 +203,16 @@ class Worker:
 
     async def scheduler_loop(self) -> None:
         last_dream_check = 0.0
+        last_reconcile = 0.0
         loop = asyncio.get_running_loop()
         while not self.stopping.is_set():
             try:
-                n = await tick_routines()
+                n = await tick_routines(self.telegram)
                 if n:
                     log.info("%d روتین زمان‌بندی شد", n)
+                if loop.time() - last_reconcile > 60:
+                    last_reconcile = loop.time()
+                    await reconcile_runs()
                 if loop.time() - last_dream_check > 60:
                     last_dream_check = loop.time()
                     lease = await bus.acquire_lease("dream", 3_600_000)

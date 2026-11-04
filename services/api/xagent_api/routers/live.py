@@ -16,6 +16,7 @@ from sqlalchemy import Integer, case, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
+from xagent_core.inbox import ser_item
 from xagent_core.models import (
     AIModel,
     Approval,
@@ -25,6 +26,7 @@ from xagent_core.models import (
     Employee,
     Episode,
     Experience,
+    InboxItem,
     Incident,
     InstalledTool,
     Notification,
@@ -123,9 +125,21 @@ async def dashboard(_: User = Depends(current_user), session: AsyncSession = Dep
     day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     month_start = day_start.replace(day=1)
 
+    # تعریف واحد وضعیت‌ها (API و UI): «فعال» = در حال اجرا + در صف؛ منتظر تأیید و متوقف موقت جدا شمرده می‌شوند
     run_counts = dict((await session.execute(
         select(Run.status, func.count()).where(Run.status.in_(["queued", "running", "waiting_approval", "paused"]))
         .group_by(Run.status))).all())
+    finished_today = dict((await session.execute(
+        select(Run.status, func.count()).where(Run.finished_at >= day_start,
+                                               Run.status.in_(["succeeded", "failed", "stopped", "cancelled"]))
+        .group_by(Run.status))).all())
+    summary = {
+        "running": int(run_counts.get("running", 0)), "queued": int(run_counts.get("queued", 0)),
+        "waiting_approval": int(run_counts.get("waiting_approval", 0)), "paused": int(run_counts.get("paused", 0)),
+        "succeeded_today": int(finished_today.get("succeeded", 0)), "failed_today": int(finished_today.get("failed", 0)),
+        "stopped_today": int(finished_today.get("stopped", 0) + finished_today.get("cancelled", 0)),
+    }
+    summary["active"] = summary["running"] + summary["queued"]
     active_runs = (await session.execute(
         select(Run).where(Run.status.in_(["running", "queued", "waiting_approval"])).order_by(Run.created_at.desc()).limit(8)
     )).scalars().all()
@@ -150,9 +164,14 @@ async def dashboard(_: User = Depends(current_user), session: AsyncSession = Dep
         select(Task).where(Task.status.notin_(["done", "cancelled"]), Task.due_at.is_not(None),
                            Task.due_at <= now_utc() + timedelta(days=2)).order_by(Task.due_at).limit(6))).scalars().all()
     routines = (await session.execute(
-        select(Routine).where(Routine.enabled.is_(True), Routine.paused.is_(False), Routine.next_run_at.is_not(None))
+        select(Routine).where(Routine.status == "active", Routine.next_run_at.is_not(None))
         .order_by(Routine.next_run_at).limit(5))).scalars().all()
     routine_total = (await session.execute(select(func.count()).select_from(Routine))).scalar_one()
+    routine_status = dict((await session.execute(select(Routine.status, func.count()).group_by(Routine.status))).all())
+    inbox_unread = (await session.execute(select(func.count()).select_from(InboxItem).where(
+        InboxItem.read.is_(False), InboxItem.archived.is_(False)))).scalar_one()
+    inbox_latest = (await session.execute(select(InboxItem).where(InboxItem.archived.is_(False))
+                                          .order_by(InboxItem.ts.desc()).limit(6))).scalars().all()
     approvals = (await session.execute(select(func.count()).select_from(Approval).where(Approval.status == "pending"))).scalar_one()
     notes = (await session.execute(select(Notification).order_by(Notification.ts.desc()).limit(8))).scalars().all()
     unread = (await session.execute(select(func.count()).select_from(Notification).where(Notification.read.is_(False)))).scalar_one()
@@ -162,13 +181,15 @@ async def dashboard(_: User = Depends(current_user), session: AsyncSession = Dep
         .where(Episode.ts >= week, Episode.kind != "system"))).one()
 
     control = await _control_snapshot(session)
-    running = run_counts.get("running", 0)
-    state = "executing" if running else ("waiting" if run_counts.get("waiting_approval") else
-                                         ("thinking" if run_counts.get("queued") else "idle"))
+    running = summary["running"]
+    state = "executing" if running else ("waiting" if summary["waiting_approval"] else
+                                         ("thinking" if summary["queued"] else "idle"))
     return {
         "agent": {"name": general.agent_name, "state": state, "stop_all": await bus.is_stop_all(),
                   "takeover": await bus.is_takeover()},
-        "runs": {"counts": run_counts, "active": [ser(r, exclude={"plan", "goal", "result"}) for r in active_runs]},
+        "runs": {"counts": run_counts, "summary": summary,
+                 "active": [ser(r, exclude={"plan", "goal", "result", "state"}) for r in active_runs]},
+        "inbox": {"unread": int(inbox_unread), "items": [ser_item(i) for i in inbox_latest]},
         "usage": {
             "today": {"tokens_in": int(d_in), "tokens_out": int(d_out), "cache_read": int(d_cache),
                       "cost": float(d_cost), "calls": int(d_calls), "limit": sl.daily_cost_usd},
@@ -178,7 +199,8 @@ async def dashboard(_: User = Depends(current_user), session: AsyncSession = Dep
                        for h, a, b, c in hourly],
         },
         "tasks": {"counts": task_counts, "due_soon": [ser(t) for t in due_soon]},
-        "routines": {"total": routine_total, "next": [ser(r) for r in routines]},
+        "routines": {"total": routine_total, "by_status": routine_status,
+                     "next": [ser(r, exclude={"watch_state"}) for r in routines]},
         "approvals_pending": approvals,
         "notifications": {"unread": unread, "items": [ser(n) for n in notes]},
         "success_rate_7d": (float(ep_ok) / ep_total) if ep_total else None,

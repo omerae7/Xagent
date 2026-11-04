@@ -117,6 +117,7 @@ class TelegramBridge:
                 "text": text[:8000],
                 "date": msg.date.astimezone(UTC).isoformat() if msg.date else None,
                 "is_private": event.is_private,
+                "sender_is_bot": bool(getattr(sender, "bot", False)),
                 "is_owner_command": is_self_chat and self.cfg.owner_chat == "me",
                 "has_media": bool(msg.media),
                 "geo": {"lat": msg.geo.lat, "long": msg.geo.long} if getattr(msg, "geo", None) else None,
@@ -152,7 +153,8 @@ class TelegramBridge:
         c = str(chat).lstrip("@").lower()
         return c in ("me", "self") or c in {a.lstrip("@").lower() for a in self.cfg.allowlist}
 
-    async def send(self, chat: str | int, text: str, file_path: str | None = None) -> dict[str, Any]:
+    async def send(self, chat: str | int, text: str, file_path: str | None = None,
+                   reply_to: int | None = None) -> dict[str, Any]:
         if not self.connected:
             raise RuntimeError("تلگرام متصل نیست")
         if not self._allowed(chat):
@@ -165,9 +167,9 @@ class TelegramBridge:
             p = (get_settings().workspace_dir / file_path.lstrip("/")).resolve()
             if get_settings().workspace_dir.resolve() not in p.parents or not p.is_file():
                 raise PermissionError("فایل باید در فضای کاری ایجنت باشد")
-            m = await self.client.send_file(entity, str(p), caption=body or None)
+            m = await self.client.send_file(entity, str(p), caption=body or None, reply_to=reply_to)
         else:
-            m = await self.client.send_message(entity, body)
+            m = await self.client.send_message(entity, body, reply_to=reply_to)
         return {"message_id": m.id, "chat_id": m.chat_id}
 
     async def notify_owner(self, text: str) -> None:

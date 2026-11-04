@@ -28,7 +28,8 @@ EMPLOYEE_FORBIDDEN_GROUPS = {"admin", "host"}
 LOOSER_IF_GREATER = {
     "stoploss": {"max_cost_per_task_usd", "max_tokens_per_task", "daily_cost_usd", "monthly_cost_usd",
                  "max_steps_simple", "max_steps_complex", "max_runtime_seconds", "max_repeat_same_action",
-                 "max_consecutive_errors", "employee_max_cost_usd", "employee_max_steps"},
+                 "max_consecutive_errors", "employee_max_cost_usd", "employee_max_steps",
+                 "max_steps_interactive", "max_steps_hard", "step_extensions", "no_progress_limit"},
     "routine_safety": {"circuit_failure_threshold", "lease_ttl_seconds"},
     "dream": {"max_cost_usd", "max_tokens", "max_calls", "max_runtime_seconds"},
 }
