@@ -89,10 +89,18 @@ XAGENT_SANDBOX=runner
 EOF
 umask 022
 dc build >/dev/null
-dc up -d >/dev/null 2>&1
+if ! dc up -d >"$W/base-compose.log" 2>&1; then
+  cat "$W/base-compose.log"
+  dc ps --all || true
+  dc logs --tail=120 api postgres redis web || true
+  fail "نصب اولیه Compose شکست خورد"
+fi
 for i in $(seq 1 60); do dc exec -T api python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3)" >/dev/null 2>&1 && break; [ "$i" = 60 ] && fail "نصب پایه بالا نیامد"; sleep 3; done
 q "CREATE TABLE e2e_probe(id int primary key, note text); INSERT INTO e2e_probe VALUES (1,'before')" >/dev/null
-bash "$REPO/infra/updater/bootstrap.sh" --dir "$T" --ref main --no-update >/dev/null
+if ! bash "$REPO/infra/updater/bootstrap.sh" --dir "$T" --ref main --no-update >"$W/bootstrap.log" 2>&1; then
+  cat "$W/bootstrap.log"
+  fail "Bootstrap ابزارهای مدیریت ناموفق بود"
+fi
 [ -x "$XAGENT_LIB/xagent-update" ] && [ -L "$XAGENT_BIN/xagent" ] || fail "bootstrap ابزار ثابت را نصب نکرد"
 pass "۰. نصب پایه (${BASE:0:12}) و نصب ابزار ثابت با bootstrap"
 
