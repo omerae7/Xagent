@@ -254,3 +254,18 @@ def runner():
     from xagent_agent.pipeline import AgentRunner
 
     return AgentRunner("test-worker")
+
+
+@pytest.fixture(autouse=True)
+def _browser_session_hygiene():
+    """تب‌های مرورگرِ ساختگی که تست‌ها مستقیم و بدون پایان اجرا باز می‌کنند پس از هر تست آزاد می‌شوند.
+
+    در اجرای واقعی، پایان هر Run (‌_finalize) تب همان Run را آزاد می‌کند؛ اینجا فقط ایزوله‌سازی آزمون است.
+    """
+    yield
+    from xagent_tools.builtin import computer
+
+    for registry in (computer._sessions, computer._session_locks, computer._session_used):
+        registry.clear()
+    computer._adopted.clear()
+    computer._page_employee.clear()

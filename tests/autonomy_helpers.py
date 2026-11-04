@@ -96,6 +96,8 @@ class FakePage:
         return f"کاتالوگ — صفحه {self.page_no}"
 
     async def evaluate(self, js: str, *_: Any):
+        if "input[type=password]" in js:
+            return False  # صفحه ساختگی فیلد رمز ندارد (تشخیص صفحه ورود)
         if "querySelectorAll" in js:
             return [{"id": 1, "tag": "a", "type": "", "label": "صفحه بعد", "href": "#next"}]
         body = f"فهرست محصولات صفحه {self.page_no}"
@@ -180,6 +182,8 @@ class MultiPage:
         return f"صفحه {self.url}"
 
     async def evaluate(self, js: str, *args: Any):
+        if "input[type=password]" in js:
+            return False
         if "querySelectorAll" in js:
             return [{"id": i + 1, "tag": tag, "type": "", "label": label, "href": ""} for i, (label, tag) in enumerate(self.BUTTONS)]
         if "data-xa-id" in js and args:

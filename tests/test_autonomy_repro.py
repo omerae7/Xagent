@@ -217,7 +217,7 @@ async def test_q5_browser_mission_beyond_six_interactions(app_client, configured
 
     page = FakePage(last_page=8)
 
-    async def fake_page(*_):
+    async def fake_page(*_, **__):
         return page
 
     monkeypatch.setattr(computer, "_page", fake_page)

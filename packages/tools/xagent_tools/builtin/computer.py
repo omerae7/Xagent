@@ -68,15 +68,44 @@ async def _guard() -> None:
 # ── مدیر نشست مرورگر: هر اجرا تب اختصاصی خودش را دارد ──
 # Context مشترک (Cookie و نشست‌های لاگین‌شده کارفرما حفظ می‌شود) ولی تب‌ها جدا: کلیک/تایپ یک اجرا هرگز در تب
 # اجرای دیگر انجام نمی‌شود. هر اجرا قفل عملیات خودش را دارد؛ اجراهای مختلف هم‌زمان روی تب‌های جدا کار می‌کنند.
+# مالکیت تب: تب ساخته‌شده توسط اجرا پس از پایان بسته می‌شود؛ تب موجود (مثلاً Telegram Web لاگین‌شده کارفرما) که
+# اجرا «به امانت» برداشته بسته نمی‌شود و فقط آزاد می‌شود. تب در دست اجرای دیگر یا کارمند دیگر هرگز برداشته نمی‌شود.
 MAX_SESSIONS = 4
+NAV_TIMEOUT_MS = 45000
+IDLE_EVICT_SECONDS = 1800  # فقط تب اجرای رهاشده (بیکار طولانی) آزاد می‌شود، نه تب اجرای فعال دیگر
 _sessions: dict[str, Any] = {}
 _session_locks: dict[str, asyncio.Lock] = {}
 _session_used: dict[str, float] = {}
+_adopted: set[str] = set()
+_page_employee: dict[int, str] = {}  # id(page) → کارمند سازنده/دارنده (حریم تب کارمندان)
+VISION_UNAVAILABLE = "(مدل بینایی تنظیم نشده است)"
+_AUTH_PATH = re.compile(r"/(login|log-in|signin|sign-in|auth|sso|oauth)\b|#/login", re.I)
+_AUTH_TEXT = re.compile(r"log in to telegram|log in by (qr|phone)|scan (this|the) qr|ورود به تلگرام|"
+                        r"sign in to continue|please log ?in|برای ادامه وارد شوید", re.I)
+
+
+class BrowserBusy(Exception):
+    pass
 
 
 def _session_key(ctx: ToolContext | None) -> str:
     rid = getattr(ctx, "run_id", None) if ctx is not None else None
     return str(rid) if rid else "default"
+
+
+def _employee_of(ctx: ToolContext | None) -> str:
+    return str(((ctx.extra if ctx is not None else {}) or {}).get("employee_id") or "")
+
+
+def _host(url: str) -> str:
+    return (urlparse(url or "").hostname or "").lower()
+
+
+def _owner_of(page) -> str | None:  # noqa: ANN001
+    for k, pg in _sessions.items():
+        if pg is page and not pg.is_closed():
+            return k
+    return None
 
 
 async def _context():
@@ -91,19 +120,42 @@ async def _context():
         return _browser.contexts[0] if _browser.contexts else await _browser.new_context()
 
 
-async def _page(ctx: ToolContext | None = None):
+def _may_adopt(ctx: ToolContext | None, page) -> bool:  # noqa: ANN001
+    """تب موجود بدون مالک فعال: کارفرما (اجرای غیرکارمند) تب‌های خودش را می‌تواند به امانت بگیرد؛ کارمند فقط تب
+    همان کارمند را. تب در دست اجرای دیگر هرگز."""
+    if page.is_closed() or _owner_of(page) is not None:
+        return False
+    tab_emp = _page_employee.get(id(page), "")
+    return tab_emp == _employee_of(ctx)
+
+
+async def _page(ctx: ToolContext | None = None, prefer_host: str | None = None, create: bool = True):
+    """تب این اجرا. prefer_host: اگر تب آزاد و مجازی با همان سایت باز است، همان به امانت برداشته می‌شود."""
     key = _session_key(ctx)
     page = _sessions.get(key)
     if page is None or page.is_closed():
         bctx = await _context()
         async with _lock:
+            if prefer_host:
+                for cand in list(bctx.pages):
+                    if _host(cand.url) == prefer_host and _may_adopt(ctx, cand):
+                        _sessions[key] = cand
+                        _adopted.add(key)
+                        _session_used[key] = asyncio.get_running_loop().time()
+                        return cand
+            if not create:
+                return None
+            now = asyncio.get_running_loop().time()
             live = [k for k, pg in _sessions.items() if not pg.is_closed()]
-            if len(live) >= MAX_SESSIONS:  # آزادسازی قدیمی‌ترین نشست بیکار
-                oldest = min(live, key=lambda k: _session_used.get(k, 0))
-                if not _session_locks.get(oldest, asyncio.Lock()).locked():
-                    await release_session(oldest)
+            if len(live) >= MAX_SESSIONS:
+                idle = [k for k in live if now - _session_used.get(k, now) > IDLE_EVICT_SECONDS
+                        and not _session_locks.get(k, asyncio.Lock()).locked()]
+                if not idle:
+                    raise BrowserBusy(f"ظرفیت تب‌های مرورگر ({MAX_SESSIONS}) در دست اجراهای فعال است")
+                await release_session(min(idle, key=lambda k: _session_used.get(k, 0)))
             page = await bctx.new_page()
             _sessions[key] = page
+            _page_employee[id(page)] = _employee_of(ctx)
     _session_used[key] = asyncio.get_running_loop().time()
     return page
 
@@ -113,16 +165,25 @@ def _op_lock(ctx: ToolContext | None) -> asyncio.Lock:
 
 
 async def release_session(key: Any) -> None:
-    """بستن تب اجرا پس از پایان آن (آزادسازی منابع)؛ در خطا بی‌صدا."""
-    page = _sessions.pop(str(key), None)
-    _session_locks.pop(str(key), None)
-    _session_used.pop(str(key), None)
-    if page is not None:
+    """پایان اجرا: تب ساخته‌شده توسط همین اجرا بسته و تب به‌امانت‌گرفته فقط آزاد می‌شود؛ قفل دسکتاپ آزاد می‌شود.
+    هرگز تب یا قفل اجرای دیگری را لمس نمی‌کند."""
+    k = str(key)
+    page = _sessions.pop(k, None)
+    adopted = k in _adopted
+    _adopted.discard(k)
+    _session_locks.pop(k, None)
+    _session_used.pop(k, None)
+    if page is not None and not adopted:
+        _page_employee.pop(id(page), None)
         try:
             if not page.is_closed():
                 await page.close()
         except Exception:  # noqa: BLE001
             pass
+    try:
+        await bus.release_lease(DESKTOP_LEASE, k)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── سیاست اثرمحور: اثر واقعی کلیک/ارسال فرم پیش از اجرا تعیین می‌شود ──
@@ -194,37 +255,127 @@ async def _elements(page) -> str:
     return "\n".join(lines)
 
 
+def _blank(url: str) -> bool:
+    return not url or url.startswith(("about:", "chrome://newtab", "chrome-error://", "data:,"))
+
+
+async def _auth_wall(page, text: str) -> bool:  # noqa: ANN001
+    """صفحه ورود/احراز هویت (محافظه‌کارانه): نشانی ورود، متن ورود شناخته‌شده یا فیلد رمز در صفحه کوتاه."""
+    if _AUTH_PATH.search(page.url or "") or _AUTH_TEXT.search(text[:4000]):
+        return True
+    try:
+        has_pw = await page.evaluate("() => !!document.querySelector('input[type=password]')")
+    except Exception:  # noqa: BLE001
+        has_pw = False
+    return bool(has_pw) and len(text) < 3000
+
+
+async def browser_tabs(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
+    """کشف تب‌های نشست مرورگر مجاز و مالک هر تب (پیش از باز کردن صفحه تازه)."""
+    await _guard()
+    bctx = await _context()
+    me, emp = _session_key(ctx), _employee_of(ctx)
+    lines, tabs = [], []
+    for idx, pg in enumerate(bctx.pages):
+        if pg.is_closed():
+            continue
+        owner = _owner_of(pg)
+        tab_emp = _page_employee.get(id(pg), "")
+        if tab_emp != emp and owner != me:
+            lines.append(f"[{idx}] (تب خصوصی کارمند/حساب دیگر — قابل مشاهده نیست)")
+            tabs.append({"index": idx, "access": "private"})
+            continue
+        state = "همین اجرا" if owner == me else ("در دست اجرای دیگر" if owner else "آزاد (قابل استفاده)")
+        try:
+            title = await pg.title()
+        except Exception:  # noqa: BLE001
+            title = ""
+        lines.append(f"[{idx}] {pg.url} — {truncate(title, 80)} — {state}")
+        tabs.append({"index": idx, "url": pg.url, "title": title, "access": "own" if owner == me else
+                     ("busy" if owner else "free")})
+    out = "\n".join(lines) or "هیچ تبی باز نیست."
+    return ToolResult(True, "تب‌های مرورگر:\n" + out + "\nبرای استفاده از تب آزاد همان سایت، browser_open با همان نشانی را بزن.",
+                      {"tabs": tabs}, untrusted=True)
+
+
 async def browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     await _guard()
     async with _op_lock(ctx):
-        return await _browser_open(ctx, a)
+        try:
+            return await _browser_open(ctx, a)
+        except BrowserBusy as e:
+            return ToolResult(False, str(e), {"error": "busy"})
 
 
 async def _browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
-    page = await _page(ctx)
     url = a["url"] if "://" in a["url"] else "https://" + a["url"]
-    resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-    await page.wait_for_timeout(800)
+    want = _host(url)
+    page = await _page(ctx, prefer_host=want if a.get("reuse", True) else None)
+    before = page.url
+    reused = _host(before) == want and before.rstrip("/").startswith(url.rstrip("/"))
+    status = 0
+    if not reused:
+        try:
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            status = resp.status if resp else 0
+        except Exception as e:  # noqa: BLE001 — Timeout/خطای شبکه: گزارش دقیق، نه موفقیت
+            return ToolResult(False, f"باز کردن «{url}» ناموفق بود: {type(e).__name__}: {truncate(str(e), 300)}\n"
+                              f"نشانی فعلی تب: {page.url}", {"url": page.url, "requested": url, "error": type(e).__name__})
+        await page.wait_for_timeout(800)
     text = await page.evaluate("() => document.body ? document.body.innerText : ''")
     els = await _elements(page)
-    status = resp.status if resp else 0
+    title = await page.title()
+    now_host = _host(page.url)
+    auth = await _auth_wall(page, text)
+    data = {"url_before": before, "url": page.url, "requested": url, "status": status, "title": title,
+            "reused_tab": reused or ctx is not None and _session_key(ctx) in _adopted, "auth_required": auth,
+            "host_match": now_host == want}
+    head = f"عنوان: {title}\nنشانی: {page.url}"
+    if _blank(page.url) or not now_host:
+        return ToolResult(False, f"{head}\nصفحه بارگذاری نشد (تب خالی). محتوای درخواستی مشاهده نشد.", data)
+    if status >= 400:
+        return ToolResult(False, f"{head}\nپاسخ HTTP {status}؛ صفحه درخواستی در دسترس نیست.", data, untrusted=True)
+    if auth:
+        return ToolResult(False, f"{head}\nاین صفحه ورود/احراز هویت است؛ کاربر وارد نشده و محتوای درخواستی "
+                          "(مثلاً گفتگوها) در دسترس نیست. هیچ محتوایی را حدس نزن؛ به کارفرما گزارش بده که ورود لازم است.",
+                          data, untrusted=True)
+    redirect = "" if now_host == want else f"\nتوجه: به میزبان دیگری هدایت شد ({now_host})."
     return ToolResult(
-        status < 400,
-        f"عنوان: {await page.title()}\nنشانی: {page.url}\n\n--- متن ---\n{truncate(text, 6000)}\n\n--- عناصر قابل تعامل ---\n{els}",
-        {"url": page.url, "status": status},
-        untrusted=True,
+        True,
+        f"{head}{redirect}{' (تب موجود همین سایت استفاده شد)' if data['reused_tab'] else ''}\n\n--- متن ---\n"
+        f"{truncate(text, 6000)}\n\n--- عناصر قابل تعامل ---\n{els}",
+        data, untrusted=True,
     )
 
 
 async def browser_read(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     await _guard()
-    page = await _page(ctx)
+    page = await _page(ctx, create=False)
+    if page is None or _blank(page.url):
+        return ToolResult(False, f"هیچ صفحه‌ای در تب این اجرا باز نیست ({getattr(page, 'url', 'about:blank') or 'about:blank'}). "
+                          "خواندن تب خالی، مشاهده سایت درخواستی نیست؛ ابتدا browser_tabs یا browser_open.",
+                          {"url": getattr(page, "url", "about:blank")})
     if a.get("selector"):
-        text = await page.inner_text(a["selector"], timeout=10000)
+        try:
+            text = await page.inner_text(a["selector"], timeout=10000)
+        except Exception as e:  # noqa: BLE001
+            return ToolResult(False, f"عنصر «{a['selector']}» در {page.url} یافت/خوانده نشد: {type(e).__name__}",
+                              {"url": page.url})
     else:
         text = await page.evaluate("() => document.body ? document.body.innerText : ''")
+    data = {"url": page.url, "title": await page.title(), "chars": len(text)}
+    if await _auth_wall(page, text):
+        data["auth_required"] = True
+        return ToolResult(False, f"نشانی: {page.url}\nاین صفحه ورود است؛ محتوای درخواستی در دسترس نیست (ورود لازم است).",
+                          data, untrusted=True)
+    if not text.strip():
+        return ToolResult(False, f"نشانی: {page.url}\nصفحه هیچ متن قابل‌خواندنی ندارد.", data)
+    if a.get("expect") and str(a["expect"]) not in text:
+        data["expect_found"] = False
+        return ToolResult(False, f"نشانی: {page.url}\nمتن مورد انتظار «{a['expect']}» در صفحه مشاهده نشد.\n"
+                          f"{truncate(text, 2000)}", data, untrusted=True)
     els = await _elements(page)
-    return ToolResult(True, f"نشانی: {page.url}\n{truncate(text, 8000)}\n\n--- عناصر ---\n{els}", untrusted=True)
+    return ToolResult(True, f"نشانی: {page.url}\n{truncate(text, 8000)}\n\n--- عناصر ---\n{els}", data, untrusted=True)
 
 
 def _target(a: dict[str, Any]) -> str:
@@ -270,38 +421,67 @@ async def browser_type(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     return ToolResult(True, f"مقدار وارد شد{' و ارسال شد' if a.get('submit') else ''}. نشانی: {page.url}", untrusted=True)
 
 
+async def _visual(ctx: ToolContext, png: bytes, question: str, where: str) -> ToolResult:
+    """گرفتن تصویر و تحلیل بینایی دو عمل جداست: بدون تحلیل واقعی، «مشاهده محتوا» ادعا نمی‌شود."""
+    desc = await ctx.vision(png, question) if ctx.vision else VISION_UNAVAILABLE
+    if not desc or desc.strip() == VISION_UNAVAILABLE:
+        return ToolResult(False, f"تصویر {where} گرفته شد ولی تحلیل بینایی انجام نشد (مدل بینایی در دسترس نیست)؛ "
+                          "محتوای تصویر بررسی نشده است و نباید ادعا شود.", {"captured": True, "vision_analyzed": False},
+                          images=[("image/png", base64.b64encode(png).decode())])
+    return ToolResult(True, f"تحلیل تصویر {where}: {desc}", {"captured": True, "vision_analyzed": True}, untrusted=True)
+
+
 async def browser_screenshot(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     await _guard()
-    page = await _page(ctx)
+    page = await _page(ctx, create=False)
+    if page is None or _blank(page.url):
+        return ToolResult(False, "هیچ صفحه‌ای در تب این اجرا باز نیست؛ تصویر تب خالی مشاهده سایت نیست.",
+                          {"url": getattr(page, "url", "about:blank")})
     png = await page.screenshot(full_page=False, type="png")
-    if ctx.vision:
-        desc = await ctx.vision(png, a.get("question") or "این صفحه مرورگر را دقیق توصیف کن.")
-        return ToolResult(True, f"تحلیل تصویر صفحه: {desc}", untrusted=True)
-    return ToolResult(True, "اسکرین‌شات گرفته شد (مدل بینایی تنظیم نشده است).",
-                      images=[("image/png", base64.b64encode(png).decode())])
+    res = await _visual(ctx, png, a.get("question") or "این صفحه مرورگر را دقیق توصیف کن.", "صفحه مرورگر")
+    res.data["url"] = page.url
+    return res
 
 
 async def desktop_screenshot(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     png = await ctx.sandbox.screenshot()
-    if ctx.vision:
-        desc = await ctx.vision(png, a.get("question") or "صفحه دسکتاپ را توصیف کن و مختصات عناصر مهم را بگو.")
-        return ToolResult(True, f"تحلیل دسکتاپ: {desc}", untrusted=True)
-    return ToolResult(True, "اسکرین‌شات گرفته شد (مدل بینایی تنظیم نشده است).",
-                      images=[("image/png", base64.b64encode(png).decode())])
+    return await _visual(ctx, png, a.get("question") or "صفحه دسکتاپ را توصیف کن و مختصات عناصر مهم را بگو.", "دسکتاپ")
+
+
+# ── قفل کنترل دسکتاپ: ماوس/صفحه‌کلید یک دسکتاپ مشترک در هر لحظه فقط در اختیار یک اجراست ──
+DESKTOP_LEASE = "desktop:control"
+DESKTOP_LEASE_MS = 120_000
+
+
+async def acquire_desktop(ctx: ToolContext) -> bool:
+    key = _session_key(ctx)
+    if await bus.extend_lease(DESKTOP_LEASE, key, DESKTOP_LEASE_MS):
+        return True
+    return await bus.acquire_lease(DESKTOP_LEASE, DESKTOP_LEASE_MS, owner=key) is not None
 
 
 async def desktop_input(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
+    await _guard()
+    if not await acquire_desktop(ctx):
+        return ToolResult(False, "کنترل دسکتاپ مشترک در اختیار اجرای دیگری است؛ اقدام انجام نشد (برای جلوگیری از اثر "
+                          "روی کار دیگر). بعداً دوباره تلاش کن یا از مرورگر ساختاریافته استفاده کن.", {"error": "desktop_busy"})
     action = a["action"]
     payload = {k: a[k] for k in ("x", "y", "text", "keys", "button", "amount") if k in a}
     res = await ctx.sandbox.desktop_action(action, **payload)
-    return ToolResult(bool(res.get("ok")), f"اقدام دسکتاپ «{action}» انجام شد", res)
+    return ToolResult(bool(res.get("ok")), f"اقدام دسکتاپ «{action}» {'انجام شد' if res.get('ok') else 'ناموفق بود'}", res)
 
 
 TOOLS = [
-    Tool("browser_open", "باز کردن نشانی در مرورگر کروم ایجنت و دریافت متن و عناصر قابل‌کلیک (با شماره ref).",
-         obj({"url": s("نشانی")}, ["url"]), browser_open, "browser", category="desktop_control", label="باز کردن صفحه"),
-    Tool("browser_read", "خواندن متن صفحه فعلی مرورگر یا یک selector و فهرست عناصر.",
-         obj({"selector": s("CSS selector اختیاری")}), browser_read, "browser", label="خواندن مرورگر"),
+    Tool("browser_tabs", "فهرست تب‌های باز نشست مرورگر مجاز (نشانی، عنوان، آزاد/در دست اجرای دیگر). پیش از باز کردن "
+         "سایتی که ممکن است با حساب لاگین‌شده باز باشد (مثل Telegram Web) استفاده کن.",
+         obj({}), browser_tabs, "browser", label="تب‌های مرورگر"),
+    Tool("browser_open", "باز کردن نشانی در مرورگر کروم ایجنت و دریافت متن و عناصر قابل‌کلیک (با شماره ref). اگر تب "
+         "آزاد همان سایت باز باشد همان استفاده می‌شود. صفحه ورود، تب خالی یا خطای HTTP موفق حساب نمی‌شود.",
+         obj({"url": s("نشانی"), "reuse": b("استفاده از تب آزاد همان سایت (پیش‌فرض بله)")}, ["url"]), browser_open,
+         "browser", category="desktop_control", label="باز کردن صفحه"),
+    Tool("browser_read", "خواندن متن صفحه فعلی تب این اجرا یا یک selector و فهرست عناصر. expect: متنی که باید دیده شود.",
+         obj({"selector": s("CSS selector اختیاری"), "expect": s("متن مورد انتظار (اختیاری)")}), browser_read, "browser",
+         label="خواندن مرورگر"),
     Tool("browser_click", "کلیک روی عنصر با ref (از فهرست عناصر)، selector یا متن.",
          obj({"ref": i("شماره عنصر"), "selector": s("selector"), "text": s("متن عنصر")}), browser_click, "browser",
          category="desktop_control", label="کلیک در مرورگر"),

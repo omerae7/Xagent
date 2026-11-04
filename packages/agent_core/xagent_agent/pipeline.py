@@ -629,6 +629,7 @@ class AgentRunner:
             trusted_owner=rc.trusted, sandbox=get_sandbox(), publish=bus.publish,
             vision=lambda data, q: self._vision(rc, data, q),
             extra={"telegram": self.telegram, "employee_name": employee.name if employee else None,
+                   "employee_id": str(employee.id) if employee else None,
                    "runner": self, "depth": int(s.get("depth", 0)),
                    "principal": "owner" if rc.is_owner else ("employee" if employee else s.get("principal", "external")),
                    "requested_by": s.get("requested_by"),

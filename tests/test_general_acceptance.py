@@ -60,7 +60,7 @@ async def test_A_general_browser_extraction(app_client, configured_model, runner
 
     page = FakePage(last_page=3)
 
-    async def fake_page(*_):
+    async def fake_page(*_, **__):
         return page
     monkeypatch.setattr(computer, "_page", fake_page)
 
@@ -191,7 +191,7 @@ async def test_E_broken_api_falls_back_to_browser(app_client, configured_model, 
 
     page = FakePage(last_page=1)
 
-    async def fake_page(*_):
+    async def fake_page(*_, **__):
         return page
     monkeypatch.setattr(computer, "_page", fake_page)
 

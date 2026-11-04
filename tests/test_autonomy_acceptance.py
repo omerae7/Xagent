@@ -367,7 +367,7 @@ def _browser_handler(marker: str, page: FakePage, *, same_args: bool = True, rec
 async def _browser_mission(app_client, runner, mock_llm, monkeypatch, marker: str, page: FakePage, **kw):
     from xagent_tools.builtin import computer
 
-    async def fake_page(*_):
+    async def fake_page(*_, **__):
         return page
 
     monkeypatch.setattr(computer, "_page", fake_page)

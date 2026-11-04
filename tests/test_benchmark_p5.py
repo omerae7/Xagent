@@ -67,7 +67,7 @@ async def test_bench_2_browser(app_client, configured_model, runner, mock_llm, m
 
     page = FakePage(last_page=3)
 
-    async def fake_page(*_):
+    async def fake_page(*_, **__):
         return page
     monkeypatch.setattr(computer, "_page", fake_page)
 
@@ -160,7 +160,7 @@ async def test_bench_6_tool_failure(app_client, configured_model, runner, mock_l
 
     page = FakePage(last_page=1)
 
-    async def fake_page(*_):
+    async def fake_page(*_, **__):
         return page
     monkeypatch.setattr(computer, "_page", fake_page)
 
