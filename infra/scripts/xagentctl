@@ -35,7 +35,7 @@ case "${1:-status}" in
     dc ps
     echo
     health || echo "API پاسخ نمی‌دهد"
-    [ -f "$CTL/update.status" ] && { echo -n "آخرین به‌روزرسانی: "; cat "$CTL/update.status"; } ;;
+    if [ -f "$CTL/update.status" ]; then echo -n "آخرین به‌روزرسانی: "; cat "$CTL/update.status"; fi ;;
   version)
     if [ -f "$CTL/version.json" ]; then cat "$CTL/version.json"; else
       echo "{\"version\":\"$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)\",\"commit\":\"$(git rev-parse HEAD)\"}"; fi ;;
