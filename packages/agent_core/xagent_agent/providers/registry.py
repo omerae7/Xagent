@@ -223,25 +223,44 @@ async def test_model(session: AsyncSession, model: AIModel) -> tuple[bool, str, 
     t0 = time.monotonic()
     caps = model.capabilities or {}
     try:
+        bound = await load_model(session, model.id, include_disabled=True)
+        if bound is None:
+            raise ProviderError("مدل قابل اتصال نیست؛ تست بدون درخواست API متوقف شد.")
         if caps.get("embedding") and not caps.get("tools"):
-            vec = await provider.embed(model.model_name, ["سلام"], 768)
+            from ..usage_ledger import begin_aux_attempt, finish_aux_attempt
+            aid = await begin_aux_attempt(bound, purpose="probe_embedding", input_hint=256)
+            try:
+                vec = await provider.embed(model.model_name, ["سلام"], 768)
+            except BaseException as e:
+                await finish_aux_attempt(aid, model=bound, error=e,
+                    known_rejected=isinstance(e, ProviderError) and e.status in (400, 401, 403, 404, 422),
+                    unit_details={"texts": 1, "input_characters": 4})
+                raise
+            await finish_aux_attempt(aid, model=bound, reported_usage=getattr(vec, "usage", None),
+                                     unit_details={"texts": 1, "input_characters": 4})
             msg = f"Embedding با {len(vec[0])} بعد دریافت شد"
         elif caps.get("tts") and not caps.get("tools"):
-            audio, _ = await provider.speak(model.model_name, "سلام", "alloy")
+            from ..usage_ledger import begin_aux_attempt, finish_aux_attempt
+            aid = await begin_aux_attempt(bound, purpose="probe_tts", input_hint=256, output_hint=1024)
+            try:
+                audio, _ = await provider.speak(model.model_name, "سلام", "alloy")
+            except BaseException as e:
+                await finish_aux_attempt(aid, model=bound, error=e,
+                    known_rejected=isinstance(e, ProviderError) and e.status in (400, 401, 403, 404, 422),
+                    unit_details={"input_text_characters": 4})
+                raise
+            await finish_aux_attempt(aid, model=bound,
+                                     unit_details={"input_text_characters": 4, "audio_output_bytes": len(audio)})
             msg = f"صدا تولید شد ({len(audio)} بایت)"
         elif caps.get("stt") and not caps.get("tools") and p.kind != "google":
-            msg = "مدل گفتار به متن ثبت شد (تست با فایل صوتی در بخش گفتگو)"
+            msg = "مدل گفتار به متن ثبت شد (بدون درخواست API)"
         else:
-            r = await provider.chat(
-                ChatRequest(
-                    model=model.model_name,
-                    system_stable="",
-                    system_dynamic="",
-                    messages=[LLMMessage(role="user", content="فقط بنویس: OK")],
-                    max_tokens=16,
-                )
-            )
-            msg = f"پاسخ: {r.text.strip()[:60] or '(خالی)'} — {r.usage.input_total}+{r.usage.output} توکن"
+            from ..llm import call_llm
+            result = await call_llm(session, [bound], purpose="probe",
+                system_stable="", system_dynamic="",
+                messages=[LLMMessage(role="user", content="فقط بنویس: OK")], max_tokens=16)
+            answer = result.response
+            msg = f"پاسخ: {answer.text.strip()[:60] or '(خالی)'} — {answer.usage.input_total}+{answer.usage.output} توکن"
         ok = True
     except ProviderError as e:
         ok, msg = False, str(e)
