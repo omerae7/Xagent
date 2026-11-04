@@ -160,8 +160,8 @@ function Diff({ before, after }: { before: any; after: any }) {
       {keys.slice(0, 12).map((k) => (
         <div key={k} className="grid gap-1 text-[11px] sm:grid-cols-[9rem_1fr_1fr]">
           <span className="ltr mono truncate text-end text-muted">{k}</span>
-          <span className="ltr mono break-all rounded-[3px] bg-danger/8 px-2 py-1 text-end text-danger">{show(before?.[k])}</span>
-          <span className="ltr mono break-all rounded-[3px] bg-success/8 px-2 py-1 text-end text-success">{show(after?.[k])}</span>
+          <span className="ltr mono break-all rounded-lg bg-danger/8 px-2 py-1 text-end text-danger">{show(before?.[k])}</span>
+          <span className="ltr mono break-all rounded-lg bg-success/8 px-2 py-1 text-end text-success">{show(after?.[k])}</span>
         </div>
       ))}
     </div>

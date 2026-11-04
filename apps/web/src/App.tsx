@@ -14,6 +14,7 @@ const Control = lazy(() => import("./pages/Control"));
 const Chat = lazy(() => import("./pages/Chat"));
 const Tasks = lazy(() => import("./pages/Tasks"));
 const Routines = lazy(() => import("./pages/Routines"));
+const Desk = lazy(() => import("./pages/Desk"));
 const CRM = lazy(() => import("./pages/CRM"));
 const Desktop = lazy(() => import("./pages/Desktop"));
 const Tools = lazy(() => import("./pages/Tools"));
@@ -25,7 +26,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 function Splash() {
   return (
     <div className="grid min-h-[60vh] place-items-center">
-      <PadArray state="thinking" size={112} n={6} />
+      <PadArray state="thinking" size={96} />
     </div>
   );
 }
@@ -55,7 +56,7 @@ export default function App() {
     get("/api/settings").then((s) => setLocale(s.settings.general.timezone, s.settings.general.calendar)).catch(() => undefined);
   }, [authed]);
 
-  if (authed === null) return <div className="grid min-h-dvh place-items-center"><div className="app-bg" /><PadArray state="thinking" size={128} n={7} label="در حال بارگذاری X Agent" /></div>;
+  if (authed === null) return <div className="grid min-h-dvh place-items-center"><div className="app-bg" /><PadArray state="thinking" size={120} label="در حال بارگذاری X Agent" /></div>;
   if (!authed) return <><Login onLogin={() => { qc.clear(); setAuthed(true); }} /><Toaster /></>;
 
   const logout = async () => {
@@ -73,6 +74,7 @@ export default function App() {
           <Route path="/chat/:id" element={<Chat />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/routines" element={<Routines />} />
+          <Route path="/desk" element={<Desk />} />
           <Route path="/crm" element={<CRM />} />
           <Route path="/desktop" element={<Desktop />} />
           <Route path="/tools" element={<Tools />} />

@@ -55,7 +55,7 @@ export default function Dream() {
             {skills.isLoading && <Skeleton className="h-20" />}
             {(skills.data?.items || []).length === 0 && !skills.isLoading && <p className="py-6 text-center text-sm text-muted"><Lightbulb className="mx-auto mb-2 h-6 w-6" />هنوز مهارتی تقطیر نشده است.</p>}
             {(skills.data?.items || []).map((s: any) => (
-              <div key={s.id} className="rounded-[5px] border hairline p-3">
+              <div key={s.id} className="rounded-xl border hairline p-3">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-3.5 w-3.5 text-accent" />{s.name}</span>
                   <Badge tone={s.status === "active" ? "success" : s.status === "probationary" ? "warning" : "neutral"}>{s.status === "active" ? "فعال" : s.status === "probationary" ? "آزمایشی" : "غیرفعال"}</Badge>

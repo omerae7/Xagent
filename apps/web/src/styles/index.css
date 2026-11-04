@@ -10,31 +10,35 @@
     font-family: Vazirmatn, Tahoma, system-ui, sans-serif;
     -webkit-tap-highlight-color: transparent;
     text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01";
   }
   body {
-    @apply bg-bg text-ink antialiased;
+    @apply text-ink antialiased;
+    background: rgb(var(--bg));
     min-height: 100dvh;
     overflow-x: hidden;
     caret-color: rgb(var(--primary));
     accent-color: rgb(var(--primary));
+    font-size: 14.5px;
+    line-height: 1.75;
   }
   ::selection {
-    background: rgb(var(--primary) / 0.3);
+    background: rgb(var(--primary) / 0.22);
     color: rgb(var(--text));
   }
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgb(var(--border) / 0.3) transparent;
+    scrollbar-color: rgb(var(--border) / 0.28) transparent;
   }
   *::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
   }
   *::-webkit-scrollbar-thumb {
-    background: rgb(var(--border) / 0.28);
-    border: 2px solid transparent;
+    background: rgb(var(--border) / 0.24);
+    border: 3px solid transparent;
     background-clip: padding-box;
-    border-radius: 2px;
+    border-radius: 99px;
   }
   *::-webkit-scrollbar-track {
     background: transparent;
@@ -46,115 +50,113 @@
     font: inherit;
   }
   ::placeholder {
-    color: rgb(var(--muted) / 0.75);
+    color: rgb(var(--muted) / 0.8);
   }
   :focus-visible {
-    outline: 2px solid rgb(var(--primary) / 0.85);
-    outline-offset: 2px;
+    outline: 2px solid rgb(var(--primary) / 0.7);
+    outline-offset: 3px;
+    border-radius: 10px;
   }
   a {
-    text-underline-offset: 3px;
+    text-underline-offset: 4px;
+    text-decoration-thickness: 1px;
   }
   h1,
   h2,
   h3 {
     text-wrap: balance;
   }
+  p {
+    text-wrap: pretty;
+  }
 }
 
 @layer components {
-  /* بلوک تراشه: لبه ۱px با پَخ گوشه‌ها؛ پس‌زمینه خودش همان لبه است و ::before سطح داخلی */
+  /*
+   * پنل شیشه‌ای: سطح نیمه‌شفاف روی آسمان موسمی، لبه نور ۱px، سایه نرم با فاصله.
+   * (نام کلاس die برای سازگاری با صفحات موجود حفظ شده است)
+   */
   .die {
     position: relative;
     isolation: isolate;
-    background: rgb(var(--border) / calc(var(--border-alpha) + 0.05));
-    clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+    border-radius: var(--r-panel);
+    background: rgb(var(--glass) / var(--glass-a));
+    box-shadow:
+      inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-edge-a)),
+      inset 0 0 0 1px rgb(var(--glass-edge) / calc(var(--glass-edge-a) * 0.55)),
+      0 1px 2px rgb(var(--glass-shadow) / 0.06),
+      0 18px 40px -22px rgb(var(--glass-shadow) / 0.28);
   }
-  .die::before {
-    content: "";
-    position: absolute;
-    inset: 1px;
-    z-index: -2;
-    background: rgb(var(--surface));
-    clip-path: polygon(0 0, calc(100% - var(--cut) + 0.4px) 0, 100% calc(var(--cut) - 0.4px), 100% 100%, calc(var(--cut) - 0.4px) 100%, 0 calc(100% - var(--cut) + 0.4px));
+  .die-2 {
+    background: rgb(var(--glass) / var(--glass-strong-a));
   }
-  /* بازتاب نور روی سیلیکون که دنبال نشانگر می‌آید (فقط دستگاه‌های دارای hover) */
-  .die::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-    background:
-      radial-gradient(28rem 18rem at var(--mx, 50%) var(--my, 0%), rgb(var(--sheen) / 0.07), transparent 65%),
-      linear-gradient(105deg, transparent 20%, rgb(var(--film-2) / 0.05) 40%, rgb(var(--film-3) / 0.05) 55%, rgb(var(--film-5) / 0.04) 68%, transparent 85%);
-    background-size: 100% 100%, 220% 100%;
-    background-position: 0 0, calc(var(--mx, 50%) * 0.6) 0;
-  }
-  @media (hover: hover) {
-    .die:hover::after,
-    .die[data-sheen]::after {
-      opacity: 1;
-    }
-  }
-  .die-2::before {
-    background: rgb(var(--surface-2));
-  }
-  .die-sunk::before {
-    background: rgb(var(--bg-2) / 0.9);
-  }
-  /* لبه لایه‌نازک: بلوک «زنده» */
-  .die-live {
-    background: linear-gradient(110deg, rgb(var(--film-1)), rgb(var(--film-2)) 28%, rgb(var(--film-3)) 52%, rgb(var(--film-4)) 74%, rgb(var(--film-5)));
-    background-size: 200% 100%;
-    animation: film-drift 9s linear infinite;
+  .die-sunk {
+    background: rgb(var(--border) / 0.06);
+    box-shadow: inset 0 0 0 1px rgb(var(--border) / 0.1);
   }
   .die-sm {
-    --cut: 7px;
+    border-radius: 16px;
   }
   .die-lg {
-    --cut: 18px;
+    border-radius: 28px;
+  }
+  /* پنل «زنده»: هاله آرام آبی‌بنفش (فقط وضعیت فعال/نیازمند توجه) */
+  .die-live {
+    box-shadow:
+      inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-edge-a)),
+      inset 0 0 0 1px rgb(var(--primary) / 0.32),
+      0 0 0 4px rgb(var(--primary) / 0.07),
+      0 18px 44px -20px rgb(var(--primary) / 0.45);
+    animation: live-breathe 3.6s ease-in-out infinite;
+  }
+  /* شیشه با بلور واقعی: فقط برای سطوحی که روی محتوا شناورند (نوار بالا، داک، پنجره) */
+  .glass-blur {
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    backdrop-filter: blur(22px) saturate(150%);
   }
 
-  /* کنترل‌ها: گوشه پَخ در مرورگرهای پشتیبان (corner-shape) و گرد کوچک در بقیه */
   .bevel {
     border-radius: var(--r-ctl);
   }
-  @supports (corner-shape: bevel) {
-    .bevel {
-      corner-shape: bevel;
-      border-radius: calc(var(--r-ctl) + 1px);
-    }
-  }
 
-  /* پد تراشه: نشانگر وضعیت مربعی (جایگزین نقطه‌های گرد) */
+  /* گره خط‌نگاره: نقطه وضعیت دایره‌ای کوچک */
   .pad {
     display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 1px;
+    width: 7px;
+    height: 7px;
+    border-radius: 99px;
     background: currentColor;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
+    flex-shrink: 0;
+  }
+  .node {
+    display: inline-grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 99px;
+    border: 1.5px solid currentColor;
+    background: rgb(var(--surface));
     flex-shrink: 0;
   }
 
   .hairline {
     border-color: rgb(var(--border) / var(--border-alpha));
   }
+  /* جداکننده نقطه‌چین (خط داده در تصاویر مرجع) */
   .etch {
-    background-image: linear-gradient(90deg, rgb(var(--border) / 0.22) 50%, transparent 0);
-    background-size: 6px 1px;
+    background-image: radial-gradient(circle, rgb(var(--border) / 0.32) 1px, transparent 1.2px);
+    background-size: 7px 3px;
     background-repeat: repeat-x;
     background-position: 0 100%;
   }
   .film-bar {
-    background: linear-gradient(90deg, rgb(var(--film-1)), rgb(var(--film-2)), rgb(var(--film-3)), rgb(var(--film-4)), rgb(var(--film-5)));
+    background: linear-gradient(90deg, rgb(var(--primary)), rgb(var(--accent)));
   }
   .skeleton {
-    background: linear-gradient(90deg, rgb(var(--border) / 0.07), rgb(var(--border) / 0.16), rgb(var(--border) / 0.07));
+    background: linear-gradient(90deg, rgb(var(--border) / 0.06), rgb(var(--border) / 0.14), rgb(var(--border) / 0.06));
     background-size: 200% 100%;
-    border-radius: 3px;
+    border-radius: 10px;
     @apply animate-shimmer;
   }
   .num {
@@ -162,47 +164,99 @@
   }
   .mono {
     font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-    font-size: 0.92em;
+    font-size: 0.9em;
     letter-spacing: -0.01em;
   }
   .ltr {
     direction: ltr;
     unicode-bidi: isolate;
   }
+
+  /* صحنه آبی عمیق (هیرو، مغز دیجیتال): خط‌نگاره و متن سفید روی آن خوانا است */
+  .stage {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    color: rgb(var(--stage-ink));
+    border-radius: 30px;
+    background:
+      radial-gradient(60% 70% at 72% 18%, rgb(var(--glow) / 0.28), transparent 70%),
+      radial-gradient(50% 60% at 12% 92%, rgb(var(--accent) / 0.22), transparent 70%),
+      linear-gradient(135deg, rgb(var(--stage-1)), rgb(var(--stage-2)) 52%, rgb(var(--stage-3)));
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.22),
+      0 30px 60px -32px rgb(var(--stage-1) / 0.75);
+  }
+  .stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.35;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .stage-glass {
+    background: rgb(255 255 255 / 0.1);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.3);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
 }
 
-/* زیرلایه: سیلیکون + شبکه لیتوگرافی + علامت‌های تراز + نور میکروسکوپ */
+/* آسمان موسمی: گرادیان ۴۵ درجه سه‌توقفی + نور نرم + دانه ریز (بدون نوارشدگی) */
 .app-bg {
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(80rem 52rem at 100% -18%, rgb(var(--lamp) / var(--lamp-alpha)), transparent 68%),
-    linear-gradient(118deg, transparent 38%, rgb(var(--film-2) / 0.035) 47%, rgb(var(--film-3) / 0.035) 53%, rgb(var(--film-5) / 0.025) 58%, transparent 66%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Cpath d='M0 6V0h6M186 0h6v6M192 186v6h-6M6 192H0v-6' fill='none' stroke='%239aa3d0' stroke-opacity='.35'/%3E%3C/svg%3E") 0 0 / 192px 192px,
-    linear-gradient(rgb(var(--litho) / var(--litho-alpha)) 1px, transparent 1px) 0 0 / 48px 48px,
-    linear-gradient(90deg, rgb(var(--litho) / var(--litho-alpha)) 1px, transparent 1px) 0 0 / 48px 48px,
-    rgb(var(--bg));
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .2 0 0 0 0 .3 0 0 0 0 .5 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E"),
+    radial-gradient(70rem 46rem at 105% -10%, rgb(var(--sky-2) / 0.55), transparent 70%),
+    radial-gradient(60rem 40rem at -10% 110%, rgb(var(--sky-3) / 0.32), transparent 72%),
+    linear-gradient(135deg, rgb(var(--sky-1)) 30%, rgb(var(--sky-2) / 0.85) 82%, rgb(var(--sky-3) / 0.7) 110%);
 }
 
-@keyframes film-drift {
-  to {
-    background-position: -200% 0;
-  }
-}
-@keyframes pad-breathe {
+@keyframes live-breathe {
   0%,
   100% {
-    opacity: var(--lo, 0.14);
+    box-shadow:
+      inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-edge-a)),
+      inset 0 0 0 1px rgb(var(--primary) / 0.32),
+      0 0 0 4px rgb(var(--primary) / 0.06),
+      0 18px 44px -20px rgb(var(--primary) / 0.4);
   }
   50% {
-    opacity: var(--hi, 0.9);
+    box-shadow:
+      inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-edge-a)),
+      inset 0 0 0 1px rgb(var(--accent) / 0.4),
+      0 0 0 6px rgb(var(--accent) / 0.08),
+      0 18px 44px -20px rgb(var(--accent) / 0.45);
   }
 }
-@keyframes trace-flow {
+@keyframes node-twinkle {
+  0%,
+  100% {
+    opacity: var(--lo, 0.35);
+  }
+  50% {
+    opacity: var(--hi, 1);
+  }
+}
+@keyframes node-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+@keyframes line-flow {
   to {
-    stroke-dashoffset: -64;
+    stroke-dashoffset: -120;
   }
 }
 
@@ -215,6 +269,16 @@
     transition-duration: 0.01ms !important;
   }
 }
+@media (prefers-reduced-transparency: reduce) {
+  .die {
+    background: rgb(var(--surface));
+  }
+  .glass-blur,
+  .stage-glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
@@ -223,25 +287,25 @@
   scrollbar-width: none;
 }
 .prose-chat p {
-  margin: 0.25rem 0;
+  margin: 0.3rem 0;
 }
 .prose-chat code {
   direction: ltr;
   unicode-bidi: isolate;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.85em;
-  background: rgb(var(--border) / 0.12);
-  border-radius: 3px;
-  padding: 0.1rem 0.35rem;
+  background: rgb(var(--border) / 0.1);
+  border-radius: 6px;
+  padding: 0.1rem 0.4rem;
 }
 .prose-chat pre {
   direction: ltr;
   text-align: left;
   overflow-x: auto;
-  background: rgb(var(--bg) / 0.8);
-  border: 1px solid rgb(var(--border) / 0.15);
-  border-radius: 4px;
-  padding: 0.75rem;
+  background: rgb(var(--border) / 0.07);
+  border: 1px solid rgb(var(--border) / 0.12);
+  border-radius: 14px;
+  padding: 0.8rem 0.9rem;
   margin: 0.5rem 0;
   font-size: 0.8rem;
 }
@@ -250,7 +314,7 @@
   padding: 0;
 }
 .prose-chat ul {
-  list-style: square;
+  list-style: disc;
   padding-inline-start: 1.25rem;
 }
 .prose-chat ol {

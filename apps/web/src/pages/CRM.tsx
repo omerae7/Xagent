@@ -62,7 +62,7 @@ function ContactDetail({ id, onClose }: { id: string; onClose: () => void }) {
       {isLoading || !c ? <Skeleton className="h-40" /> : (
         <div className="space-y-5">
           <div className="flex items-center gap-3">
-            <div className="grid h-14 w-14 place-items-center rounded-[6px] bg-primary/12 text-primary ring-1 ring-inset ring-primary/20 text-xl font-bold">{c.name[0]}</div>
+            <div className="grid h-14 w-14 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-inset ring-primary/20 text-xl font-bold">{c.name[0]}</div>
             <div className="min-w-0 flex-1">
               <div className="font-semibold">{c.name}</div>
               <div className="text-xs text-muted">{[c.role_title, c.company].filter(Boolean).join(" · ") || KIND[c.kind]?.l}</div>
@@ -73,7 +73,7 @@ function ContactDetail({ id, onClose }: { id: string; onClose: () => void }) {
             {c.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted" /><span className="ltr">{c.phone}</span></div>}
             {c.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4 text-muted" /><span className="ltr">{c.email}</span></div>}
             {c.telegram_username && <div className="flex items-center gap-2"><AtSign className="h-4 w-4 text-muted" /><span className="ltr">@{c.telegram_username}</span></div>}
-            {c.notes && <p className="rounded-[5px] bg-line/5 p-3 text-xs leading-6 text-muted">{c.notes}</p>}
+            {c.notes && <p className="rounded-xl bg-line/5 p-3 text-xs leading-6 text-muted">{c.notes}</p>}
           </div>
           <div>
             <h4 className="mb-2 text-sm font-semibold">ثبت پیگیری</h4>
@@ -89,7 +89,7 @@ function ContactDetail({ id, onClose }: { id: string; onClose: () => void }) {
               {data.interactions.length === 0 && <p className="text-xs text-muted">سابقه‌ای ثبت نشده است.</p>}
               {data.interactions.map((it: any) => (
                 <li key={it.id} className="relative">
-                  <span className="absolute -start-[21px] top-1.5 h-2.5 w-2.5 rounded-[2px] bg-primary ring-4 ring-bg" />
+                  <span className="absolute -start-[21px] top-1.5 h-2.5 w-2.5 rounded-full bg-primary ring-4 ring-bg" />
                   <div className="flex items-center gap-2 text-[11px] text-muted"><Badge tone={it.direction === "in" ? "cyan" : "accent"}>{CHANNEL[it.channel] || it.channel}</Badge>{relTime(it.created_at)}</div>
                   <p className="mt-1 text-sm leading-6">{it.summary}</p>
                   {it.follow_up_at && <p className="text-[11px] text-warning">پیگیری بعدی: {fmtDate(it.follow_up_at)}</p>}
@@ -128,7 +128,7 @@ function Projects() {
           {(data?.items || []).map((p: any) => (
             <Card key={p.id} className="p-4">
               <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 font-semibold"><span className="h-3 w-3 rounded-[2px]" style={{ background: p.color }} />{p.name}</span>
+                <span className="flex items-center gap-2 font-semibold"><span className="h-3 w-3 rounded-full" style={{ background: p.color }} />{p.name}</span>
                 <Select value={p.status} onChange={async (e) => { await patch(`/api/crm/projects/${p.id}`, { status: e.target.value }); qc.invalidateQueries({ queryKey: ["projects"] }); }} className="h-8 w-28 text-xs">
                   <option value="active">فعال</option><option value="on_hold">معلق</option><option value="done">تمام‌شده</option><option value="archived">بایگانی</option>
                 </Select>
@@ -171,7 +171,7 @@ export default function CRM() {
                   {(data?.items || []).map((c: any, i: number) => (
                     <motion.button key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} onClick={() => setOpen(c.id)}
                       className="die group flex items-center gap-3 p-4 text-start transition">
-                      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[6px] bg-primary/12 text-primary ring-1 ring-inset ring-primary/20 text-lg font-bold">{c.name[0]}</div>
+                      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-inset ring-primary/20 text-lg font-bold">{c.name[0]}</div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="truncate font-medium">{c.name}</span><Badge tone={KIND[c.kind]?.tone}>{KIND[c.kind]?.l}</Badge></div>
                         <div className="mt-0.5 truncate text-xs text-muted">{[c.role_title, c.company].filter(Boolean).join(" · ") || "—"}</div>

@@ -42,7 +42,7 @@ function UndoCenter() {
         <ol className="relative space-y-3 border-s hairline ps-5">
           {data.items.map((r: any, i: number) => (
             <motion.li key={r.id} initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(i, 10) * 0.03 }} className="relative">
-              <span className={cn("absolute -start-[27px] top-4 h-3 w-3 rounded-[2px] ring-4 ring-bg", r.status === "reverted" ? "bg-line" : r.status === "probationary" ? "bg-warning" : r.actor === "evaluator" ? "bg-danger" : "bg-primary")} />
+              <span className={cn("absolute -start-[27px] top-4 h-3 w-3 rounded-full ring-4 ring-bg", r.status === "reverted" ? "bg-line" : r.status === "probationary" ? "bg-warning" : r.actor === "evaluator" ? "bg-danger" : "bg-primary")} />
               <Card className="p-3.5">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -90,7 +90,7 @@ function Behavioral() {
       {isLoading ? <Skeleton className="h-32" /> : (data?.items || []).length === 0 ? <Card><Empty icon={<ScrollText className="h-6 w-6" />} title="قانونی ثبت نشده" text="در گفتگو بنویسید «از این به بعد…» یا از همین‌جا اضافه کنید." /></Card> :
         data.items.map((r: any) => (
           <Card key={r.id} className="flex items-start gap-3 p-3.5">
-            <div className="num grid h-10 w-10 shrink-0 place-items-center rounded-[5px] bg-primary/10 text-sm font-bold text-primary">{faInt(r.priority)}</div>
+            <div className="num grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-sm font-bold text-primary">{faInt(r.priority)}</div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5"><span className="font-medium">{r.title}</span><Badge>{r.scope}</Badge>{r.status === "probationary" && <Badge tone="warning">آزمایشی</Badge>}<span className="text-[10px] text-muted">نسخه {faInt(r.version)}</span></div>
               <p className="mt-1 text-sm leading-6 text-muted">{r.content}</p>
@@ -262,7 +262,7 @@ export default function Memory() {
           </motion.div>
         ))}
       </div>
-      {ov?.probationary > 0 && <div className="mb-4 rounded-[6px] border border-warning/30 bg-warning/8 px-4 py-2.5 text-sm"><RotateCcw className="me-1.5 inline h-4 w-4 text-warning" />{faInt(ov.probationary)} یادگیری در دوره آزمایشی است؛ در صورت پسرفت (خطا یا توکن بیشتر) خودکار پاکسازی می‌شوند.</div>}
+      {ov?.probationary > 0 && <div className="mb-4 rounded-xl border border-warning/30 bg-warning/8 px-4 py-2.5 text-sm"><RotateCcw className="me-1.5 inline h-4 w-4 text-warning" />{faInt(ov.probationary)} یادگیری در دوره آزمایشی است؛ در صورت پسرفت (خطا یا توکن بیشتر) خودکار پاکسازی می‌شوند.</div>}
       <Tabs value={tab} onChange={setTab} tabs={[
         { value: "undo", label: "مرکز بازگشت (Undo)", icon: <Undo2 className="h-4 w-4" /> },
         { value: "behavioral", label: "رفتاری", icon: <ScrollText className="h-4 w-4" /> },

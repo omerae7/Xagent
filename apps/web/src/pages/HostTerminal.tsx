@@ -120,7 +120,7 @@ function Policy({ policy, ops, onSaved }: { policy: any; ops: any[]; onSaved: ()
           <p className="mb-2 text-xs font-medium text-muted">حالت هر عملیات (پیش‌فرض = طبق سطح؛ سطح ۳ هرگز خودکار نمی‌شود)</p>
           <div className="grid max-h-72 gap-1.5 overflow-y-auto sm:grid-cols-2">
             {ops.map((o) => (
-              <div key={o.op} className="flex items-center justify-between gap-2 rounded-[4px] px-2 py-1 hover:bg-line/6">
+              <div key={o.op} className="flex items-center justify-between gap-2 rounded-xl px-2 py-1 hover:bg-line/6">
                 <span className="min-w-0"><span className="ltr mono block truncate text-start text-xs">{o.op}</span><span className="block truncate text-[11px] text-muted">{o.description}</span></span>
                 <select className="bevel h-8 shrink-0 border hairline bg-surface2 px-2 text-xs" value={p.op_modes?.[o.op] || "default"}
                   onChange={(e) => { const m = { ...(p.op_modes || {}) }; if (e.target.value === "default") delete m[o.op]; else m[o.op] = e.target.value; setP({ ...p, op_modes: m }); }}>
@@ -294,7 +294,7 @@ export default function HostTerminal() {
         <Modal open onClose={() => setConfirm3(false)} title="تأیید صریح عملیات سطح ۳"
           footer={<><Button variant="ghost" onClick={() => setConfirm3(false)}>انصراف</Button><Button variant="danger" loading={busy} onClick={() => run(true)}>تأیید و اجرا</Button></>}>
           <p className="text-sm leading-7">عملیات <span className="ltr mono font-semibold">{meta.op}</span> روی سرور اصلی اجرا می‌شود: {meta.description}.</p>
-          {Object.keys(args).length > 0 && <pre dir="ltr" className="mono mt-2 rounded-[4px] bg-bg2 p-2 text-xs">{JSON.stringify(args, null, 1)}</pre>}
+          {Object.keys(args).length > 0 && <pre dir="ltr" className="mono mt-2 rounded-xl bg-bg2 p-2 text-xs">{JSON.stringify(args, null, 1)}</pre>}
           <p className="mt-2 text-xs text-muted">این تأیید در تاریخچه با نام شما ثبت می‌شود.</p>
         </Modal>
       )}

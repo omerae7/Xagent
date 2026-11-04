@@ -97,7 +97,7 @@ export default function Desktop() {
       {shot && (
         <Card className="mt-4 p-3">
           <div className="mb-2 flex items-center justify-between text-sm"><span>آخرین اسکرین‌شات</span><Button size="sm" variant="ghost" onClick={() => setShot(null)}>بستن</Button></div>
-          <img src={shot} alt="اسکرین‌شات دسکتاپ" className="w-full rounded-[5px]" />
+          <img src={shot} alt="اسکرین‌شات دسکتاپ" className="w-full rounded-xl" />
         </Card>
       )}
     </div>

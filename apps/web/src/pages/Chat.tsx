@@ -35,7 +35,7 @@ function ConversationList({ activeId, onPick }: { activeId?: string; onPick: () 
         {!isLoading && items.length === 0 && <p className="px-3 py-8 text-center text-xs text-muted">گفتگویی یافت نشد</p>}
         {items.map((c) => (
           <button key={c.id} onClick={() => { nav(`/chat/${c.id}`); onPick(); }}
-            className={cn("group relative w-full rounded-[5px] px-3 py-2.5 text-start transition", activeId === c.id ? "bg-primary/12 ring-1 ring-primary/25" : "hover:bg-line/8")}>
+            className={cn("group relative w-full rounded-xl px-3 py-2.5 text-start transition", activeId === c.id ? "bg-primary/12 ring-1 ring-primary/25" : "hover:bg-line/8")}>
             <div className="flex items-center gap-2">
               {c.pinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
               <span className="truncate text-sm">{c.title}</span>
@@ -228,7 +228,7 @@ export default function Chat() {
             {busy && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex gap-2.5">
                 <div className="mt-1 shrink-0"><ChipMark state={activeRun.status === "waiting_approval" ? "waiting" : "thinking"} size={30} /></div>
-                <div className="die min-w-0 max-w-[86%] flex-1 rounded-[6px] rounded-es-md px-4 py-3 sm:max-w-[78%]">
+                <div className="die min-w-0 max-w-[86%] flex-1 rounded-xl rounded-es-md px-4 py-3 sm:max-w-[78%]">
                   <Thinking variant={thinkingVariant} label={activeRun.status === "waiting_approval" ? "منتظر اجازه شما…" : activeRun.status === "queued" ? "در صف اجرا…" : "در حال فکر و اجرا…"} />
                   {steps.length > 0 && <div className="mt-3"><StepList steps={steps} live={activeRun.status === "running"} /></div>}
                   <div className="num mt-2 text-[10px] text-muted">{compact(activeRun.tokens_in + activeRun.tokens_out)} توکن · {usd(activeRun.cost_usd)}</div>
@@ -238,7 +238,7 @@ export default function Chat() {
           </AnimatePresence>
           {approvals.map((a) => <ApprovalCard key={a.id} a={a} onDone={() => qc.invalidateQueries({ queryKey: ["messages", id] })} />)}
           {activeRun?.status === "paused" && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/30 bg-warning/8 px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/8 px-4 py-3 text-sm">
               <span>⏸ اجرا متوقف شده است ({activeRun.stop_reason}). وضعیت ذخیره شده و قابل ادامه است.</span>
               <div className="flex gap-2">
                 <Button size="sm" variant="soft" icon={<Play className="h-3.5 w-3.5" />} onClick={() => resume()}>ادامه</Button>

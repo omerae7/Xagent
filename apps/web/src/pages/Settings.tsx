@@ -105,7 +105,7 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
       <div className="mb-5 flex items-center gap-2 text-xs">
         {["شرکت", "کلید API", "مدل", "تست"].map((s, i) => (
           <div key={s} className="flex items-center gap-2">
-            <span className={cn("grid h-6 w-6 place-items-center rounded-[2px]", step > i ? "bg-primary text-white" : "bg-line/15 text-muted")}>{faInt(i + 1)}</span>
+            <span className={cn("grid h-6 w-6 place-items-center rounded-full", step > i ? "bg-primary text-white" : "bg-line/15 text-muted")}>{faInt(i + 1)}</span>
             <span className={step > i ? "" : "text-muted"}>{s}</span>
             {i < 3 && <span className="h-px w-6 bg-line/30" />}
           </div>
@@ -115,8 +115,8 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {Object.entries(catalog?.providers || {}).map(([k, p]: any) => (
             <button key={k} onClick={() => { setKind(k); setBase(p.base_url || ""); setModel(p.models?.[0]?.name || ""); setStep(2); }}
-              className="die flex flex-col items-center gap-2 rounded-[6px] p-4 transition">
-              <span className="grid h-10 w-10 place-items-center rounded-[5px] bg-primary/12 text-lg font-bold text-primary">{KIND_ICON[k] || "•"}</span>
+              className="die flex flex-col items-center gap-2 rounded-xl p-4 transition">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/12 text-lg font-bold text-primary">{KIND_ICON[k] || "•"}</span>
               <span className="text-sm">{p.label}</span>
             </button>
           ))}
@@ -137,7 +137,7 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
           {(preset?.models || []).length > 0 && (
             <div className="grid gap-2 sm:grid-cols-2">
               {preset.models.map((m: any) => (
-                <button key={m.name} onClick={() => setModel(m.name)} className={cn("rounded-[5px] border p-3 text-start transition", model === m.name ? "border-primary/60 bg-primary/10" : "hairline hover:bg-line/5")}>
+                <button key={m.name} onClick={() => setModel(m.name)} className={cn("rounded-xl border p-3 text-start transition", model === m.name ? "border-primary/60 bg-primary/10" : "hairline hover:bg-line/5")}>
                   <div className="text-sm font-medium">{m.label}</div>
                   <div className="ltr text-end font-mono text-[11px] text-muted">{m.name}</div>
                   <div className="mt-1 flex flex-wrap gap-1">{m.caps.map((c: string) => <Badge key={c}>{c}</Badge>)}</div>
@@ -149,7 +149,7 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
         </div>
       )}
       {step === 4 && result && (
-        <div className={cn("flex items-start gap-3 rounded-[6px] p-4", result.ok ? "bg-success/10" : "bg-danger/10")}>
+        <div className={cn("flex items-start gap-3 rounded-xl p-4", result.ok ? "bg-success/10" : "bg-danger/10")}>
           {result.ok ? <CheckCircle2 className="h-6 w-6 text-success" /> : <XCircle className="h-6 w-6 text-danger" />}
           <div><p className="font-medium">{result.ok ? "اتصال موفق بود" : "اتصال ناموفق بود"}</p><p className="mt-1 text-sm text-muted">{result.message} · {faInt(result.latency_ms)} میلی‌ثانیه</p></div>
         </div>
@@ -185,7 +185,7 @@ function DiscoverModels({ provider, refresh }: { provider: any; refresh: () => v
       <p className="text-xs text-muted mb-3">این فهرست از API شرکت خوانده می‌شود. قیمت، ظرفیت و قابلیت ابزار/تصویر برای مدل‌های ناشناخته باید جداگانه بررسی و تنظیم شود.</p>
       <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="جستجوی نام مدل" />
       <div className="mt-3 max-h-80 space-y-2 overflow-y-auto">
-        {filtered.map((m) => <div key={m.id} className="flex items-center justify-between gap-2 rounded-[4px] border hairline p-2">
+        {filtered.map((m) => <div key={m.id} className="flex items-center justify-between gap-2 rounded-xl border hairline p-2">
           <div className="min-w-0"><div className="text-sm">{m.label}</div><div className="text-[11px] ltr text-end">{m.id}</div></div>
           <Button size="sm" disabled={existing.has(m.id) || adding === m.id} loading={adding === m.id}
             onClick={async () => {
@@ -292,7 +292,7 @@ function ModelSlots({ title, icon, ids, flags, models, onChange, hint }: { title
       <div className="space-y-2">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-center gap-2">
-            <span className="num grid h-7 w-7 shrink-0 place-items-center rounded-[4px] bg-line/10 text-xs">{faInt(i + 1)}</span>
+            <span className="num grid h-7 w-7 shrink-0 place-items-center rounded-xl bg-line/10 text-xs">{faInt(i + 1)}</span>
             <Select value={ids[i] || ""} onChange={(e) => { const n = [...ids]; n[i] = e.target.value; const f = [...flags]; if (f[i] === undefined) f[i] = true; onChange(n.filter((x, j) => x || j < n.length), f); }}>
               <option value="">{i === 0 ? "انتخاب مدل اصلی…" : "Fallback (اختیاری)"}</option>
               {models.map((m) => <option key={m.id} value={m.id}>{m.label} — {m.provider}</option>)}
@@ -477,7 +477,7 @@ function Harness() {
   const { data, isLoading, error } = useQuery({ queryKey: ["harness"], queryFn: () => get("/api/settings/harness") });
   return (
     <div className="space-y-3">
-      <div className="flex items-start gap-2 rounded-[6px] border border-primary/25 bg-primary/8 px-4 py-3 text-sm"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />این قوانین به‌صورت قطعی در Backend اجرا می‌شوند و مستقل از تصمیم مدل هوش مصنوعی هستند. تغییر هسته سیستم و پرداخت همیشه نیازمند تایید صریح شماست.</div>
+      <div className="flex items-start gap-2 rounded-xl border border-primary/25 bg-primary/8 px-4 py-3 text-sm"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />این قوانین به‌صورت قطعی در Backend اجرا می‌شوند و مستقل از تصمیم مدل هوش مصنوعی هستند. تغییر هسته سیستم و پرداخت همیشه نیازمند تایید صریح شماست.</div>
       {error && <ErrorBox error={error} />}
       {isLoading && <Skeleton className="h-40" />}
       {(data?.items || []).map((r: any) => <HarnessRow key={r.id} r={r} />)}
@@ -575,7 +575,7 @@ function Telegram() {
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-[6px] bg-[#229ED9]/15 text-[#229ED9]"><MessageCircle className="h-5 w-5" /></span>
+            <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#229ED9]/15 text-[#229ED9]"><MessageCircle className="h-5 w-5" /></span>
             <div>
               <div className="font-semibold">تلگرام شخصی (MTProto / Telethon)</div>
               <div className="text-xs text-muted">{live.connected ? `متصل به ${live.me?.name || ""} ${live.me?.username ? "@" + live.me.username : ""}` : live.error || "متصل نیست"}</div>
@@ -614,7 +614,7 @@ function Telegram() {
             <Input value={(sec.v.allowlist || []).join("، ")} onChange={(e) => sec.setV({ ...sec.v, allowlist: e.target.value.split(/[،,]/).map((x) => x.trim()).filter(Boolean) })} className="ltr" />
           </Field>
           <Field label="گفتگوی فرمان کارفرما"><Input value={sec.v.owner_chat || "me"} onChange={(e) => sec.setV({ ...sec.v, owner_chat: e.target.value })} className="ltr" /></Field>
-          <label className="flex items-center justify-between rounded-[5px] bg-line/5 px-3 py-2.5 text-sm">اتصال خودکار پیام‌ها به CRM<Switch checked={sec.v.auto_link_crm} onChange={(x) => sec.setV({ ...sec.v, auto_link_crm: x })} /></label>
+          <label className="flex items-center justify-between rounded-xl bg-line/5 px-3 py-2.5 text-sm">اتصال خودکار پیام‌ها به CRM<Switch checked={sec.v.auto_link_crm} onChange={(x) => sec.setV({ ...sec.v, auto_link_crm: x })} /></label>
         </div>
         <SaveBar saving={sec.saving} onSave={() => sec.save()} />
       </Card>
@@ -673,7 +673,7 @@ function System() {
           actions={<Button variant="primary" loading={busy || st.state === "running" || st.state === "requested"} onClick={run} icon={<RefreshCw className="h-4 w-4" />}>به‌روزرسانی</Button>} />
         <div className="space-y-3 p-5">
           <div className="flex flex-wrap items-center gap-2 text-sm">وضعیت: <Badge tone={st.state === "failed" ? "danger" : st.state === "done" ? "success" : st.state === "running" ? "primary" : "neutral"} dot>{LABEL[st.state] || st.state}</Badge>{st.at && <span className="text-xs text-muted">{fmtDate(st.at)}</span>}</div>
-          {data?.log && <pre className="ltr max-h-72 overflow-auto rounded-[5px] bg-bg/70 p-3 text-[11px] leading-5 text-muted">{data.log}</pre>}
+          {data?.log && <pre className="ltr max-h-72 overflow-auto rounded-xl bg-bg/70 p-3 text-[11px] leading-5 text-muted">{data.log}</pre>}
           <p className="text-xs text-muted">به‌روزرسانی توسط سرویس امن میزبان (systemd) اجرا می‌شود؛ پیش از آن از دیتابیس نسخه پشتیبان گرفته می‌شود و در صورت شکست، نسخه قبلی حفظ می‌شود.</p>
         </div>
       </Card>

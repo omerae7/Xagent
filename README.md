@@ -5,18 +5,19 @@
 X Agent یک ایجنت هوش مصنوعی **خودمیزبان، فارسی و آماده استقرار** است که روی VPS شما اجرا می‌شود و وقتی گوشی و کامپیوترتان خاموش است هم به کار ادامه می‌دهد. همه کدها، حافظه‌ها، فایل‌ها، کلیدها و داده‌ها روی سرور خودتان و ۱۰۰٪ تحت مالکیت شماست.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-dark.png" width="49%" alt="داشبورد: نقشه زنده تراشه ایجنت (تاریک)" />
-  <img src="docs/screenshots/dashboard-light.png" width="49%" alt="داشبورد روشن" />
+  <img src="docs/screenshots/dashboard-light.jpg" width="49%" alt="داشبورد: مغز دیجیتال ایجنت با ورودی‌ها و خروجی‌های زنده (روشن)" />
+  <img src="docs/screenshots/dashboard-dark.jpg" width="49%" alt="داشبورد: مغز دیجیتال (تاریک)" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/control-dark.png" width="49%" alt="مرکز کنترل مدیر: کارمندان" />
-  <img src="docs/screenshots/usage-dark.png" width="49%" alt="ارزیابی و مصرف" />
+  <img src="docs/screenshots/desk.jpg" width="32%" alt="میز کار و گزارش‌های ایجنت" />
+  <img src="docs/screenshots/routines.jpg" width="32%" alt="روتین‌ها و مأموریت‌ها با چرخه حیات کامل" />
+  <img src="docs/screenshots/chat-timeline.jpg" width="32%" alt="مراحل اجرا روی خط زمان عمودی" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/mobile-control-dark.png" width="24%" alt="موبایل: مرکز کنترل" />
-  <img src="docs/screenshots/mobile-chat-dark.png" width="24%" alt="موبایل: گفتگو" />
+  <img src="docs/screenshots/mobile-dashboard.jpg" width="24%" alt="موبایل: داشبورد" />
+  <img src="docs/screenshots/mobile-routines.jpg" width="24%" alt="موبایل: روتین‌ها" />
 </p>
-<p align="center"><sub>تصاویر از اجرای محلی با داده آزمایشی (ارائه‌دهنده Mock، بدون کلید واقعی).</sub></p>
+<p align="center"><sub>تصاویر از اجرای محلی با داده نمایشی ساختگی (پایگاه داده آزمایشی، بدون تلگرام یا کلید واقعی).</sub></p>
 
 ---
 
@@ -253,7 +254,7 @@ cd apps/web && npm install && npm run build      # یا npm run dev (پروکس�
 
 ## وضعیت و محدودیت‌های فعلی (گزارش صادقانه)
 
-- ✅ ۸۹ تست خودکار (Backend، مدیر خودگردان، امنیت و نشت اسرار، SSRF، مجوز Viewer/کارمند، سقف هزینه، حافظه خصوصی، کارگزار میزبان) + آزمون انتهابه‌انتهای `xagent update` روی استک واقعی Docker (`tests/updater/e2e.sh`: کارگزار میزبان واقعی، مهاجرت bootstrap، Migration خراب با حفظ تغییرات محلی، نسخه ناسالم با Rollback و حفظ داده هم‌زمان، پنل وب خراب، قفل هم‌زمان، Rollback دستی با حفظ داده، نبود اسرار) که در CI هم با ساخت کامل ایمیج‌ها اجرا می‌شود.
+- ✅ ۱۲۹ تست خودکار (Backend، خودمختاری اجرایی و آزمون پذیرش ساعت مجازی، مدیر خودگردان، امنیت و نشت اسرار، SSRF، مجوز Viewer/کارمند، سقف هزینه، حافظه خصوصی، کارگزار میزبان) + آزمون انتهابه‌انتهای `xagent update` روی استک واقعی Docker (`tests/updater/e2e.sh`: کارگزار میزبان واقعی، مهاجرت bootstrap، Migration خراب با حفظ تغییرات محلی، نسخه ناسالم با Rollback و حفظ داده هم‌زمان، پنل وب خراب، قفل هم‌زمان، Rollback دستی با حفظ داده، نبود اسرار) که در CI هم با ساخت کامل ایمیج‌ها اجرا می‌شود.
 - ⚠️ اتصال‌دهنده‌های Anthropic، OpenAI و Gemini مطابق مستندات رسمی نوشته شده‌اند اما در محیط توسعه با **کلید واقعی** تست نشده‌اند؛ پس از افزودن کلید، دکمه «تست اتصال» در پنل صحت آن را نشان می‌دهد.
 - ⚠️ تلگرام شخصی (Telethon) و حالت مکالمه صوتی زنده به حساب تلگرام واقعی و مدل‌های STT/TTS نیاز دارند و در این مرحله به‌صورت زنده تست نشده‌اند.
 - ⚠️ نصاب `install.sh` از نظر نحوی و منطق بررسی شده و اجزای آن (ساخت ایمیج‌ها و اجرای compose) تست شده‌اند، اما اجرای کامل آن روی یک VPS خام هنوز انجام نشده است.

@@ -20,12 +20,12 @@ function createStore<T>(initial: T) {
 
 // ── تم ──
 type Theme = "dark" | "light";
-const themeStore = createStore<Theme>((document.documentElement.dataset.theme as Theme) || "dark");
+const themeStore = createStore<Theme>((document.documentElement.dataset.theme as Theme) || "light");
 export function useTheme() {
   const theme = useSyncExternalStore(themeStore.subscribe, themeStore.get);
   const set = (t: Theme) => {
     document.documentElement.dataset.theme = t;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", t === "dark" ? "#060a16" : "#eef3ff");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", t === "dark" ? "#060a12" : "#e9ecef");
     try {
       localStorage.setItem("xa-theme", t);
     } catch {

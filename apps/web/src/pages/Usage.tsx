@@ -182,7 +182,7 @@ export default function Usage() {
             <div className="w-full space-y-1.5">
               {(data?.by_purpose || []).map((p: any, i: number) => (
                 <div key={p.purpose} className="flex items-center justify-between text-xs">
-                  <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-[2px]" style={{ background: COLORS[i % COLORS.length] }} />{PURPOSE[p.purpose] || p.purpose}</span>
+                  <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />{PURPOSE[p.purpose] || p.purpose}</span>
                   <span className="num text-muted">{compact(p.tokens)} · {usd(p.cost)}</span>
                 </div>
               ))}
