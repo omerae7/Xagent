@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
 from xagent_core.audit import audit
+from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_core.models import (
     BehavioralRule,
     Conversation,
@@ -243,7 +244,14 @@ async def dream_reports(_: User = Depends(current_user), session: AsyncSession =
 
 
 @router.post("/dream/run")
-async def dream_now(user: User = Depends(owner_user)):
+async def dream_now(user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
+    # Avoid claiming the request was queued when the durable billing ledger would
+    # reject it. Manual runs need explicit Dream opt-in, just like scheduled runs.
+    if await bus.is_stop_all():
+        raise HTTPException(409, "توقف اضطراری فعال است؛ اجرای Dream مجاز نیست.")
+    cfg = await get_setting(session, "dream", DreamSettings)
+    if not cfg.enabled:
+        raise HTTPException(409, "Dream غیرفعال است؛ ابتدا آن را از تنظیمات فعال کنید.")
     await bus.get_redis().xadd("xagent:control", {"cmd": "dream", "force": "1", "by": user.username})
     return {"ok": True, "message": "رویا در صف اجرا قرار گرفت"}
 
