@@ -147,3 +147,33 @@ async def test_dream_post_llm_error_keeps_usage_and_slot(configured_model, mock_
     finally:
         async with session_scope() as session:
             await set_setting(session, "dream", prior)
+
+
+async def test_idle_scheduler_never_invokes_any_llm(configured_model, mock_llm):
+    """24 simulated polling cycles while auto Dream is disabled have no API spend."""
+    await bus.set_stop_all(False)
+    async with session_scope() as session:
+        prior = await get_setting(session, "dream", DreamSettings)
+        await set_setting(session, "dream", prior.model_copy(update={"enabled": False}))
+    count = len(mock_llm.calls)
+    try:
+        for _ in range(24):
+            assert await claim_scheduled_dream() is None
+        assert len(mock_llm.calls) == count
+    finally:
+        async with session_scope() as session:
+            await set_setting(session, "dream", prior)
+
+
+async def test_manual_dream_is_blocked_by_emergency_stop(configured_model, mock_llm):
+    import xagent_agent.dream as dream_mod
+
+    await bus.set_stop_all(True)
+    try:
+        prior_calls = len(mock_llm.calls)
+        with pytest.raises(RuntimeError, match="STOP_ALL"):
+            async with session_scope() as session:
+                await dream_mod.run_dream(session, force=True)
+        assert len(mock_llm.calls) == prior_calls
+    finally:
+        await bus.set_stop_all(False)
