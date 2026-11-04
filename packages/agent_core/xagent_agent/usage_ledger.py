@@ -23,7 +23,7 @@ from xagent_core.models import UsageEvent
 from xagent_core.redact import scrub
 from xagent_core.settings_store import DreamSettings, GeneralSettings, StopLossSettings, get_setting
 
-from .providers.base import ChatRequest, LLMResponse, ProviderError
+from .providers.base import ChatRequest, LLMMessage, LLMResponse, ProviderError, Usage
 
 _BUDGET_LOCK = 816192473
 
@@ -53,7 +53,8 @@ def _boundary(tz: str, month: bool = False) -> datetime:
 
 
 async def begin_attempt(model: Any, req: ChatRequest, *, purpose: str,
-                        run_id: uuid.UUID | None = None) -> uuid.UUID:
+                        run_id: uuid.UUID | None = None, input_hint: int | None = None,
+                        output_hint: int | None = None) -> uuid.UUID:
     """Atomic budget reservation and independent committed attempt.
 
     No network operation should follow if this raises.
@@ -61,8 +62,8 @@ async def begin_attempt(model: Any, req: ChatRequest, *, purpose: str,
     if await bus.is_stop_all():
         raise BudgetDenied("STOP_ALL: فراخوانی جدید ممنوع است")
     attempt_id = uuid.uuid4()
-    predicted_input = estimate_input_tokens(req)
-    max_output = max(1, int(req.max_tokens))
+    predicted_input = max(1, int(input_hint)) if input_hint is not None else estimate_input_tokens(req)
+    max_output = max(1, int(output_hint)) if output_hint is not None else max(1, int(req.max_tokens))
     reserve = model.cost(predicted_input, max_output, 0, 0)
     if reserve < 0:
         raise BudgetDenied("قیمت مدل نامعتبر است")
@@ -154,3 +155,46 @@ async def finish_attempt(attempt_id: uuid.UUID, *, response: LLMResponse | None 
                 row.reserved_cost_usd = 0
                 row.reserved_tokens = 0
         return row.attempt_status
+
+
+async def begin_aux_attempt(model: Any, *, purpose: str, input_hint: int, output_hint: int = 1) -> uuid.UUID:
+    """Pre-register paid audio/embedding/probe operations with an explicit estimate.
+
+    This cannot claim exact token usage: some providers do not expose it.
+    """
+    req = ChatRequest(model=model.model_name, system_stable="", system_dynamic="",
+                      messages=[LLMMessage("user", "")], max_tokens=1)
+    return await begin_attempt(model, req, purpose=purpose,
+                               input_hint=input_hint, output_hint=output_hint)
+
+
+async def finish_aux_attempt(attempt_id: uuid.UUID, *, unit_details: dict,
+                             model: Any, reported_usage: Usage | None = None,
+                             error: BaseException | None = None,
+                             known_rejected: bool = False) -> str:
+    """Record audio/text units even when exact provider token usage is unavailable."""
+    if error is not None:
+        status = await finish_attempt(attempt_id, error=error, known_rejected=known_rejected)
+    elif reported_usage is not None and reported_usage.reported:
+        response = LLMResponse(text="", tool_calls=[], usage=reported_usage,
+                               stop_reason="completed", model=model.model_name)
+        cost = model.cost(reported_usage.input_uncached, reported_usage.output,
+                          reported_usage.cache_read, reported_usage.cache_write)
+        status = await finish_attempt(attempt_id, response=response, cost=cost)
+    else:
+        # A successful call with no usage header is still potentially billable.
+        # Do not invent a token count or pretend the cost is $0.
+        async with session_scope() as s:
+            row = await s.get(UsageEvent, attempt_id, with_for_update=True)
+            if row is None:
+                raise RuntimeError("Ledger attempt missing")
+            if row.attempt_status == "pending":
+                row.attempt_status = "unknown"
+                row.success = True
+                row.finished_at = utcnow()
+        status = "unknown"
+    async with session_scope() as s:
+        row = await s.get(UsageEvent, attempt_id, with_for_update=True)
+        if row:
+            row.usage_details = {**(row.usage_details or {}), "non_token_units": unit_details}
+    return status
