@@ -86,6 +86,100 @@ class ValidationFailed(Exception):
     """The answer did not establish completion; never settle it as succeeded."""
 
 
+# ── A8: بودجه کامل درخواست مدل (قطعی، بدون فراخوانی اضافه مدل) ──
+TOOL_OUTPUT_MAX_CHARS = 12_000
+REQUEST_HEADROOM = 0.85
+KEEP_RECENT_TOOL_RESULTS = 3
+TOOL_STUB_CHARS = 600
+
+
+def _msg_tokens(m: LLMMessage) -> int:
+    t = estimate_tokens(m.content or "") + 4
+    t += sum(estimate_tokens(json.dumps(c.arguments, ensure_ascii=False, default=str)) + 12 for c in m.tool_calls)
+    t += 1000 * len(m.images)  # تخمین محافظه‌کارانه هر تصویر
+    raw = m.raw or {}
+    if raw.get("reasoning_content"):
+        t += estimate_tokens(str(raw["reasoning_content"]))
+    if raw.get("content") or raw.get("output") or raw.get("parts"):
+        t += estimate_tokens(json.dumps(raw, ensure_ascii=False, default=str)[:200_000]) // 2
+    return t
+
+
+def fit_request(system: str, specs: list[ToolSpec] | None, history: list[LLMMessage], user_msg: LLMMessage,
+                transcript: list[LLMMessage], max_tokens: int, window: int) -> tuple[list[LLMMessage], LLMMessage,
+                                                                                   list[LLMMessage], dict[str, Any]]:
+    """درخواست را در پنجره کانتکست (کوچک‌ترین مدل زنجیره، با جای خروجی) جا می‌دهد؛ ورودی‌ها تغییر نمی‌کنند.
+
+    ترتیب: ۱) خلاصه‌سازی نتیجه‌های قدیمی ابزار (جفت فراخوانی/نتیجه حفظ می‌شود) ۲) حذف قدیمی‌ترین تاریخچه گفتگو
+    ۳) کوتاه‌سازی میانه پیام کاربر ۴) خلاصه‌سازی همه نتیجه‌های ابزار. دستور سیستم، مجوزها و شواهد State دست نمی‌خورند.
+    """
+    from xagent_memory.working import clip_to_tokens
+
+    budget = int(window * REQUEST_HEADROOM) - max_tokens
+    fixed = estimate_tokens(system) + sum(
+        estimate_tokens(json.dumps(sp.parameters, ensure_ascii=False)) + estimate_tokens(sp.description) + 8
+        for sp in (specs or []))
+    hist, umsg, tx = list(history), user_msg, list(transcript)
+
+    def total() -> int:
+        return fixed + sum(_msg_tokens(m) for m in hist) + _msg_tokens(umsg) + sum(_msg_tokens(m) for m in tx)
+
+    before = total()
+    stats: dict[str, Any] = {"window": window, "budget": budget, "est_before": before, "changed": False}
+    if before <= budget:
+        stats["est_after"] = before
+        return hist, umsg, tx, stats
+
+    def compact(keep: int, chars: int) -> int:
+        idx = [i for i, m in enumerate(tx) if m.role == "tool"]
+        n = 0
+        for i in idx[:-keep] if keep else idx:
+            m = tx[i]
+            if len(m.content or "") > chars:
+                tx[i] = LLMMessage("tool", f"{(m.content or '')[:chars]}\n[… خروجی قبلی ابزار {m.tool_name or ''} برای جا شدن "
+                                   "در کانتکست خلاصه شد؛ نتیجه اصلی در شواهد اجرا ثبت است]",
+                                   tool_call_id=m.tool_call_id, tool_name=m.tool_name, is_error=m.is_error)
+                n += 1
+        return n
+
+    stats["compacted_tool_results"] = compact(KEEP_RECENT_TOOL_RESULTS, TOOL_STUB_CHARS)
+    dropped = 0
+    while total() > budget and hist:
+        hist.pop(0)
+        dropped += 1
+    stats["dropped_history"] = dropped
+    if total() > budget:
+        room = max(256, budget - (total() - _msg_tokens(umsg)) - 8 - 1000 * len(umsg.images))  # سربار پیام و تصاویر
+        if _msg_tokens(umsg) > room:
+            umsg = LLMMessage(umsg.role, clip_to_tokens(umsg.content or "", room), images=umsg.images)
+            stats["clipped_user"] = True
+    if total() > budget:
+        stats["compacted_tool_results"] += compact(0, 200)
+    stats["est_after"] = total()
+    stats["changed"] = True
+    stats["fits"] = stats["est_after"] <= budget
+    return hist, umsg, tx, stats
+
+
+def bound_tool_output(run_id: Any, call_id: str, out: str) -> str:
+    """خروجی بسیار بزرگ ابزار: ابتدا و انتها در رونوشت، متن کامل در فایل قابل بازیابی فضای کاری."""
+    if len(out) <= TOOL_OUTPUT_MAX_CHARS:
+        return out
+    from xagent_core.config import get_settings
+
+    rel = f"runs/{run_id}/{call_id}.txt"
+    ref = "(ذخیره نشد)"
+    try:
+        path = get_settings().workspace_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(out, encoding="utf-8")
+        ref = rel
+    except OSError:
+        pass
+    return (f"{out[:8000]}\n[… {len(out) - 10000} نویسه از میانه این خروجی در رونوشت نیامد؛ متن کامل: {ref} "
+            f"(با file_read قابل خواندن) …]\n{out[-2000:]}")
+
+
 class LeaseLost(BaseException):
     """مالکیت اجرا (Lease) از دست رفت: Worker کهنه نباید اثر بیرونی دیگری بگذارد یا وضعیت پایانی ثبت کند.
     BaseException است تا هیچ except Exception آن را به «failed» تبدیل و Commit نکند."""
@@ -719,9 +813,17 @@ class AgentRunner:
                     await bus.enqueue_run(rid, "routine")  # فقط پس از Commit تا Worker اجرای ثبت‌نشده نبیند
                 tool_ctx.extra["enqueue_runs"] = []
                 continue
+            window = min((m.context_window for m in chain if m.context_window), default=128_000)
+            f_hist, f_user, f_tx, fit = fit_request(system_stable + "\n" + system_dynamic, specs, history, user_msg,
+                                                    transcript, max_tokens, window)
+            if fit["changed"]:
+                s["context_fit"] = fit
+                await self._step(rc, "info", "تطبیق درخواست با پنجره کانتکست",
+                                 detail={k: fit.get(k) for k in ("window", "est_before", "est_after",
+                                                                 "compacted_tool_results", "dropped_history", "fits")})
             res = await self._llm(
                 rc, chain, "execution" if not s.get("escalated") else "management", system_stable, system_dynamic,
-                [*history, user_msg, *transcript], tools=specs or None, max_tokens=max_tokens, effort=effort,
+                [*f_hist, f_user, *f_tx], tools=specs or None, max_tokens=max_tokens, effort=effort,
                 title="اجرا" if not s.get("escalated") else "اجرا (مدیر)",
             )
             r = res.response
@@ -1029,7 +1131,7 @@ class AgentRunner:
             verification_required = requires_verification(tool, args) or bool(set(cats) - {"desktop_control"})
             result = checked_result(tool, args, result, verification_required=verification_required)
             dur = int((time.monotonic() - t0) * 1000)
-            out = result.output
+            out = bound_tool_output(rc.run.id, cid, result.output)
             if result.untrusted:
                 out = f"<tool_output untrusted=\"true\">\n{out}\n</tool_output>"
             transcript.append(LLMMessage("tool", out, tool_call_id=cid, tool_name=name, is_error=not result.ok))

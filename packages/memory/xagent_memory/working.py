@@ -10,6 +10,8 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,20 +94,51 @@ async def load_window(
         .scalars()
         .all()
     )
-    picked: list[Message] = []
-    used = estimate_tokens(conv.summary or "") if conv else 0
+    picked: list[Any] = []
+    summary = conv.summary if conv else None
+    used = estimate_tokens(summary or "")
+    if summary and used > budget_tokens // 2:
+        # خلاصه بیش از نیمی از بودجه را نمی‌گیرد؛ نیم دیگر برای پیام‌های اخیر می‌ماند
+        summary = clip_to_tokens(summary, budget_tokens // 2)
+        used = estimate_tokens(summary)
     for m in rows:
         if exclude_run_id is not None and m.run_id == exclude_run_id:
             continue
         if conv and conv.summary_upto and m.created_at <= conv.summary_upto:
             break
         cost = estimate_tokens(m.content)
-        if picked and used + cost > budget_tokens:
+        if used + cost > budget_tokens:
+            remaining = budget_tokens - used
+            if picked or remaining < 32:
+                break
+            # A8: پیام جدید بزرگ‌تر از کل بودجه دیگر خودکار پذیرفته نمی‌شود؛ ابتدا و انتهای آن با نشانه حذف می‌آید.
+            # نسخه گذرا (نه شیء ORM) برگردانده می‌شود تا متن ذخیره‌شده هرگز تغییر نکند.
+            picked.append(SimpleNamespace(id=m.id, role=m.role, run_id=m.run_id, created_at=m.created_at,
+                                          meta=getattr(m, "meta", None), content=clip_to_tokens(m.content, remaining)))
+            used = budget_tokens
             break
         picked.append(m)
         used += cost
     picked.reverse()
-    return (conv.summary if conv else None), picked
+    return summary, picked
+
+
+def clip_to_tokens(text: str, budget_tokens: int) -> str:
+    """کوتاه‌سازی قطعی متن تا سقف توکن تخمینی: ابتدا و انتها حفظ و میانه با نشانه صریح حذف می‌شود."""
+    if estimate_tokens(text) <= budget_tokens:
+        return text
+    marker = "\n[… بخشی از متن به‌دلیل سقف کانتکست حذف شد ({n} نویسه) …]\n"
+    lo, hi = 0, len(text)
+    while lo < hi:  # بیشترین طول ابتدا+انتها که با نشانه در بودجه جا شود
+        mid = (lo + hi + 1) // 2
+        head, tail = text[: mid * 2 // 3], text[len(text) - mid // 3:] if mid // 3 else ""
+        cand = head + marker.format(n=len(text) - len(head) - len(tail)) + tail
+        if estimate_tokens(cand) <= budget_tokens:
+            lo = mid
+        else:
+            hi = mid - 1
+    head, tail = text[: lo * 2 // 3], text[len(text) - lo // 3:] if lo // 3 else ""
+    return head + marker.format(n=len(text) - len(head) - len(tail)) + tail
 
 
 def _negated(s: str) -> bool:
