@@ -84,6 +84,7 @@ async def call_llm(
                         model_id=model.id,
                         provider_kind=model.provider_kind,
                         model_name=model.model_name,
+                        cost_estimated=model.price_estimated,
                         purpose=purpose,
                         tokens_in=u.input_total,
                         tokens_out=u.output,

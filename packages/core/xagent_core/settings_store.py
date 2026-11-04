@@ -60,6 +60,12 @@ class StopLossSettings(BaseModel):
     max_runtime_seconds: int = 900
     max_repeat_same_action: int = 2
     max_consecutive_errors: int = 3
+    # سقف غیرقابل‌تجاوز هر کار کارمند (مدیر فقط می‌تواند کمتر تعیین کند)
+    employee_max_cost_usd: float = 0.3
+    employee_max_steps: int = 15
+    # قیمت محافظه‌کارانه (دلار به ازای هر میلیون توکن) برای مدل‌هایی که قیمت معتبر ندارند
+    unpriced_input_per_m: float = 15.0
+    unpriced_output_per_m: float = 75.0
 
 
 class RoutineSafetySettings(BaseModel):

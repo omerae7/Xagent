@@ -331,9 +331,13 @@ async def employee_delete(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
 
 async def change_rollback(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     _guard_trusted(ctx)
+    approved = "security_limits" in ctx.extra.get("approved", set())
     try:
-        res = await changes.rollback(ctx.session, a["change_id"], actor=_actor(ctx), reason=a.get("reason", "بازگردانی توسط مدیر"))
+        res = await changes.rollback(ctx.session, a["change_id"], actor=_actor(ctx),
+                                     reason=a.get("reason", "بازگردانی توسط مدیر"), approved=approved)
     except changes.ChangeError as e:
+        if e.decision == "approval":
+            raise EscalateCategory("security_limits", str(e), {"change_id": a["change_id"]}) from e
         return _fail(e)
     return ToolResult(True, f"↩️ {res.message}", {"reverted": res.reverted}, verified=True)
 

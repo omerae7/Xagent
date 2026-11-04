@@ -260,6 +260,8 @@ class UsageEvent(IdMixin, Base):
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error: Mapped[str | None] = mapped_column(Text)
+    # هزینه با قیمت محافظه‌کارانه (مدل بدون قیمت معتبر) برآورد شده است
+    cost_estimated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class SystemMetric(Base):
@@ -400,6 +402,8 @@ class BehavioralRule(IdMixin, TimestampMixin, Base):
 class SemanticFact(IdMixin, TimestampMixin, Base):
     __tablename__ = "semantic_facts"
     section: Mapped[str] = mapped_column(String(16))  # agent | owner
+    # فضای نام حافظه: global (مدیر و کارمندان مشترک) یا employee:<id> (حافظه خصوصی کارمند)
+    scope: Mapped[str] = mapped_column(String(64), default="global", server_default="global", index=True)
     key: Mapped[str] = mapped_column(String(128))
     content: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(64), default="owner")
@@ -409,7 +413,7 @@ class SemanticFact(IdMixin, TimestampMixin, Base):
     embedding_model: Mapped[str | None] = mapped_column(String(96))
     tsv = mapped_column(TSVECTOR, Computed(FTS_EXPR.format(col="content"), persisted=True))
     __table_args__ = (
-        UniqueConstraint("section", "key"),
+        UniqueConstraint("scope", "section", "key", name="uq_semantic_facts_scope_section_key"),
         Index("ix_semantic_tsv", "tsv", postgresql_using="gin"),
     )
 
@@ -433,11 +437,13 @@ class Episode(IdMixin, Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), index=True)  # success|failed|running|stopped
     meta: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    scope: Mapped[str] = mapped_column(String(64), default="global", server_default="global", index=True)
 
 
 class Experience(IdMixin, TimestampMixin, Base):
     __tablename__ = "experiences"
     signature: Mapped[str] = mapped_column(Text)  # شرح نرمال‌شده کار
+    scope: Mapped[str] = mapped_column(String(64), default="global", server_default="global", index=True)
     title: Mapped[str] = mapped_column(String(256))
     approach: Mapped[str] = mapped_column(Text)  # روش/گام‌ها
     tool_sequence: Mapped[list[str]] = mapped_column(ARRAY(String(128)), default=list)
@@ -650,3 +656,30 @@ class Incident(IdMixin, Base):
     actions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (UniqueConstraint("source", "target", "error_class"),)
+
+
+class HostOp(IdMixin, Base):
+    """عملیات میزبان (Host Command Broker): درخواست‌کننده، سطح، مجوز، خروجی پاک‌سازی‌شده و نتیجه."""
+
+    __tablename__ = "host_ops"
+    created_at: Mapped[datetime] = _ts(index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    op: Mapped[str] = mapped_column(String(64), index=True)
+    args: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    level: Mapped[int] = mapped_column(Integer, default=1)
+    requested_by: Mapped[str] = mapped_column(String(64))  # نام کاربری کارفرما | manager | self_heal | policy
+    actor_kind: Mapped[str] = mapped_column(String(16), default="owner")  # owner | manager | policy
+    reason: Mapped[str] = mapped_column(Text, default="")
+    run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, unique=True)
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    # queued|pending_approval|running|succeeded|failed|timeout|cancelled|denied|rejected|lost
+    host_job: Mapped[str | None] = mapped_column(String(64), index=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    output: Mapped[str] = mapped_column(Text, default="")
+    output_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)

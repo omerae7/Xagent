@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -81,6 +82,7 @@ async def build_context(
     conversation_id: uuid.UUID | None = None,
     routine_id: uuid.UUID | None = None,
     exclude_run_id: uuid.UUID | None = None,
+    scopes: Sequence[str] = ("global",),
 ) -> BuiltContext:
     sections: list[str] = []
     stats: dict[str, int] = {}
@@ -100,7 +102,7 @@ async def build_context(
         used_total += used
 
     if plan.semantic:
-        agent_facts, owner_facts = await facts_for_context(session, query)
+        agent_facts, owner_facts = await facts_for_context(session, query, scopes=scopes)
         lines = [f"- {f.key}: {truncate(f.content, 300)}" for f in agent_facts]
         lines2 = [f"- {truncate(f.content, 300)}" for f in owner_facts]
         fitted1, u1 = _fit(lines, budget.semantic // 2)
@@ -113,7 +115,7 @@ async def build_context(
         used_total += u1 + u2
 
     if plan.experiential and query:
-        good, bad = await best_experiences(session, query, routine_id=routine_id)
+        good, bad = await best_experiences(session, query, routine_id=routine_id, scopes=scopes)
         lines = []
         for e in good:
             lines.append(

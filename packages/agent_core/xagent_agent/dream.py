@@ -88,7 +88,7 @@ async def run_dream(session: AsyncSession, force: bool = False) -> DreamReport:
         after = or_(after, and_(Episode.ts == checkpoint, Episode.id > uuid.UUID(cursor_id)))
     episodes = (
         await session.execute(
-            select(Episode).where(after, Episode.ts <= now, Episode.kind != "system")
+            select(Episode).where(after, Episode.ts <= now, Episode.kind != "system", Episode.scope == "global")
             .order_by(Episode.ts, Episode.id).limit(400)
         )
     ).scalars().all()

@@ -39,7 +39,7 @@ from xagent_tools.sandbox import DesktopUnavailable, TakeoverActive, get_sandbox
 from . import harness, prompts
 from .classifier import classify
 from .commands import run_command
-from .learning import learn_from_run
+from .learning import learn_from_run, memory_scope_for
 from .llm import NoModelError, call_llm, parse_json
 from .model_select import select_models
 from .providers.base import ImagePart, LLMMessage, ProviderError, ToolSpec
@@ -429,8 +429,10 @@ class AgentRunner:
             scopes=["global", run.trigger if run.trigger != "chat" else "chat"],
         )
         budget = ContextBudget.for_window(primary.context_window, complex_task)
+        mem_scope = memory_scope_for(run, await self._employee(rc))
         built: BuiltContext = await build_context(
-            rc.session, run.input, mplan, budget, conversation_id=run.conversation_id, routine_id=run.routine_id, exclude_run_id=run.id
+            rc.session, run.input, mplan, budget, conversation_id=run.conversation_id, routine_id=run.routine_id,
+            exclude_run_id=run.id, scopes=[mem_scope],
         )
         if "memory_logged" not in s:
             await self._step(rc, "memory", f"بازیابی حافظه (~{built.used_tokens} توکن)", detail=built.stats)
@@ -484,9 +486,14 @@ class AgentRunner:
         transcript = [LLMMessage.from_json(m) for m in s.get("transcript", [])]
 
         # ── ۷) حلقه اجرا / مشاهده / بازیابی ──
+        max_cost_o, max_steps_o = s.get("max_cost"), s.get("max_steps")
+        if run.employee_id is not None:
+            cap_c, cap_s = rc.stoploss.employee_max_cost_usd, rc.stoploss.employee_max_steps
+            max_cost_o = min(float(max_cost_o), cap_c) if max_cost_o is not None else cap_c
+            max_steps_o = min(int(max_steps_o), cap_s) if max_steps_o else cap_s
         enforcer = StopLossEnforcer(
             rc.stoploss, rc.general.timezone, route["complexity"],
-            max_cost_override=s.get("max_cost"), max_steps_override=s.get("max_steps"),
+            max_cost_override=max_cost_o, max_steps_override=max_steps_o,
         )
         loop = LoopController.from_state(s.get("loop"), rc.stoploss.max_repeat_same_action,
                                          rc.stoploss.max_consecutive_errors)
@@ -497,7 +504,9 @@ class AgentRunner:
             extra={"telegram": self.telegram, "employee_name": employee.name if employee else None,
                    "runner": self, "depth": int(s.get("depth", 0)),
                    "principal": "owner" if rc.is_owner else ("employee" if employee else s.get("principal", "external")),
-                   "requested_by": s.get("requested_by")},
+                   "requested_by": s.get("requested_by"),
+                   "memory_scopes": [memory_scope_for(run, employee)],
+                   "memory_write_scope": memory_scope_for(run, employee)},
         )
         effort = "medium" if (s.get("escalated") or tier == "manager") else "low"
         max_tokens = 8192 if complex_task else 4096

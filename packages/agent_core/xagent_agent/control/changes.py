@@ -15,7 +15,7 @@ from xagent_core import bus
 from xagent_core.audit import audit
 from xagent_core.db import utcnow
 from xagent_core.models import AIModel, AIProvider, ConfigChange, Employee, InstalledTool, SettingKV
-from xagent_core.settings_store import DEFAULTS
+from xagent_core.settings_store import DEFAULTS, StopLossSettings, get_setting
 
 from . import policy
 
@@ -151,6 +151,9 @@ async def change_model(session: AsyncSession, model_id: str | uuid.UUID, changes
     bad = set(changes) - allowed
     if bad:
         raise ChangeError(f"فیلدهای غیرمجاز برای مدل: {', '.join(bad)}", "invalid")
+    pol = policy.check_fields("model", set(changes), actor)
+    if pol.decision != "allow":
+        raise ChangeError(pol.reason, pol.decision)
     before = snap(m, MODEL_FIELDS)
     now = utcnow().isoformat()
     for k, v in changes.items():
@@ -225,8 +228,17 @@ async def upsert_employee(session: AsyncSession, data: dict[str, Any], *, actor:
         raise ChangeError("نام کارمند لازم است.", "invalid")
     e = (await session.execute(select(Employee).where(Employee.name == name))).scalar_one_or_none()
     before = snap(e, EMPLOYEE_FIELDS) if e else None
+    caps = await get_setting(session, "stoploss", StopLossSettings)
+    merged = {**(before or {}), **{k: v for k, v in data.items() if v is not None}}
     if e is None:
-        e = Employee(name=name, created_by=actor)
+        merged.setdefault("max_cost_usd", min(0.2, caps.employee_max_cost_usd))
+        merged.setdefault("max_steps", min(12, caps.employee_max_steps))
+    pol = policy.check_employee(merged, caps, actor)
+    if pol.decision != "allow":
+        raise ChangeError(pol.reason, pol.decision)
+    if e is None:
+        e = Employee(name=name, created_by=actor, max_cost_usd=Decimal(str(merged["max_cost_usd"])),
+                     max_steps=int(merged["max_steps"]))
         session.add(e)
     for f in EMPLOYEE_FIELDS:
         if f in data and data[f] is not None and f != "name":
@@ -271,7 +283,7 @@ class RollbackResult:
 
 
 async def rollback(session: AsyncSession, change_id: str | uuid.UUID, *, actor: str,
-                   reason: str = "بازگردانی") -> RollbackResult:
+                   reason: str = "بازگردانی", approved: bool = False) -> RollbackResult:
     ch = await session.get(ConfigChange, _uuid(change_id))
     if ch is None:
         raise ChangeError("تغییر یافت نشد.", "invalid")
@@ -284,8 +296,11 @@ async def rollback(session: AsyncSession, change_id: str | uuid.UUID, *, actor: 
                                    ConfigChange.created_at > ch.created_at, ConfigChange.status != "rolled_back",
                                    ConfigChange.action != "rollback")
         .order_by(ConfigChange.created_at.desc()))).scalars().all()
+    chain = [*newer, ch]
+    if actor != "owner" and not approved:
+        await _check_rollback_policy(session, ch, chain, actor)
     reverted = []
-    for c in [*newer, ch]:
+    for c in chain:
         await _restore(session, c)
         c.status = "rolled_back"
         c.rolled_back_at = utcnow()
@@ -297,6 +312,29 @@ async def rollback(session: AsyncSession, change_id: str | uuid.UUID, *, actor: 
     if ch.target_type == "setting":
         await bus.publish("settings.changed", {"key": ch.target_id})
     return RollbackResult(reverted, f"{len(reverted)} تغییر بازگردانده شد.")
+
+
+async def _check_rollback_policy(session: AsyncSession, ch: ConfigChange, chain: list[ConfigChange], actor: str) -> None:
+    """بازگردانی هم یک تغییر است: همان سیاست تغییر مستقیم روی «وضعیت نهایی» اعمال می‌شود."""
+    if any(c.actor == "owner" for c in chain):
+        raise ChangeError("این بازگردانی تغییرات کارفرما را برمی‌گرداند؛ فقط با اجازه کارفرما ممکن است.", "approval")
+    final = ch.before
+    if ch.target_type == "setting":
+        row = await session.get(SettingKV, ch.target_id)
+        res = policy.check_setting(ch.target_id, (row.value if row else None) or {}, final or {}, actor)
+        if res.decision != "allow":
+            raise ChangeError("بازگردانی: " + res.reason, res.decision)
+    elif ch.target_type == "model" and final:
+        m = await session.get(AIModel, _uuid(ch.target_id))
+        cur = snap(m, MODEL_FIELDS) if m else {}
+        changed = {k for k in policy.OWNER_ONLY_MODEL_FIELDS if k in final and str(final.get(k)) != str(cur.get(k))}
+        if changed:
+            raise ChangeError("بازگردانی قیمت مدل فقط با کارفرماست: " + "، ".join(sorted(changed)), "forbidden")
+    elif ch.target_type == "employee" and final:
+        caps = await get_setting(session, "stoploss", StopLossSettings)
+        res = policy.check_employee(final, caps, actor)
+        if res.decision != "allow":
+            raise ChangeError("بازگردانی: " + res.reason, res.decision)
 
 
 async def _restore(session: AsyncSession, c: ConfigChange) -> None:

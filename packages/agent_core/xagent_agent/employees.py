@@ -11,8 +11,18 @@ from sqlalchemy import func, select
 from xagent_core import bus
 from xagent_core.db import get_sessionmaker, utcnow
 from xagent_core.models import Conversation, Employee, Message, Run, RunStep
+from xagent_core.settings_store import StopLossSettings, get_setting
 from xagent_core.text import truncate
 from xagent_tools.base import ToolContext, ToolResult
+
+
+def employee_budget(emp: Employee, caps: StopLossSettings, parent_remaining: Decimal | None) -> tuple[float, int]:
+    """بودجه کار کارمند = کمینه (سقف خود کارمند، سقف غیرقابل‌تجاوز کارفرما، بودجه باقی‌مانده اجرای مدیر)."""
+    cost = min(float(emp.max_cost_usd or caps.employee_max_cost_usd), float(caps.employee_max_cost_usd))
+    if parent_remaining is not None:
+        cost = min(cost, max(0.0, float(parent_remaining)))
+    steps = min(int(emp.max_steps or caps.employee_max_steps), int(caps.employee_max_steps))
+    return round(cost, 6), max(1, steps)
 
 
 async def delegate(ctx: ToolContext, employee_name: str, task: str, expected_output: str = "") -> ToolResult:
@@ -31,6 +41,14 @@ async def delegate(ctx: ToolContext, employee_name: str, task: str, expected_out
         return ToolResult(False, f"کارمند «{emp.name}» غیرفعال است.")
     parent = await ctx.session.get(Run, ctx.run_id) if ctx.run_id else None
     parent_task = parent.task_id if parent else None
+    caps = await get_setting(ctx.session, "stoploss", StopLossSettings)
+    parent_remaining = None
+    if parent is not None:
+        parent_cap = (parent.state or {}).get("max_cost") or caps.max_cost_per_task_usd
+        parent_remaining = Decimal(str(parent_cap)) - Decimal(parent.cost_usd or 0)
+    budget_cost, budget_steps = employee_budget(emp, caps, parent_remaining)
+    if budget_cost <= 0:
+        return ToolResult(False, "بودجه باقی‌مانده این کار برای تفویض به کارمند کافی نیست.")
     # قفل‌های تراکنش مدیر قبل از اجرای کارمند آزاد می‌شوند (جلوگیری از بن‌بست)
     await ctx.session.commit()
     text = task + (f"\n\nخروجی مورد انتظار: {expected_output}" if expected_output else "")
@@ -45,7 +63,7 @@ async def delegate(ctx: ToolContext, employee_name: str, task: str, expected_out
                     input=text, task_id=parent_task,
                     state={"trusted": ctx.trusted_owner, "principal": "employee", "requested_by": f"manager:{ctx.run_id}",
                            "employee_id": str(emp.id), "depth": 1,
-                           "max_steps": emp.max_steps, "max_cost": float(emp.max_cost_usd or 0.2),
+                           "max_steps": budget_steps, "max_cost": budget_cost,
                            "route": {"complexity": "simple", "risk": "low", "path": "worker", "command": None,
                                      "needs_vision": False, "needs_audio": False, "tool_groups": list(emp.tool_groups or []),
                                      "memory_layers": ["behavioral", "semantic", "experiential"],
@@ -81,6 +99,11 @@ async def delegate(ctx: ToolContext, employee_name: str, task: str, expected_out
         e3.stats = st
         e3.status = "idle" if ok else "error"
         await s3.commit()
+    # هزینه کارمند به حساب اجرای مدیر هم نوشته می‌شود تا سقف کار با تفویض دور زده نشود
+    if parent is not None:
+        parent.cost_usd = Decimal(parent.cost_usd or 0) + Decimal(r.cost_usd or 0)
+        parent.tokens_in += r.tokens_in
+        parent.tokens_out += r.tokens_out
         report = (f"گزارش کارمند «{emp.name}» ({emp.title}) — وضعیت: {r.status}\n"
                   f"مصرف: {r.tokens_in + r.tokens_out} توکن، ${float(r.cost_usd or 0):.5f}، {r.steps_count} اقدام\n"
                   f"ابزارها: {', '.join(f'{n}({st_})' for n, st_ in tools) or 'هیچ'}\n"

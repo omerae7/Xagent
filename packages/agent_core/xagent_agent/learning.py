@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from xagent_core.models import MemoryRevision, Message, Run, Skill
+from xagent_core.models import Employee, MemoryRevision, Message, Run, Skill
 from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_core.text import truncate
 from xagent_memory.revisions import observe_probation
@@ -24,6 +24,13 @@ from xagent_memory.working import process_owner_message
 EPISODE_STATUS = {"succeeded": "success", "failed": "failed", "stopped": "stopped", "paused": "stopped"}
 
 
+def memory_scope_for(run: Run, employee: Any) -> str:
+    """فضای نام حافظه اجرا: کارمند خصوصی ← employee:<id>؛ مدیر و کارمند مشترک ← global."""
+    if run.employee_id is not None and employee is not None and getattr(employee, "memory_scope", "shared") == "private":
+        return f"employee:{employee.id}"
+    return "global"
+
+
 async def learn_from_run(session: AsyncSession, run: Run, state: dict[str, Any], status: str, trusted: bool) -> None:
     route = state.get("route") or {}
     tools_used: list[str] = state.get("tools_used", [])
@@ -31,8 +38,11 @@ async def learn_from_run(session: AsyncSession, run: Run, state: dict[str, Any],
     kind = "routine" if run.routine_id else ("task" if run.task_id else "chat")
     if route.get("path") == "command":
         kind = "system"
+    employee = await session.get(Employee, run.employee_id) if run.employee_id else None
+    scope = memory_scope_for(run, employee)
     await record_episode(
         session,
+        scope=scope,
         kind=kind,
         title=truncate(run.input.replace("\n", " "), 250) or "اجرای ایجنت",
         summary=truncate(run.result or run.error or "", 1500),
@@ -103,6 +113,7 @@ async def learn_from_run(session: AsyncSession, run: Run, state: dict[str, Any],
             routine_id=run.routine_id,
             run_id=run.id,
             origin="routine" if run.routine_id else "chat",
+            scope=scope,
         )
         if rev:
             state.setdefault("new_revisions", []).append(str(rev))

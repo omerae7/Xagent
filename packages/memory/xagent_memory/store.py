@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -20,6 +21,9 @@ from xagent_core.text import normalize_fa
 
 from .embeddings import fit_dim, get_embedder
 from .revisions import record_change, snapshot
+
+# فضای نام حافظه مشترک؛ حافظه خصوصی کارمند: employee:<id>
+GLOBAL = "global"
 
 TRUSTED_RULE_SOURCES = {"owner", "dream"}
 
@@ -113,16 +117,19 @@ async def upsert_fact(
     origin: str = "panel",
     run_id: uuid.UUID | None = None,
     probationary: bool = False,
+    scope: str = GLOBAL,
 ) -> SemanticFact:
     if section not in {"agent", "owner"}:
         raise ValueError("بخش حافظه معنایی باید agent یا owner باشد.")
     embedder = await get_embedder(session)
     vec = fit_dim((await embedder.embed([f"{key}: {content}"]))[0])
     existing = (
-        await session.execute(select(SemanticFact).where(SemanticFact.section == section, SemanticFact.key == key))
+        await session.execute(select(SemanticFact).where(SemanticFact.scope == scope, SemanticFact.section == section,
+                                                         SemanticFact.key == key))
     ).scalar_one_or_none()
     if existing is None:
         fact = SemanticFact(
+            scope=scope,
             section=section,
             key=key,
             content=content,
@@ -154,14 +161,15 @@ async def upsert_fact(
 
 
 async def facts_for_context(
-    session: AsyncSession, query: str | None, limit_owner: int = 8
+    session: AsyncSession, query: str | None, limit_owner: int = 8, scopes: Sequence[str] = (GLOBAL,)
 ) -> tuple[list[SemanticFact], list[SemanticFact]]:
     """بخش agent همیشه (کوتاه)؛ از بخش owner فقط موارد مرتبط با پرسش."""
     agent = list(
         (
             await session.execute(
                 select(SemanticFact)
-                .where(SemanticFact.section == "agent", SemanticFact.status.in_(["active", "probationary"]))
+                .where(SemanticFact.section == "agent", SemanticFact.status.in_(["active", "probationary"]),
+                       SemanticFact.scope == GLOBAL)
                 .order_by(SemanticFact.updated_at.desc())
                 .limit(12)
             )
@@ -170,13 +178,14 @@ async def facts_for_context(
         .all()
     )
     if query:
-        owner = await hybrid_search_facts(session, query, section="owner", limit=limit_owner)
+        owner = await hybrid_search_facts(session, query, section="owner", limit=limit_owner, scopes=scopes)
     else:
         owner = list(
             (
                 await session.execute(
                     select(SemanticFact)
-                    .where(SemanticFact.section == "owner", SemanticFact.status.in_(["active", "probationary"]))
+                    .where(SemanticFact.section == "owner", SemanticFact.status.in_(["active", "probationary"]),
+                           SemanticFact.scope.in_(list(scopes)))
                     .order_by(SemanticFact.updated_at.desc())
                     .limit(limit_owner)
                 )
@@ -199,11 +208,11 @@ def _rrf(rank_lists: list[list[uuid.UUID]], k: int = 60) -> dict[uuid.UUID, floa
 
 
 async def hybrid_search_facts(
-    session: AsyncSession, query: str, section: str | None = None, limit: int = 8
+    session: AsyncSession, query: str, section: str | None = None, limit: int = 8, scopes: Sequence[str] = (GLOBAL,)
 ) -> list[SemanticFact]:
     embedder = await get_embedder(session)
     qvec = fit_dim((await embedder.embed([query]))[0])
-    conds = [SemanticFact.status.in_(["active", "probationary"])]
+    conds = [SemanticFact.status.in_(["active", "probationary"]), SemanticFact.scope.in_(list(scopes))]
     if section:
         conds.append(SemanticFact.section == section)
     tsq = func.plainto_tsquery("simple", func.xa_normalize(query))
@@ -279,11 +288,12 @@ class EpisodeQuery:
     text: str | None = None
     limit: int = 20
     offset: int = 0
+    scopes: Sequence[str] = (GLOBAL,)
 
 
 async def query_episodes(session: AsyncSession, q: EpisodeQuery) -> list[Episode]:
     """کوئری مستقیم و فیلترشده — بدون پیمایش کل حافظه و بدون LLM."""
-    conds = []
+    conds = [Episode.scope.in_(list(q.scopes))]
     if q.date_from:
         conds.append(Episode.ts >= q.date_from)
     if q.date_to:
@@ -322,6 +332,7 @@ async def record_experience(
     routine_id: uuid.UUID | None = None,
     run_id: uuid.UUID | None = None,
     origin: str = "chat",
+    scope: str = GLOBAL,
 ) -> tuple[Experience, uuid.UUID | None]:
     """ثبت تجربه؛ اگر تجربه بسیار مشابهی وجود دارد، آمار آن به‌روز می‌شود.
 
@@ -334,6 +345,7 @@ async def record_experience(
             select(Experience, Experience.embedding.cosine_distance(vec).label("dist"))
             .where(
                 Experience.status != "purged",
+                Experience.scope == scope,
                 Experience.embedding_model == embedder.name,
                 Experience.outcome == outcome,
                 (Experience.routine_id == routine_id) if routine_id else text("true"),
@@ -363,6 +375,7 @@ async def record_experience(
         await session.flush()
         return exp, None
     exp = Experience(
+        scope=scope,
         signature=signature[:2000],
         title=title[:256],
         approach=approach,
@@ -397,12 +410,14 @@ async def record_experience(
 
 
 async def best_experiences(
-    session: AsyncSession, signature: str, routine_id: uuid.UUID | None = None, limit: int = 2
+    session: AsyncSession, signature: str, routine_id: uuid.UUID | None = None, limit: int = 2,
+    scopes: Sequence[str] = (GLOBAL,),
 ) -> tuple[list[Experience], list[Experience]]:
     """بهترین و کم‌مصرف‌ترین روش‌های تاییدشده + تلاش‌های ناموفق مشابه (برای پرهیز)."""
     embedder = await get_embedder(session)
     vec = fit_dim((await embedder.embed([signature]))[0])
-    base = [Experience.status.in_(["active", "probationary"]), Experience.embedding_model == embedder.name]
+    base = [Experience.status.in_(["active", "probationary"]), Experience.embedding_model == embedder.name,
+            Experience.scope.in_(list(scopes))]
     if routine_id:
         base.append(or_(Experience.routine_id == routine_id, Experience.routine_id.is_(None)))
     dist = Experience.embedding.cosine_distance(vec)

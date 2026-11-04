@@ -35,8 +35,17 @@ def _safe_path(rel: str) -> Path:
 
 
 # ── حافظه ──
+def _read_scopes(ctx: ToolContext) -> list[str]:
+    return list(ctx.extra.get("memory_scopes") or ["global"])
+
+
+def _write_scope(ctx: ToolContext) -> str:
+    return ctx.extra.get("memory_write_scope") or "global"
+
+
 async def memory_search(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
-    facts = await hybrid_search_facts(ctx.session, a["query"], section=a.get("section"), limit=int(a.get("limit", 6)))
+    facts = await hybrid_search_facts(ctx.session, a["query"], section=a.get("section"), limit=int(a.get("limit", 6)),
+                                      scopes=_read_scopes(ctx))
     if not facts:
         return ToolResult(True, "موردی در حافظه معنایی پیدا نشد.")
     lines = [f"- [{f.section}/{f.key}] {truncate(f.content, 300)}" for f in facts]
@@ -57,13 +66,14 @@ async def memory_remember(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
         origin="chat",
         run_id=ctx.run_id,
         probationary=not ctx.trusted_owner,
+        scope=_write_scope(ctx),
     )
     status = "آزمایشی" if fact.status == "probationary" else "فعال"
     return ToolResult(True, f"در حافظه معنایی ثبت شد ({status}) — کلید: {key}", {"id": str(fact.id)}, verified=True)
 
 
 async def episodes_query(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
-    q = EpisodeQuery(limit=int(a.get("limit", 15)))
+    q = EpisodeQuery(limit=int(a.get("limit", 15)), scopes=_read_scopes(ctx))
     if a.get("days"):
         q.date_from = now_utc() - timedelta(days=int(a["days"]))
     if a.get("date_from"):

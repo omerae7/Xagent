@@ -114,6 +114,8 @@ class BoundModel:
     price_cache_write: Decimal
     provider: Provider
     capability_meta: dict[str, Any] = field(default_factory=dict)
+    # قیمت معتبر ندارد: هزینه با قیمت محافظه‌کارانه Stop-Loss برآورد می‌شود
+    price_estimated: bool = False
 
     def has(self, cap: str) -> bool:
         return bool(self.capabilities.get(cap))
@@ -158,6 +160,16 @@ async def load_model(session: AsyncSession, model_id: str | uuid.UUID, include_d
     p = await session.get(AIProvider, m.provider_id)
     if p is None or (not p.enabled and not include_disabled):
         return None
+    prices = [Decimal(m.price_in or 0), Decimal(m.price_out or 0), Decimal(m.price_cache_read or 0),
+              Decimal(m.price_cache_write or 0)]
+    # مدل بدون قیمت معتبر هرگز «رایگان» حساب نمی‌شود (جز Ollama محلی یا رایگان اعلام‌شده توسط کارفرما)
+    estimated = not (prices[0] > 0 or prices[1] > 0) and p.kind != "ollama" and (m.pricing_source or "") != "manual"
+    if estimated:
+        from xagent_core.settings_store import StopLossSettings, get_setting
+
+        sl = await get_setting(session, "stoploss", StopLossSettings)
+        prices = [Decimal(str(sl.unpriced_input_per_m)), Decimal(str(sl.unpriced_output_per_m)),
+                  Decimal(str(sl.unpriced_input_per_m)), Decimal(str(sl.unpriced_input_per_m))]
     return BoundModel(
         id=m.id,
         provider_id=p.id,
@@ -166,12 +178,13 @@ async def load_model(session: AsyncSession, model_id: str | uuid.UUID, include_d
         label=m.display_name or m.model_name,
         capabilities=m.capabilities or {},
         context_window=m.context_window or 128000,
-        price_in=Decimal(m.price_in or 0),
-        price_out=Decimal(m.price_out or 0),
-        price_cache_read=Decimal(m.price_cache_read or 0),
-        price_cache_write=Decimal(m.price_cache_write or 0),
+        price_in=prices[0],
+        price_out=prices[1],
+        price_cache_read=prices[2],
+        price_cache_write=prices[3],
         provider=await _provider_for(p),
         capability_meta=m.capability_meta or {},
+        price_estimated=estimated,
     )
 
 
