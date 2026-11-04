@@ -54,6 +54,29 @@ def upgrade() -> None:
     )
     for col in ("created_at", "op", "run_id", "status", "host_job"):
         op.create_index(op.f(f"ix_host_ops_{col}"), "host_ops", [col], unique=False)
+    # Restore scoped private rows held in shadow tables by a previous downgrade.
+    # Their complete values (including original scope and embeddings) survive
+    # a return to the older application, which cannot see these archive tables.
+    for table in ("semantic_facts", "episodes", "experiences"):
+        archive = f"xagent_private_{table}_archive"
+        op.execute(sa.text(f"""
+        DO $
+        DECLARE cols text;
+        BEGIN
+          IF to_regclass('public.{archive}') IS NOT NULL THEN
+            SELECT string_agg(quote_ident(a.column_name), ', ' ORDER BY a.ordinal_position)
+              INTO cols FROM information_schema.columns a
+              WHERE a.table_schema = current_schema() AND a.table_name = '{table}'
+                AND a.is_generated = 'NEVER'
+                AND EXISTS (
+                  SELECT 1 FROM information_schema.columns b
+                  WHERE b.table_schema = current_schema()
+                    AND b.table_name = '{archive}' AND b.column_name = a.column_name);
+            EXECUTE format('INSERT INTO {table} (%s) SELECT %s FROM {archive}', cols, cols);
+            DROP TABLE {archive};
+          END IF;
+        END $;
+        """))
 
 
 def downgrade() -> None:
@@ -62,10 +85,20 @@ def downgrade() -> None:
     op.drop_table("host_ops")
     op.drop_column("usage_events", "cost_estimated")
     op.drop_constraint("uq_semantic_facts_scope_section_key", "semantic_facts", type_="unique")
-    # حافظه خصوصی حذف نمی‌شود ولی در نسخه قدیمی (بدون فضای نام) هم در دسترس مدیر قرار نمی‌گیرد
-    op.execute("UPDATE semantic_facts SET status = 'purged', key = left('private:' || md5(id::text) || ':' || key, 128) "
-               "WHERE scope <> 'global'")
-    op.execute("UPDATE experiences SET status = 'purged' WHERE scope <> 'global'")
+    # A rollback to 0002 must not expose any private row as global.
+    # Archive exact typed rows BEFORE dropping the scope column; on upgrading
+    # back to 0003 they are restored losslessly, not merely marked "purged".
+    for table in ("semantic_facts", "episodes", "experiences"):
+        archive = f"xagent_private_{table}_archive"
+        op.execute(sa.text(f"CREATE TABLE IF NOT EXISTS {archive} AS SELECT * FROM {table} WHERE false"))
+        op.execute(sa.text(f"INSERT INTO {archive} SELECT * FROM {table} WHERE scope <> 'global'"))
+        if table == "episodes":
+            # The immutable episode trigger requires a controlled migration-only
+            # bypass; archived rows are kept and restored on the next upgrade.
+            op.execute("ALTER TABLE episodes DISABLE TRIGGER episodes_no_delete")
+        op.execute(sa.text(f"DELETE FROM {table} WHERE scope <> 'global'"))
+        if table == "episodes":
+            op.execute("ALTER TABLE episodes ENABLE TRIGGER episodes_no_delete")
     op.create_unique_constraint("uq_semantic_facts_section", "semantic_facts", ["section", "key"])
     for table in ("semantic_facts", "episodes", "experiences"):
         op.drop_index(f"ix_{table}_scope", table_name=table)
