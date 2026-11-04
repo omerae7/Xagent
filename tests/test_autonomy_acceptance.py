@@ -447,3 +447,25 @@ def test_adaptive_budget_never_exceeds_owner_caps():
     capped = StopLossEnforcer(sl, "Asia/Tehran", "simple", max_steps_override=15)
     capped.configure(["browser"])
     assert capped.max_steps == 15 and not capped.try_extend(good, Decimal("0"), 15)
+
+
+async def test_telegram_session_lost_fails_fast_without_llm_and_reports(app_client, configured_model, mock_llm):
+    """نشست تلگرام منقضی/قطع: نوبت بدون فراخوانی مدل ناموفق ثبت و در میز کار گزارش می‌شود؛ مکان‌نما جلو نمی‌رود."""
+    from xagent_agent.pipeline import AgentRunner
+    from xagent_worker.scheduler import after_routine_run
+
+    r = await app_client.post("/api/routines", json={"name": "پایش با نشست قطع", "instruction": "پیام‌ها را بررسی کن",
+                                                      "trigger_type": "interval", "interval_seconds": 60,
+                                                      "watch": {"source": "telegram"}, "run_now": True})
+    rid, run_id = uuid.UUID(r.json()["id"]), uuid.UUID(r.json()["run_id"])
+    fake = FakeTelegram(connected=False)
+    before = len(mock_llm.calls)
+    await AgentRunner("tg-lost", telegram=fake).execute(run_id)
+    await after_routine_run(run_id, fake)
+    assert len(mock_llm.calls) == before
+    async with session_scope() as s:
+        run = await s.get(Run, run_id)
+        rr = await s.get(Routine, rid)
+        assert run.status == "failed" and run.stop_reason == "precheck" and "تلگرام" in (run.result or "")
+        assert rr.failure_count == 1 and rr.watch_state == {} and rr.status == "active"
+        assert (await s.execute(select(InboxItem).where(InboxItem.run_id == run_id, InboxItem.kind == "error"))).first()
