@@ -73,7 +73,7 @@ class ResponsesProvider(OpenAICompatProvider):
         body: dict[str, Any] = {
             "model": req.model,
             "input": self._items(req.messages),
-            "max_output_tokens": max(256, req.max_tokens),
+            "max_output_tokens": max(1, req.max_tokens),
         }
         if system.strip():
             body["instructions"] = system
