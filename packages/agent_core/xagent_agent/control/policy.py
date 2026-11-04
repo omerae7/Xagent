@@ -30,7 +30,7 @@ LOOSER_IF_GREATER = {
                  "max_steps_simple", "max_steps_complex", "max_runtime_seconds", "max_repeat_same_action",
                  "max_consecutive_errors", "employee_max_cost_usd", "employee_max_steps"},
     "routine_safety": {"circuit_failure_threshold", "lease_ttl_seconds"},
-    "dream": {"max_cost_usd"},
+    "dream": {"max_cost_usd", "max_tokens", "max_calls", "max_runtime_seconds"},
 }
 LOOSER_IF_SMALLER = {"routine_safety": {"circuit_cooldown_minutes"},
                      "stoploss": {"unpriced_input_per_m", "unpriced_output_per_m"}}
@@ -57,8 +57,8 @@ def check_setting(key: str, before: dict[str, Any], after: dict[str, Any], actor
         b, a = before.get(f), after.get(f)
         if isinstance(a, int | float) and isinstance(b, int | float) and a < b:
             loosened.append(f)
-    if key == "dream" and before.get("enabled") is True and after.get("enabled") is False:
-        pass  # خاموش‌کردن رویا امنیتی نیست
+    if key == "dream" and not before.get("enabled", False) and after.get("enabled", False):
+        loosened.append("enabled")  # paid background activity requires explicit owner approval
     if loosened:
         return PolicyResult("approval", "شل‌شدن محدودیت‌های هزینه/ایمنی نیازمند اجازه کارفرماست: " + "، ".join(loosened),
                             loosened)
