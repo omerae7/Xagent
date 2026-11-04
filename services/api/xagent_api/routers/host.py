@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_agent.control import changes
-from xagent_core.models import Approval, HostOp, User
+from xagent_core.models import Approval, HostOp, Run, User
 from xagent_core.settings_store import HostSettings, get_setting
 
 from .. import hostops
@@ -153,8 +153,19 @@ async def internal_catalog(session: AsyncSession = Depends(get_session)):
 
 @router.post("/api/internal/host/run", dependencies=[Depends(internal_caller)])
 async def internal_run(body: InternalRunIn, session: AsyncSession = Depends(get_session)):
-    if body.actor not in ("manager", "self_heal"):
-        raise HTTPException(403, "فقط مدیر (اجرای کارفرما) می‌تواند عملیات میزبان درخواست دهد.")
+    if body.actor != "manager":
+        raise HTTPException(403, "عملیات میزبان فقط از اجرای معتبر مالک قابل درخواست است.")
+    # The shared internal service token is *not* evidence that a specific LLM
+    # run belongs to the owner. Never trust actor/principal supplied by a caller.
+    try:
+        rid = parse_uuid(body.run_id or "")
+    except (ValueError, HTTPException) as e:
+        raise HTTPException(403, "شناسه اجرای مالک الزامی است.") from e
+    run = await session.get(Run, rid)
+    if (run is None or run.status not in ("running", "waiting_approval")
+            or run.employee_id is not None or not (run.state or {}).get("trusted")
+            or (run.state or {}).get("principal") != "owner"):
+        raise HTTPException(403, "اجرای مالک فعال و معتبر نیست.")
     try:
         decision, level, why = await hostops.decide(session, body.op, body.args, "manager")
     except hostops.HostUnavailable as e:
