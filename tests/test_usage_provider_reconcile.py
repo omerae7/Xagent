@@ -4,23 +4,20 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
-import uuid
-from datetime import UTC, datetime
 from decimal import Decimal
 
 import httpx
 import pytest
 from sqlalchemy import func, select
 
+from xagent_agent.providers.base import ChatRequest, LLMMessage
+from xagent_agent.providers.google import GoogleProvider
+from xagent_agent.providers.openai_responses import ResponsesProvider
+from xagent_agent.usage_ledger import BudgetDenied, begin_aux_attempt
 from xagent_core import bus
 from xagent_core.db import session_scope
 from xagent_core.models import UsageEvent
 from xagent_core.settings_store import StopLossSettings, get_setting, set_setting
-from xagent_agent.providers.base import ChatRequest, LLMMessage, Usage
-from xagent_agent.providers.openai_responses import ResponsesProvider
-from xagent_agent.providers.google import GoogleProvider
-from xagent_agent.providers.registry import load_model
-from xagent_agent.usage_ledger import BudgetDenied, begin_aux_attempt
 
 
 @pytest.mark.asyncio
