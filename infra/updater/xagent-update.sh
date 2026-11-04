@@ -38,21 +38,33 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-mkdir -p "$CTL" "$BK"
-# ───────────── ۱. قفل (پیش از هر نوشتن روی گزارش/وضعیت) ─────────────
-exec 9>"$CTL/update.lock"
-if ! flock -n 9; then echo "به‌روزرسانی دیگری در حال اجراست."; exit 3; fi
-rm -f "$CTL/update.request"
-LOG="$CTL/update.log"
-: > "$LOG"
-chown --reference="$CTL" "$LOG" 2>/dev/null || true
-exec > >(tee -a "$LOG") 2>&1
+# Dry-run is non-deploying: do not overwrite update.status/update.log,
+# consume update.request, or create backup/control directories.
+# Git fetch further below DOES refresh local Git remote-tracking metadata.
+if [ "$DRY" = "1" ]; then
+  if [ -f "$CTL/update.lock" ]; then
+    exec 9< "$CTL/update.lock"
+    if ! flock -sn 9; then echo "به‌روزرسانی دیگری در حال اجراست."; exit 3; fi
+  fi
+else
+  mkdir -p "$CTL" "$BK"
+  # ───────────── ۱. قفل (پیش از هر نوشتن روی گزارش/وضعیت) ─────────────
+  exec 9>"$CTL/update.lock"
+  if ! flock -n 9; then echo "به‌روزرسانی دیگری در حال اجراست."; exit 3; fi
+  rm -f "$CTL/update.request"
+  LOG="$CTL/update.log"
+  : > "$LOG"
+  chown --reference="$CTL" "$LOG" 2>/dev/null || true
+  exec > >(tee -a "$LOG") 2>&1
+fi
 
 c_g='\033[1;32m'; c_y='\033[1;33m'; c_r='\033[1;31m'; c_b='\033[1;34m'; c_o='\033[0m'
 step() { echo -e "\n${c_b}▶ $*${c_o}"; }
 ok()   { echo -e "${c_g}✓ $*${c_o}"; }
 warn() { echo -e "${c_y}⚠ $*${c_o}"; }
 status() {
+  # Dry-run is a query; it must not replace the status of a real update.
+  if [ "$DRY" = "1" ]; then return 0; fi
   local msg="${2:-}"; msg="${msg//\"/\'}"
   printf '{"state":"%s","at":"%s","message":"%s","previous":"%s","target":"%s"}\n' \
     "$1" "$(date -u +%FT%TZ)" "$msg" "${PREV_SHORT:-}" "${NEW_SHORT:-}" > "$CTL/update.status"
@@ -173,7 +185,7 @@ if ! git merge-base --is-ancestor "$PREV" "$TARGET"; then
 fi
 echo "  فعلی: $PREV_VERSION ($PREV_SHORT)  ←  هدف: $NEW_VERSION ($NEW_SHORT)"
 git --no-pager log --oneline "$PREV..$TARGET" 2>/dev/null | head -20 | sed 's/^/    /'
-if [ "$DRY" = "1" ]; then ok "اجرای آزمایشی (--dry-run): تغییری اعمال نشد"; status "done" "dry-run"; exit 0; fi
+if [ "$DRY" = "1" ]; then ok "اجرای آزمایشی: هیچ سرویس، دیتابیس، تنظیم یا فایل وضعیت برنامه تغییر نکرد؛ فقط اطلاعات Git fetch به‌روز شد"; exit 0; fi
 if [ "$YES" != "1" ] && [ -t 0 ]; then
   read -rp "ادامه به‌روزرسانی؟ [y/N] " a; [ "$a" = "y" ] || { status "cancelled" "لغو توسط کاربر"; exit 0; }
 fi
