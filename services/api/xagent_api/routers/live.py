@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import os
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import psutil
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import Integer, case, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +40,7 @@ from xagent_core.models import (
 from xagent_core.settings_store import GeneralSettings, StopLossSettings, get_setting
 from xagent_core.timeutil import get_zone, now_utc
 
-from ..deps import current_user, get_session, ser
+from ..deps import current_user, get_session, owner_user, ser
 
 router = APIRouter(prefix="/api", tags=["live"])
 
@@ -271,6 +273,27 @@ async def usage(days: int = Query(30, le=365), _: User = Depends(current_user),
         select(Run.trigger, func.count(), func.sum(Run.cost_usd)).where(Run.created_at >= since).group_by(Run.trigger))).all()
     top_runs = (await session.execute(
         select(Run).where(Run.created_at >= since).order_by(Run.cost_usd.desc()).limit(10))).scalars().all()
+    # Provider usage is authoritative; unknown/timeout reservations are kept
+    # separate from confirmed tokens and may represent additional billing.
+    by_status = (await session.execute(
+        select(UsageEvent.attempt_status, func.count(), func.sum(UsageEvent.tokens_in),
+               func.sum(UsageEvent.tokens_out), func.sum(UsageEvent.cost_usd),
+               func.sum(UsageEvent.reserved_cost_usd), func.sum(UsageEvent.reserved_tokens))
+        .where(UsageEvent.ts >= since).group_by(UsageEvent.attempt_status))).all()
+    ledger_purposes = (await session.execute(
+        select(UsageEvent.purpose, func.count(), func.sum(UsageEvent.tokens_in),
+               func.sum(UsageEvent.tokens_out), func.sum(UsageEvent.cache_read),
+               func.sum(UsageEvent.cache_write), func.sum(UsageEvent.cost_usd),
+               func.sum(UsageEvent.reserved_cost_usd))
+        .where(UsageEvent.ts >= since).group_by(UsageEvent.purpose))).all()
+    subsets = (await session.execute(select(
+        func.coalesce(func.sum(cast(UsageEvent.usage_details["reasoning_tokens"].astext, Integer)), 0),
+        func.coalesce(func.sum(cast(UsageEvent.usage_details["audio_input_tokens"].astext, Integer)), 0),
+        func.coalesce(func.sum(cast(UsageEvent.usage_details["audio_output_tokens"].astext, Integer)), 0),
+    ).where(UsageEvent.ts >= since))).one()
+    latest_attempts = (await session.execute(
+        select(UsageEvent).where(UsageEvent.ts >= since)
+        .order_by(UsageEvent.ts.desc()).limit(40))).scalars().all()
     totals = {s: c for s, c, *_ in runs}
     finished = sum(totals.get(k, 0) for k in ("succeeded", "failed", "stopped"))
     return {
@@ -281,9 +304,117 @@ async def usage(days: int = Query(30, le=365), _: User = Depends(current_user),
                       "errors": int(err or 0)} for m, p, a, b, c, e, n, lat, err in by_model],
         "by_purpose": [{"purpose": p or "-", "tokens": int(t or 0), "cost": float(c or 0), "calls": int(n)}
                        for p, t, c, n in by_purpose],
+        "ledger": {
+            "statuses": [{"status": st, "calls": int(n), "tokens_in": int(i or 0),
+                          "tokens_out": int(o or 0), "cost": float(cost or 0),
+                          "reserved_cost": float(res or 0), "reserved_tokens": int(rt or 0)}
+                         for st, n, i, o, cost, res, rt in by_status],
+            "purposes": [{"purpose": purpose or "-", "calls": int(n), "tokens_in": int(i or 0),
+                          "tokens_out": int(o or 0), "cache_read": int(cr or 0), "cache_write": int(cw or 0),
+                          "cost": float(cost or 0), "reserved_cost": float(res or 0)}
+                         for purpose, n, i, o, cr, cw, cost, res in ledger_purposes],
+            "subsets": {"reasoning_tokens": int(subsets[0] or 0),
+                        "audio_input_tokens": int(subsets[1] or 0),
+                        "audio_output_tokens": int(subsets[2] or 0)},
+            "recent": [{"at": row.ts.isoformat(), "request_id": row.request_id,
+                        "provider_request_id": row.provider_request_id, "model": row.model_name,
+                        "provider": row.provider_kind, "purpose": row.purpose,
+                        "status": row.attempt_status, "tokens_in": row.tokens_in,
+                        "tokens_out": row.tokens_out, "cache_read": row.cache_read,
+                        "cache_write": row.cache_write, "cost": float(row.cost_usd),
+                        "reserved_cost": float(row.reserved_cost_usd),
+                        "reported": (row.usage_details or {}).get("reported"),
+                        "non_token_units": (row.usage_details or {}).get("non_token_units")}
+                       for row in latest_attempts],
+        },
         "runs": [{"status": s, "count": int(c), "avg_seconds": float(d or 0), "avg_tokens": float(t or 0),
                   "avg_cost": float(co or 0)} for s, c, d, t, co in runs],
         "by_trigger": [{"trigger": t, "count": int(c), "cost": float(co or 0)} for t, c, co in by_trigger],
         "success_rate": (totals.get("succeeded", 0) / finished) if finished else None,
         "top_runs": [ser(r, exclude={"plan", "goal", "result", "route"}) for r in top_runs],
+    }
+
+
+@router.post("/usage/reconcile")
+async def reconcile_usage_csv(file: UploadFile = File(...), _: User = Depends(owner_user),
+                              session: AsyncSession = Depends(get_session)):
+    """Compare official OpenAI one-minute CSV aggregates without making up missing requests.
+
+    The CSV is processed in memory; no provider secrets or raw prompts are stored.
+    OpenAI's aggregate key IDs are not assumed to match local provider keys.
+    """
+    raw = await file.read(8_000_001)
+    if len(raw) > 8_000_000:
+        raise HTTPException(413, "فایل CSV از حد مجاز بزرگ‌تر است")
+    try:
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+        if not {"start_time_iso", "model", "input_tokens", "output_tokens"}.issubset(reader.fieldnames or []):
+            raise ValueError("ستون‌های گزارش OpenAI ناقص است")
+        sums: dict[str, dict[str, int]] = {}
+        hourly: dict[str, int] = {}
+        key_ids: set[str] = set()
+        min_ts: datetime | None = None
+        max_ts: datetime | None = None
+
+        def value(row: dict, key: str) -> int:
+            from decimal import Decimal, InvalidOperation
+            raw_num = row.get(key) or "0"
+            try:
+                amount = Decimal(str(raw_num))
+            except InvalidOperation as exc:
+                raise ValueError(f"عدد نامعتبر در ستون {key}") from exc
+            if amount < 0 or amount != amount.to_integral_value():
+                raise ValueError(f"عدد غیرمجاز در ستون {key}")
+            return int(amount)
+
+        for idx, row in enumerate(reader):
+            if idx >= 100_000:
+                raise ValueError("تعداد ردیف‌های فایل بیش از حد مجاز است")
+            model = str(row.get("model") or "").strip()
+            if not model:
+                continue
+            at = datetime.fromisoformat(str(row["start_time_iso"]).replace("Z", "+00:00")).astimezone(UTC)
+            if at > now_utc() + timedelta(days=1):
+                raise ValueError("تاریخ گزارش در آینده است")
+            min_ts = at if min_ts is None else min(min_ts, at)
+            max_ts = at + timedelta(minutes=1) if max_ts is None else max(max_ts, at + timedelta(minutes=1))
+            bucket = sums.setdefault(model, {"requests": 0, "input": 0, "output": 0, "cached": 0})
+            bucket["requests"] += value(row, "num_model_requests")
+            bucket["input"] += value(row, "input_tokens")
+            bucket["output"] += value(row, "output_tokens")
+            bucket["cached"] += value(row, "input_cached_tokens")
+            hour = at.strftime("%Y-%m-%dT%H:00Z")
+            hourly[hour] = hourly.get(hour, 0) + value(row, "num_model_requests")
+            if row.get("api_key_id"):
+                key_ids.add(row["api_key_id"])
+    except (UnicodeError, ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(422, f"فایل گزارش قابل بررسی نیست: {exc}") from exc
+    if not sums or min_ts is None or max_ts is None:
+        raise HTTPException(422, "هیچ مصرفی در فایل وجود ندارد")
+    internal = (await session.execute(
+        select(UsageEvent.model_name, func.count(), func.sum(UsageEvent.tokens_in),
+               func.sum(UsageEvent.tokens_out), func.sum(UsageEvent.cache_read))
+        .where(UsageEvent.ts >= min_ts, UsageEvent.ts < max_ts,
+               UsageEvent.provider_kind.in_(["openai", "openai_chat"]),
+               UsageEvent.attempt_status == "confirmed")
+        .group_by(UsageEvent.model_name))).all()
+    by_model = {model: {"requests": int(n), "input": int(i or 0),
+                        "output": int(o or 0), "cached": int(cr or 0)}
+                for model, n, i, o, cr in internal}
+    models = sorted(set(sums) | set(by_model))
+    return {
+        "from_utc": min_ts.isoformat(), "to_utc": max_ts.isoformat(),
+        "external_key_count": len(key_ids),
+        "external": {k: sums[k] for k in sums},
+        "internal": by_model,
+        "by_model": [
+            {"model": name, "official": sums.get(name, {}),
+             "local_confirmed": by_model.get(name, {}),
+             "delta_input": sums.get(name, {}).get("input", 0) - by_model.get(name, {}).get("input", 0),
+             "delta_output": sums.get(name, {}).get("output", 0) - by_model.get(name, {}).get("output", 0)}
+            for name in models
+        ],
+        "external_hourly_requests": [{"hour": h, "requests": hourly[h]} for h in sorted(hourly)],
+        "notice": "CSV تجمیعی است و نام فراخواننده را نشان نمی‌دهد. اختلاف می‌تواند ناشی از "
+                  "کلید مشترک، بازه زمانی، تأخیر گزارش یا ثبت‌نشدن مصرف داخلی باشد.",
     }
