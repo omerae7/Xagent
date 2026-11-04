@@ -119,10 +119,15 @@ async def build_manifest(session: AsyncSession, principal: str = "owner", employ
     else:
         add("admin", "اداره سیستم و ترمینال VPS", "unsupported", "فقط در اجرای مستقیم کارفرما")
     # ── اجراکننده ایجنت بیرونی (نه LLM): Cursor Cloud Agents ──
+    from xagent_tools.cursor_agents import config as cursor_config
     from xagent_tools.cursor_agents import readiness
 
-    cst, cwhy = await readiness(session)
-    if is_owner and cst in ("ready", "untested"):
+    # تا کارفرما Cursor را فعال نکرده، هیچ سطری به پرامپت اضافه نمی‌شود (بدون هزینه توکن برای همه درخواست‌ها)
+    cursor_on = (await cursor_config(session))[0].enabled
+    cst, cwhy = await readiness(session) if cursor_on else ("off", "")
+    if not cursor_on:
+        pass
+    elif is_owner and cst in ("ready", "untested"):
         add("cursor", "اجراکننده بیرونی Cursor Cloud Agents (کار کدنویسی روی مخزن مجاز، شاخه تازه، بدون Merge خودکار؛ "
             "هزینه نامعلوم)", "ready", cwhy, tools="external")
     elif is_owner:

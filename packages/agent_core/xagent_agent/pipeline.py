@@ -529,11 +529,14 @@ class AgentRunner:
         specs = [ToolSpec(t.name, t.description, t.parameters) for t in tools]
 
         rules = await harness.load_rules(rc.session)
+        from xagent_tools.cursor_agents import config as cursor_config
+
+        cursor_on = (await cursor_config(rc.session))[0].enabled
         system_stable = prompts.CORE_IDENTITY.format(
             agent_name=rc.general.agent_name,
             owner_name=rc.general.owner_name,
             persona=rc.general.persona,
-            harness=harness.rules_for_prompt(rules),
+            harness=harness.rules_for_prompt(rules, skip=frozenset() if cursor_on else {"external_agent"}),
         )
         now = describe_now(rc.general.timezone)
         dyn = [

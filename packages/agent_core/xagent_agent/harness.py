@@ -172,10 +172,13 @@ def redact(args: dict[str, Any], max_len: int = 1500) -> dict[str, Any]:
     return out
 
 
-def rules_for_prompt(rules: dict[str, HarnessRule]) -> str:
+def rules_for_prompt(rules: dict[str, HarnessRule], skip: set[str] | frozenset[str] = frozenset()) -> str:
+    """skip: دسته‌هایی که ابزارشان در این نصب اصلاً فعال نیست (بدون هزینه توکن در هر درخواست)."""
     lines = []
     labels = {"auto": "خودکار", "ask": "با اجازه", "conditional": "مشروط", "forbidden": "ممنوع"}
     for cat, meta in CATEGORIES.items():
+        if cat in skip:
+            continue
         r = rules.get(cat)
         mode = r.mode if r else meta["default"]
         extra = f" — {r.rule_text.strip()}" if r and r.rule_text.strip() else ""

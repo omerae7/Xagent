@@ -285,3 +285,21 @@ async def _aw(v):
 
 
 _ = tool_names  # helper import kept for future scenarios
+
+
+# ── کشف‌شده در Benchmark بخش ۱۹: تشخیص اشتباه «کار زمان‌دار یک‌باره» ──
+@pytest.mark.parametrize("text,expected", [
+    ("سلام، امروز چه کمکی از تو برمی‌آید؟", None),
+    ("امروز هوا چطور است؟", None),
+    ("فردا چه تسک‌هایی دارم؟", None),
+    ("فردا ساعت ۹:۳۰ گزارش فروش را آماده کن", (1, 9, 30)),
+    ("امشب ساعت ۸ شب یادم بنداز به علی زنگ بزنم", (0, 20, 0)),
+    ("فردا یادم بنداز قرارداد را امضا کنم", (1, 9, 0)),
+    ("ساعت ۱۵ ایمیل‌ها را بررسی کن", (None, 15, 0)),
+])
+def test_one_shot_intent_requires_explicit_time_or_reminder(text, expected):
+    from xagent_agent.intent import parse_intent
+
+    it = parse_intent(text)
+    got = (it.one_shot["day_offset"], it.one_shot["hour"], it.one_shot["minute"]) if it.one_shot else None
+    assert got == expected, (text, it.one_shot)

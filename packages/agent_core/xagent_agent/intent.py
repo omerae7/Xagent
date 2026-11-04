@@ -215,7 +215,9 @@ def parse_intent(text: str) -> MissionIntent:
     if not it.recurring:
         day = _DAY_WORD.search(t)
         at = _AT_TIME.search(t)
-        if at or day:
+        # فقط زمان صریح (ساعت …) یا «یادآوری + روز» کار یک‌باره است؛ «امروز چه کمکی…؟» یا پرسش، مأموریت زمان‌دار نیست
+        question = bool(re.search(r"[؟?]\s*$", t)) and not it.reminder
+        if not question and (at or (day and it.reminder)):
             offset = None
             if day:
                 w = day.group(1).replace(" ", "")
