@@ -64,7 +64,7 @@ async def test_private_memory_scope_roundtrips_without_exposing_rows(database):
         migrate("downgrade", "0002")
         con = await asyncpg.connect(target)
         try:
-            for table, rid in zip(("semantic_facts", "experiences", "episodes"), ids):
+            for table, rid in zip(("semantic_facts", "experiences", "episodes"), ids, strict=True):
                 assert await con.fetchval(f"SELECT count(*) FROM {table} WHERE id=$1", rid) == 0
                 assert await con.fetchval(
                     f"SELECT count(*) FROM xagent_private_{table}_archive WHERE id=$1", rid) == 1
@@ -74,7 +74,7 @@ async def test_private_memory_scope_roundtrips_without_exposing_rows(database):
         migrate("upgrade", "0003")
         con = await asyncpg.connect(target)
         try:
-            for table, rid in zip(("semantic_facts", "experiences", "episodes"), ids):
+            for table, rid in zip(("semantic_facts", "experiences", "episodes"), ids, strict=True):
                 assert await con.fetchval(f"SELECT scope FROM {table} WHERE id=$1", rid) == "employee:test"
                 assert await con.fetchval(
                     f"SELECT to_regclass('public.xagent_private_{table}_archive')") is None
