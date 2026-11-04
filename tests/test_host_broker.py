@@ -26,7 +26,7 @@ import pytest
 from sqlalchemy import select
 
 from xagent_core.db import session_scope
-from xagent_core.models import Approval, HostOp
+from xagent_core.models import Approval, HostOp, Run
 
 ROOT = Path(__file__).resolve().parents[1]
 HOSTD = ROOT / "infra/hostd/xagent-hostd.py"
@@ -239,8 +239,12 @@ async def test_approval_cannot_be_bypassed(app_client, hostd):
     from xagent_api.main import app
 
     hdr = _internal(app_client)
-    run_id = str(uuid.uuid4())
-    body = {"op": "xagent.update", "args": {}, "reason": "نسخه جدید", "run_id": run_id, "tool_call_id": "c1", "actor": "manager"}
+    data = (await app_client.post("/api/chat/send", json={"text": "آزمون مجوز میزبان"})).json()
+    rid = data["run"]["id"]
+    async with session_scope() as s:
+        owner_run = await s.get(Run, uuid.UUID(rid))
+        owner_run.status = "running"
+    body = {"op": "xagent.update", "args": {}, "reason": "نسخه جدید", "run_id": rid, "tool_call_id": "c1", "actor": "manager"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.post("/api/internal/host/run", json=body)).status_code == 401  # بدون توکن داخلی
         r = await c.post("/api/internal/host/run", json=body, headers=hdr)
@@ -249,8 +253,6 @@ async def test_approval_cannot_be_bypassed(app_client, hostd):
         r = await c.post("/api/internal/host/run", json={**body, "approved": True}, headers=hdr)
         assert r.status_code == 403
         # کارت اجازه‌ای که کارفرما تأیید نکرده (تصمیم‌گیرنده Viewer) یا برای عملیات دیگری است
-        data = (await app_client.post("/api/chat/send", json={"text": "آزمون مجوز میزبان"})).json()
-        rid = data["run"]["id"]
         async with session_scope() as s:
             s.add(Approval(run_id=uuid.UUID(rid), tool_call_id="c2", category="host_admin", tool_name="host_run",
                            args={"op": "xagent.update", "args": {}}, reason="x", status="approved", decided_by="viewer1"))
@@ -287,7 +289,13 @@ async def test_manager_restart_with_health_check_and_rate_limit(app_client, host
     from xagent_api.main import app
 
     hdr = _internal(app_client)
-    body = {"op": "service.restart", "args": {"service": "runner"}, "reason": "پاسخ نمی‌دهد", "actor": "manager"}
+    data = (await app_client.post("/api/chat/send", json={"text": "آزمون راه‌اندازی سرویس"})).json()
+    rid = data["run"]["id"]
+    async with session_scope() as s:
+        owner_run = await s.get(Run, uuid.UUID(rid))
+        owner_run.status = "running"
+    body = {"op": "service.restart", "args": {"service": "runner"}, "reason": "پاسخ نمی‌دهد",
+            "actor": "manager", "run_id": rid}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         for _ in range(3):
             r = await c.post("/api/internal/host/run", json=body, headers=hdr)
