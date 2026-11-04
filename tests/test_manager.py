@@ -176,7 +176,10 @@ async def test_overview_tells_agent_its_capabilities(app_client, configured_mode
     assert run.status == "succeeded"
     async with session_scope() as s:
         step = (await s.execute(select(RunStep).where(RunStep.run_id == run.id, RunStep.kind == "tool", RunStep.tool_name == "system_overview"))).scalar_one()
-        out = step.detail["output"]
+        assert "sk-" not in step.detail["output"]
+        # خروجی کامل ابزار (لاگ مرحله تا ۱۲۰۰ نویسه کوتاه می‌شود و با داده بیشتر بخش‌های بعدی را نشان نمی‌دهد)
+        out = next(m["content"] for m in (await s.get(type(run), run.id)).state["transcript"]
+                   if m.get("role") == "tool" and m.get("tool_name") == "system_overview")
         assert "زنجیره مدیر" in out and "ابزارهای داخلی" in out and "sk-" not in out
     # سیستم‌پرامپت شامل نقشه توانایی‌هاست
     sys_msgs = [c for c in mock_llm.calls if isinstance(c, dict) and c.get("messages")]

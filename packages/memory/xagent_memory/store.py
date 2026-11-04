@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -229,10 +230,11 @@ async def hybrid_search_facts(
         .all()
     )
     # برای کوئری‌های چندکلمه‌ای، تطبیق OR برای بازیابی بهتر
-    words = [w for w in normalize_fa(query).split(" ") if len(w) > 1][:12]
+    # فقط حروف/ارقام: نویسه‌های نحوی tsquery (: & | ! ( ) * ' <) در متن کاربر (مثل «9:30») کوئری را خراب نکنند
+    words = [w for w in re.sub(r"[^\w\s]", " ", normalize_fa(query)).split() if len(w) > 1][:12]
     or_ids: list[uuid.UUID] = []
     if len(words) > 1:
-        orq = func.to_tsquery("simple", literal(" | ".join(w.replace("'", "") for w in words)))
+        orq = func.to_tsquery("simple", literal(" | ".join(words)))
         or_ids = list(
             (
                 await session.execute(

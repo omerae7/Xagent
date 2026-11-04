@@ -318,8 +318,10 @@ async def reconcile_runs(stale_after_seconds: int = 180) -> int:
             except Exception:  # noqa: BLE001
                 log.warning("Redis در دسترس نیست؛ بازیابی اجراها به بعد موکول شد")
                 return 0
-            ref = run.lease_until or run.started_at or run.created_at
-            if ref is not None and (now - ref).total_seconds() < stale_after_seconds:
+            # «running» بدون Lease زنده یتیم است (Lease پیش از running گرفته و فقط پس از وضعیت نهایی آزاد می‌شود)؛
+            # «queued» ممکن است مشروعاً در صف منتظر ظرفیت Worker باشد → فقط پس از stale_after دوباره در صف
+            if run.status == "queued" and run.created_at is not None and \
+                    (now - run.created_at).total_seconds() < stale_after_seconds:
                 continue
             run.status = "queued"
             ids.append(run.id)

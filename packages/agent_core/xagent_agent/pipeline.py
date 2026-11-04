@@ -942,9 +942,10 @@ class AgentRunner:
         if not transient or not url or s.get("fallback_used", {}).get(name):
             return
         s.setdefault("fallback_used", {})[name] = True
-        nxt = "web_fetch" if name == "http_request" else "browser_open"
+        # روی همان میزبان خراب، دریافت HTTP دیگر هم احتمالاً شکست می‌خورد؛ مرورگر ساختاریافته (DOM) روش بعدی است
+        nxt = "browser_open"
         if nxt not in tool_map:
-            groups = ["web"] if nxt == "web_fetch" else ["browser"]
+            groups = ["browser"]
             emp = await self._employee(rc)
             for t in await self._tools_for(rc, sorted(set(groups) | set(s.get("extra_groups", []))), rc.run.input, emp):
                 tool_map.setdefault(t.name, t)
