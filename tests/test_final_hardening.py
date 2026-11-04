@@ -24,7 +24,7 @@ def test_host_broker_fails_closed_without_secret_and_after_secret_removed(tmp_pa
     broker = mod["Broker"](cfg)
     with pytest.raises(PermissionError, match="configuration unavailable"):
         broker.keys()
-    (tmp_path / ".env").write_text("XAGENT_SECRET_KEY=valid-secret-for-unit-testing-123456789\\n")
+    (tmp_path / ".env").write_text("XAGENT_SECRET_KEY=valid-secret-for-unit-testing-123456789\n")
     request_key, grant_key = broker.keys()
     assert request_key and grant_key and request_key != grant_key
     (tmp_path / ".env").unlink()
