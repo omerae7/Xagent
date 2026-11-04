@@ -5,7 +5,7 @@
 #
 #  xagent status | version | doctor | logs [service] | restart [service]
 #  xagent update [--ref <branch|tag|commit>] [--dry-run] [--yes]
-#  xagent rollback | backup | restore <file> | password [user] | desktop on|off
+#  xagent rollback [--yes] | backup | restore <file> | password [user] | desktop on|off
 # ════════════════════════════════════════════════════════════════════
 set -euo pipefail
 CONF="${XAGENT_CONF:-/etc/xagent.conf}"; [ -f "$CONF" ] && . "$CONF"
@@ -53,36 +53,49 @@ case "${1:-status}" in
   rollback)
     need_root rollback
     [ -f "$CTL/version.json" ] || { echo "اطلاعات نسخه قبلی موجود نیست."; exit 1; }
-    PREV_COMMIT="$(python3 -c "import json;print(json.load(open('$CTL/version.json')).get('previous_commit',''))")"
-    PREV_TAG="$(python3 -c "import json;print(json.load(open('$CTL/version.json')).get('previous_image_tag',''))")"
-    UPD_AT="$(python3 -c "import json;print(json.load(open('$CTL/version.json')).get('updated_at',''))")"
-    [ -n "$PREV_COMMIT" ] && [ -n "$PREV_TAG" ] || { echo "نسخه قبلی ثبت نشده است."; exit 1; }
+    vj() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$CTL/version.json" "$1"; }
+    CUR_COMMIT="$(vj commit)"; CUR_TAG="$(vj image_tag)"; PREV_COMMIT="$(vj previous_commit)"; PREV_TAG="$(vj previous_image_tag)"
+    BACKUP="$(vj db_backup)"; PREV_REV="$(vj previous_db_revision)"; UPD_AT="$(vj updated_at)"
+    [ -n "$PREV_COMMIT" ] && [ -n "$PREV_TAG" ] || { echo "نسخه قبلی ثبت نشده است (فقط پس از یک به‌روزرسانی موفق امکان‌پذیر است)."; exit 1; }
     docker image inspect "xagent/backend:$PREV_TAG" >/dev/null 2>&1 || { echo "ایمیج نسخه قبلی ($PREV_TAG) موجود نیست؛ از «xagent update --ref $PREV_COMMIT --allow-downgrade» استفاده کنید."; exit 1; }
+    git cat-file -e "$PREV_COMMIT^{commit}" 2>/dev/null || git fetch -q origin
     CUR_REV="$(dc exec -T postgres psql -U xagent -d xagent -tAc 'SELECT version_num FROM alembic_version' | tr -d '[:space:]')"
     NEED_DB=0
-    git cat-file -e "$PREV_COMMIT" 2>/dev/null || git fetch -q origin
-    git ls-tree -r --name-only "$PREV_COMMIT" services/api/migrations/versions | grep -q "/${CUR_REV}_" || NEED_DB=1
-    echo "بازگشت به نسخه ${PREV_COMMIT:0:12} (ایمیج $PREV_TAG)."
+    if [ -n "$CUR_REV" ] && ! git ls-tree -r --name-only "$PREV_COMMIT" services/api/migrations/versions | grep -q "/${CUR_REV}_"; then NEED_DB=1; fi
+    echo "بازگشت از ${CUR_COMMIT:0:12} به نسخه قبلی ${PREV_COMMIT:0:12} (ایمیج $PREV_TAG)."
     if [ "$NEED_DB" = "1" ]; then
-      BACKUP="$(ls -1t "$XAGENT_HOME"/backups/db-*.dump | head -1)"
-      echo "⚠ Schema دیتابیس توسط نسخه جدید تغییر کرده است؛ دیتابیس از آخرین پشتیبان قبل از به‌روزرسانی ($BACKUP، $UPD_AT) بازیابی می‌شود."
-      echo "  داده‌های ثبت‌شده پس از به‌روزرسانی در دیتابیس جداگانه نگه داشته می‌شوند (حذف نمی‌شوند)."
+      [ -f "$BACKUP" ] || BACKUP="$(ls -1t "$XAGENT_HOME"/backups/db-*.dump 2>/dev/null | head -1)"
+      [ -f "$BACKUP" ] || { echo "پشتیبان دیتابیس پیش از به‌روزرسانی یافت نشد؛ بازگشت امن ممکن نیست."; exit 1; }
+      echo "⚠ Schema دیتابیس ($CUR_REV) برای نسخه قبلی ناشناخته است؛ دیتابیس از پشتیبان پیش از به‌روزرسانی بازیابی می‌شود:"
+      echo "   $BACKUP (Schema ${PREV_REV:-?}، $UPD_AT)"
+      echo "   دیتابیس فعلی حذف نمی‌شود و با نام xagent_after_update_* نگه داشته می‌شود."
     fi
-    read -rp "ادامه؟ [y/N] " a; [ "$a" = "y" ] || exit 1
-    if [ -n "$(git status --porcelain)" ]; then git stash push --include-untracked -m "xagent-rollback-$(date +%s)" >/dev/null; fi
+    if [ "${2:-}" != "--yes" ]; then read -rp "ادامه؟ [y/N] " a; [ "$a" = "y" ] || exit 1; fi
+    if [ -n "$(git status --porcelain)" ]; then git stash push --include-untracked -m "xagent-rollback-$(date +%s)" >/dev/null && echo "تغییرات محلی در git stash حفظ شدند."; fi
+    S="$(date +%Y%m%d_%H%M%S)"
     if [ "$NEED_DB" = "1" ]; then
-      S="$(date +%Y%m%d_%H%M%S)"
+      psql_su() { dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "$1" >/dev/null; }
       dc stop api worker
-      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "CREATE DATABASE xagent_restore_$S OWNER xagent"
-      dc exec -T postgres pg_restore --exit-on-error -U xagent -d "xagent_restore_$S" < "$BACKUP"
-      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='xagent' AND pid<>pg_backend_pid()" >/dev/null
-      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "ALTER DATABASE xagent RENAME TO xagent_after_update_$S"
-      dc exec -T postgres psql -v ON_ERROR_STOP=1 -U xagent -d postgres -c "ALTER DATABASE xagent_restore_$S RENAME TO xagent"
+      psql_su "CREATE DATABASE xagent_restore_$S OWNER xagent" &&
+      dc exec -T postgres pg_restore --exit-on-error -U xagent -d "xagent_restore_$S" < "$BACKUP" &&
+      psql_su "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='xagent' AND pid<>pg_backend_pid()" &&
+      psql_su "ALTER DATABASE xagent RENAME TO xagent_after_update_$S" &&
+      psql_su "ALTER DATABASE xagent_restore_$S RENAME TO xagent" || {
+        echo "✗ بازیابی دیتابیس ناموفق بود؛ نسخه فعلی دوباره اجرا می‌شود."; dc start api worker; exit 1; }
     fi
     git checkout -q --detach "$PREV_COMMIT"
-    sed -i "s#^XAGENT_IMAGE_TAG=.*#XAGENT_IMAGE_TAG=$PREV_TAG#" .env
+    sed -i "s#^XAGENT_IMAGE_TAG=.*#XAGENT_IMAGE_TAG=$PREV_TAG#; s#^XAGENT_PREVIOUS_IMAGE_TAG=.*#XAGENT_PREVIOUS_IMAGE_TAG=$CUR_TAG#" .env
     dc up -d --remove-orphans
-    for _ in $(seq 1 40); do health >/dev/null 2>&1 && { echo "✓ نسخه قبلی فعال و سالم است."; exit 0; }; sleep 3; done
+    for _ in $(seq 1 60); do
+      if health >/dev/null 2>&1; then
+        printf '{"version":"%s","commit":"%s","image_tag":"%s","previous_commit":"%s","previous_image_tag":"%s","rolled_back_at":"%s","rolled_back_db":"%s"}\n' \
+          "$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)" "$PREV_COMMIT" "$PREV_TAG" "$CUR_COMMIT" "$CUR_TAG" "$(date -u +%FT%TZ)" "$NEED_DB" > "$CTL/version.json"
+        printf '{"state":"rolled_back","at":"%s","message":"بازگشت دستی به %s"}\n' "$(date -u +%FT%TZ)" "${PREV_COMMIT:0:12}" > "$CTL/update.status"
+        chown --reference="$CTL" "$CTL/version.json" "$CTL/update.status" 2>/dev/null || true
+        echo "✓ نسخه قبلی (${PREV_COMMIT:0:12}) فعال و سالم است."; exit 0
+      fi
+      sleep 3
+    done
     echo "✗ نسخه قبلی سالم نشد؛ xagent logs api"; exit 1 ;;
   backup)
     f="$XAGENT_HOME/backups/db-$(date +%Y%m%d-%H%M%S).dump"; mkdir -p "$XAGENT_HOME/backups"

@@ -39,6 +39,10 @@ while [ $# -gt 0 ]; do
 done
 
 mkdir -p "$CTL" "$BK"
+# ───────────── ۱. قفل (پیش از هر نوشتن روی گزارش/وضعیت) ─────────────
+exec 9>"$CTL/update.lock"
+if ! flock -n 9; then echo "به‌روزرسانی دیگری در حال اجراست."; exit 3; fi
+rm -f "$CTL/update.request"
 LOG="$CTL/update.log"
 : > "$LOG"
 chown --reference="$CTL" "$LOG" 2>/dev/null || true
@@ -58,10 +62,6 @@ status() {
 fixown() { chown --reference="$CTL" "$@" 2>/dev/null || true; }
 die() { echo -e "${c_r}✗ $1${c_o}" >&2; status "failed" "$1"; cleanup_worktree; exit 1; }
 
-# ───────────── ۱. قفل ─────────────
-exec 9>"$CTL/update.lock"
-if ! flock -n 9; then echo "به‌روزرسانی دیگری در حال اجراست."; exit 3; fi
-rm -f "$CTL/update.request"
 
 [ -d "$APP/.git" ] || { echo "مخزن برنامه در $APP یافت نشد."; exit 1; }
 [ -f "$APP/.env" ] || { echo "فایل پیکربندی $APP/.env یافت نشد."; exit 1; }
@@ -216,6 +216,7 @@ ok "Migration روی کپی موفق بود (${PREV_REV:-?} → ${NEW_REV:-?})"
 # ───────────── ۱۰. استقرار ─────────────
 step "استقرار نسخه جدید"
 status "running" "استقرار"
+OLD_PREVIOUS_TAG="$(envget XAGENT_PREVIOUS_IMAGE_TAG)"
 envset XAGENT_IMAGE_TAG "$NEW_SHORT"
 envset XAGENT_PREVIOUS_IMAGE_TAG "$PREV_TAG"
 
@@ -224,6 +225,7 @@ rollback() {
   echo -e "${c_r}✗ $reason — بازگشت خودکار به نسخه $PREV_SHORT${c_o}"
   status "rolling_back" "$reason"
   envset XAGENT_IMAGE_TAG "$PREV_TAG"
+  envset XAGENT_PREVIOUS_IMAGE_TAG "${OLD_PREVIOUS_TAG:-$PREV_TAG}"
   local cur_rev; cur_rev="$(alembic_rev)"
   if [ -n "$cur_rev" ] && [ "$cur_rev" != "$PREV_REV" ]; then
     echo "  Migration اجرا شده بود؛ بازیابی مرحله‌ای دیتابیس از پشتیبان (دیتابیس فعلی حذف نمی‌شود)…"
@@ -288,8 +290,8 @@ if [ -w "$(dirname "$LIB")" ] || [ "$(id -u)" = "0" ]; then
   install -m 0755 "$APP/infra/updater/xagent-update.sh" "$LIB/xagent-update"
   ln -sf "$LIB/xagentctl" "${XAGENT_BIN:-/usr/local/bin}/xagent" 2>/dev/null || true
 fi
-printf '{"version":"%s","commit":"%s","image_tag":"%s","previous_version":"%s","previous_commit":"%s","previous_image_tag":"%s","updated_at":"%s"}\n' \
-  "$NEW_VERSION" "$TARGET" "$NEW_SHORT" "$PREV_VERSION" "$PREV" "$PREV_TAG" "$(date -u +%FT%TZ)" > "$CTL/version.json"
+printf '{"version":"%s","commit":"%s","image_tag":"%s","previous_version":"%s","previous_commit":"%s","previous_image_tag":"%s","previous_db_revision":"%s","db_revision":"%s","db_backup":"%s","updated_at":"%s"}\n' \
+  "$NEW_VERSION" "$TARGET" "$NEW_SHORT" "$PREV_VERSION" "$PREV" "$PREV_TAG" "$PREV_REV" "$CUR_REV" "$DB_BACKUP" "$(date -u +%FT%TZ)" > "$CTL/version.json"
 fixown "$CTL/version.json"
 # فقط ایمیج‌های دو نسخه اخیر نگه داشته می‌شوند (برای Rollback)
 for img in backend web runner desktop; do

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
 from typing import Any
 from zoneinfo import available_timezones
@@ -77,6 +78,9 @@ async def _validate_ai(session: AsyncSession, ai: AISettings) -> None:
                                      f"({PRO_ROLE_CAPS_DOC.get(cap, cap)}) را ندارد")
         if cap == "tools" and not (m.capabilities or {}).get("tools"):
             raise HTTPException(422, f"مدل «{m.display_name or m.model_name}» از فراخوانی ابزار پشتیبانی نمی‌کند")
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _version() -> dict[str, Any]:
@@ -366,6 +370,12 @@ async def update_core(user: User = Depends(owner_user), session: AsyncSession = 
     s = get_settings()
     ctl = s.data_dir / "control"
     ctl.mkdir(parents=True, exist_ok=True)
+    try:
+        cur = json.loads((ctl / "update.status").read_text())
+    except (OSError, ValueError):
+        cur = {}
+    if cur.get("state") in ("running", "rolling_back") or (ctl / "update.request").exists():
+        raise HTTPException(409, "یک به‌روزرسانی در حال اجرا یا در صف است؛ تا پایان آن صبر کنید.")
     req = {"requested_by": user.username, "at": utcnow().isoformat(), "branch": s.repo_branch}
     (ctl / "update.request").write_text(json.dumps(req), encoding="utf-8")
     (ctl / "update.status").write_text(json.dumps({"state": "requested", "at": req["at"]}), encoding="utf-8")
@@ -381,7 +391,7 @@ async def update_status(_: User = Depends(current_user)):
     except (OSError, ValueError):
         status = {"state": "idle"}
     try:
-        log = (s.data_dir / "control" / "update.log").read_text()[-6000:]
+        log = _ANSI.sub("", (s.data_dir / "control" / "update.log").read_text(errors="replace"))[-8000:]
     except OSError:
         log = ""
     return {"status": status, "log": log, "version": _version()}
