@@ -10,6 +10,7 @@ import httpx
 
 from .base import ChatRequest, LLMMessage, LLMResponse, ProviderError, ToolCall, Usage
 
+
 class EmbeddingVectors(list):
     """List-compatible embedding result retaining provider-reported token usage."""
 
