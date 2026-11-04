@@ -67,8 +67,14 @@ async def _test_skill(session: AsyncSession, skill: dict[str, Any]) -> tuple[boo
     return True, "ابزارها موجود و رویه معتبر است"
 
 
-async def run_dream(session: AsyncSession, force: bool = False) -> DreamReport:
+async def run_dream(session: AsyncSession, force: bool = False,
+                    report_id: uuid.UUID | None = None) -> DreamReport:
+    """Process a pre-committed slot if scheduled; no billable work for trivial events."""
     cfg = await get_setting(session, "dream", DreamSettings)
+    if await bus.is_stop_all():
+        raise RuntimeError("STOP_ALL is active")
+    if not cfg.enabled and not force:
+        raise RuntimeError("Dream is disabled by owner")
     last = (
         await session.execute(
             select(DreamReport).where(DreamReport.status.in_(["done", "skipped"])).order_by(DreamReport.started_at.desc()).limit(1)
@@ -77,8 +83,16 @@ async def run_dream(session: AsyncSession, force: bool = False) -> DreamReport:
     checkpoint = last.checkpoint_to if last and last.checkpoint_to else utcnow() - timedelta(days=1)
     cursor_id = (last.cleanup or {}).get("checkpoint_episode_id") if last else None
     now = utcnow()
-    report = DreamReport(checkpoint_from=checkpoint, checkpoint_to=now, status="running")
-    session.add(report)
+    if report_id is not None:
+        report = await session.get(DreamReport, report_id)
+        if report is None or report.status != "running":
+            raise RuntimeError("Dream slot not claimed or already finished")
+        report.checkpoint_from = checkpoint
+        report.checkpoint_to = now
+    else:
+        report = DreamReport(checkpoint_from=checkpoint, checkpoint_to=now,
+                             status="running", trigger="manual" if force else "scheduled")
+        session.add(report)
     await session.flush()
     await bus.publish("dream.started", {"id": str(report.id)})
 
