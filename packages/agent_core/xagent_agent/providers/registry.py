@@ -195,8 +195,9 @@ class ModelEmbedder:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         from xagent_core.models import EMBED_DIM
-        from .base import ProviderError
+
         from ..usage_ledger import begin_aux_attempt, finish_aux_attempt
+        from .base import ProviderError
 
         input_hint = max(256, sum(len(t) for t in texts) // 2)
         aid = await begin_aux_attempt(self.bound, purpose="embedding",
