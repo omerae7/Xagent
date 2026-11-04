@@ -10,6 +10,14 @@ import httpx
 
 from .base import ChatRequest, LLMMessage, LLMResponse, ProviderError, ToolCall, Usage
 
+class EmbeddingVectors(list):
+    """List-compatible embedding result retaining provider-reported token usage."""
+
+    def __init__(self, values: list[list[float]], usage: Usage | None):
+        super().__init__(values)
+        self.usage = usage
+
+
 DEFAULT_BASES = {
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
@@ -155,7 +163,14 @@ class OpenAICompatProvider:
         r = await self._client.post("/embeddings", json=body)
         if r.status_code >= 400:
             raise ProviderError(f"embedding HTTP {r.status_code}: {r.text[:300]}", status=r.status_code)
-        return [d["embedding"] for d in sorted(r.json()["data"], key=lambda d: d.get("index", 0))]
+        payload = r.json()
+        u = payload.get("usage")
+        usage = Usage(input_uncached=int(u.get("prompt_tokens") or 0),
+                      output=0, details={"embedding_usage": u}, reported=True) if u else None
+        return EmbeddingVectors(
+            [d["embedding"] for d in sorted(payload["data"], key=lambda d: d.get("index", 0))],
+            usage,
+        )
 
     async def transcribe(self, model: str, audio: bytes, mime: str, language: str = "fa") -> str:
         ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/mp4": "m4a"}
