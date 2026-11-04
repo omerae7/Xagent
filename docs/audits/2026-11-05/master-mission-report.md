@@ -23,6 +23,9 @@
   - `ruff check`، `compileall`، `bash -n` همه اسکریپت‌ها و مجوز اجرای اسکریپت‌های به‌روزرسان: موفق.
   - `npm run typecheck` و `npm run build` (Node 22): موفق.
   - `docker compose config` روی نسخه موقت با `.env.example`: معتبر.
+- **CI نهایی روی `26b8e2d`:** اجرای ۱۷۰ (push) و ۱۷۱ (pull_request) موفق.
+  - کار tests: Lint، نصب Chromium، `311 passed` (آزمون‌های Chromium اجرا شدند، نه Skip) و Build پنل.
+  - کار containers: ساخت همه ایمیج‌ها و e2e به‌روزرسان روی استک واقعی Docker.
 - **روش:** برای هر مرحله، تست بازتولید ابتدا روی کد پیش از اصلاح (Stash موقت فایل‌های منبع) اجرا شد.
 
 | مرحله | فایل آزمون | پیش از اصلاح | پس از اصلاح |
@@ -69,7 +72,7 @@
 | مرز ابزار کارمند | VERIFIED FIXED | `pipeline._employee_groups/_tools_for` | `test_employee_tool_groups_*` | `tool_groups` خالی = بدون محدودیت گروه (رفتار قبلی) |
 | دسکتاپ مشترک | PARTIALLY FIXED | `computer.acquire_desktop/release_session` | `test_desktop_control_lease` | Lease یک‌اجرایی و حریم تب اعمال شد؛ Context مرورگر (Cookie) هنوز مشترک است — جداسازی کامل حساب کارمندان **نیست** |
 | مسیریابی بر اساس کیفیت | VERIFIED FIXED | `router._task_stats` | `test_router_prefers_verified_*` | فقط با ≥۵ Run پایانی |
-| تکرارپذیری استقرار | PARTIALLY FIXED | `compose.yaml`، به‌روزرسان، `verified-python-dependencies.txt` | `docker compose config` | Lockfile پایتون و برچسب ثابت ایمیج اعمال نشد؛ e2e به‌روزرسان اجرا نشد |
+| تکرارپذیری استقرار | PARTIALLY FIXED | `compose.yaml`، به‌روزرسان، `verified-python-dependencies.txt` | `docker compose config`؛ CI: ساخت همه ایمیج‌ها + e2e به‌روزرسان (اجرای ۱۷۰) موفق | Lockfile پایتون و برچسب ثابت ایمیج اعمال نشد |
 
 ## ث) سناریوهای پذیرش (بخش ۲۱)
 
@@ -110,7 +113,7 @@
 | F5 گفتگوی طولانی | محدود | در بودجه | DB + Pipeline | PASS | `test_master_context.py` |
 | G1 هشت SSE | بدون اشغال Pool | ≤۱ اتصال | Uvicorn واقعی | PASS | `test_master_worker.py` |
 | G2 قطعی Backend | پیام روشن | نوار قطعی + سلامت محدود | Build/Typecheck + API | PARTIAL (رفتار مرورگر کاربر NOT RUN) | `Shell.tsx`، `test_health_*` |
-| G3 شکست سلامت به‌روزرسان | امن/Rollback | دروازه آمادگی Worker اضافه شد | `bash -n` | NOT RUN (e2e Docker به‌روزرسان اجرا نشد) | `xagent-update.sh` |
+| G3 شکست سلامت به‌روزرسان | امن/Rollback | e2e به‌روزرسان (bootstrap، Migration خراب، نسخه ناسالم با Rollback، موفق، Rollback دستی) با دروازه سلامت تازه موفق شد | استک واقعی Docker در CI | PASS | CI اجرای ۱۷۰، کار containers |
 | G4 بازگشایی Run | وضعیت/شواهد پایدار | پایدار | DB واقعی | PASS | `test_master_dashboard.py` |
 
 ## ج) آمادگی عملیاتی
@@ -120,7 +123,7 @@
 | آزموده با وابستگی‌های واقعی محلی | دروازه مجوز و تأیید، چرخه حیات روتین/رویداد، تسویه، صندوق رویداد، Lease fencing، پذیرش محدود، SSE و Pool، مرورگر Chromium (CDP)، Python در LocalSandbox، بودجه کانتکست |
 | آزموده با سرویس بیرونی شبیه‌ساز | مدل‌ها (پاسخ اسکریپتی)، تلگرام (FakeTelegram)، SDK Anthropic (Transport جعلی)، Telegram Web (صفحه محلی)، دسکتاپ (Sandbox جعلی) |
 | آزمون زنده Staging | **هیچ‌کدام** |
-| تأییدنشده | تلگرام واقعی/MTProto، Telegram Web واقعی، ارائه‌دهندگان پولی، دسکتاپ XFCE واقعی، Docker Runner، e2e به‌روزرسان، دسترسی عمومی HTTPS/DNS |
+| تأییدنشده | تلگرام واقعی/MTProto، Telegram Web واقعی، ارائه‌دهندگان پولی، دسکتاپ XFCE واقعی، Docker Runner، دسترسی عمومی HTTPS/DNS |
 | شکست شناخته‌شده | هیچ تست ناموفقی. محدودیت‌های طراحی در بخش «ت» آمده است |
 
 ## چ) پایداری و کارایی (فقط اندازه‌گیری‌های واقعاً انجام‌شده)
@@ -166,5 +169,5 @@
    - MTProto.
    - مدل‌های پولی با سقف هزینه.
    - دسکتاپ XFCE.
-   - e2e به‌روزرسان با داده نمونه.
+   - e2e به‌روزرسان با داده نمونه شبیه تولید (e2e CI با داده آزمایشی موفق است).
    - HTTPS عمومی.
