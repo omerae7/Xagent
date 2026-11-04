@@ -6,6 +6,7 @@ import logging
 from datetime import timedelta
 
 from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert
 
 from xagent_core import bus
 from xagent_core.audit import notify
@@ -102,6 +103,9 @@ async def after_routine_run(run_id) -> None:  # noqa: ANN001
 
 
 async def dream_due() -> bool:
+    """Read-only schedule check; any started/failed/finished slot blocks duplicates."""
+    if await bus.is_stop_all():
+        return False
     async with session_scope() as session:
         cfg = await get_setting(session, "dream", DreamSettings)
         general = await get_setting(session, "general", GeneralSettings)
@@ -111,7 +115,34 @@ async def dream_due() -> bool:
         local = now_utc().astimezone(tz)
         if (local.hour, local.minute) < (cfg.hour, cfg.minute):
             return False
-        start_local = local.replace(hour=cfg.hour, minute=cfg.minute, second=0, microsecond=0)
-        last = (await session.execute(select(DreamReport).where(
-            DreamReport.started_at >= start_local).limit(1))).scalar_one_or_none()
-        return last is None
+        slot_key = f"scheduled:{local.date().isoformat()}"
+        existing = (await session.execute(select(DreamReport.id).where(
+            DreamReport.slot_key == slot_key))).first()
+        return existing is None
+
+
+async def claim_scheduled_dream():
+    """Commit an atomic one-per-night slot BEFORE any paid API call.
+
+    Unique index protects against concurrent workers and lease TTL expiry.
+    A crash leaves the slot as 'running' for diagnostics, NOT eligible for
+    unbounded retries on the same night.
+    """
+    if not await dream_due():
+        return None
+    async with session_scope() as session:
+        cfg = await get_setting(session, "dream", DreamSettings)
+        general = await get_setting(session, "general", GeneralSettings)
+        if not cfg.enabled or await bus.is_stop_all():
+            return None
+        local = now_utc().astimezone(get_zone(general.timezone))
+        slot_key = f"scheduled:{local.date().isoformat()}"
+        result = await session.execute(
+            insert(DreamReport).values(
+                id=__import__("uuid").uuid4(),
+                started_at=utcnow(), slot_key=slot_key, trigger="scheduled",
+                status="running", events_reviewed=0, tokens=0, cost_usd=0,
+                summary="", learnings=[], skills_proposed=[], cleanup={},
+            ).on_conflict_do_nothing(index_elements=["slot_key"]).returning(DreamReport.id)
+        )
+        return result.scalar_one_or_none()
