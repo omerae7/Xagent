@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Columns3, List, Play, Plus, Trash2, User } from "lucide-react";
+import { Bot, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Columns3, GitBranch, List, Play, Plus, Trash2, User } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge, Button, Card, cn, Empty, ErrorBox, Field, Input, Modal, PageHeader, Segmented, Select, Skeleton, Textarea } from "../components/ui";
 import { del, get, patch, post } from "../lib/api";
@@ -14,7 +14,35 @@ const STATUS = [
   { v: "in_progress", l: "در حال انجام", tone: "primary" },
   { v: "waiting", l: "منتظر", tone: "warning" },
   { v: "done", l: "انجام‌شده", tone: "success" },
+  { v: "failed", l: "ناموفق", tone: "danger" },
 ] as const;
+// نوع اجرای تسک (Migration 0006): human فقط یادآوری؛ agent در موعد خودکار اجرا می‌شود؛ dependent پس از پیش‌نیاز
+const KIND: Record<string, { l: string; short: string; tone: any; hint: string }> = {
+  human: { l: "یادآوری برای انسان", short: "یادآوری", tone: "neutral", hint: "در موعد فقط یادآوری در میز کار ثبت می‌شود؛ ایجنت کاری انجام نمی‌دهد." },
+  agent: { l: "تسک زمان‌بندی‌شده ایجنت", short: "ایجنت · زمان‌بندی", tone: "accent", hint: "در زمان شروع (یا مهلت) ایجنت خودکار اجرا می‌کند و نتیجه را گزارش می‌دهد." },
+  dependent: { l: "وابسته به تسک دیگر", short: "وابسته", tone: "cyan", hint: "پس از انجام‌شدن پیش‌نیاز، ایجنت خودکار اجرا می‌کند." },
+};
+function runLabel(t: any): { l: string; tone: any } | null {
+  if (t.kind === "human" || !t.kind) return null;
+  if (t.status === "in_progress") return { l: "در حال اجرا", tone: "primary" };
+  if (t.status === "done") return { l: "اجرا شد", tone: "success" };
+  if (t.status === "failed") return { l: "اجرای ناموفق", tone: "danger" };
+  if (t.status === "waiting") return { l: "منتظر اجازه/ورودی", tone: "warning" };
+  return { l: t.kind === "dependent" ? "منتظر پیش‌نیاز" : "زمان‌بندی‌شده", tone: "neutral" };
+}
+function KindBadge({ t }: { t: any }) {
+  const k = KIND[t.kind || "human"];
+  const r = runLabel(t);
+  return (
+    <>
+      <Badge tone={k.tone} className="!py-0">
+        {t.kind === "agent" ? <Bot className="h-3 w-3" /> : t.kind === "dependent" ? <GitBranch className="h-3 w-3" /> : <User className="h-3 w-3" />}
+        {k.short}
+      </Badge>
+      {r && t.status !== "done" && t.status !== "todo" && <Badge tone={r.tone} className="!py-0">{r.l}</Badge>}
+    </>
+  );
+}
 const PRIORITY: Record<string, { l: string; tone: any }> = {
   low: { l: "کم", tone: "neutral" },
   normal: { l: "عادی", tone: "cyan" },
@@ -27,10 +55,13 @@ function TaskForm({ open, onClose, task }: { open: boolean; onClose: () => void;
   const qc = useQueryClient();
   const contacts = useQuery({ queryKey: ["contacts"], queryFn: () => get("/api/crm/contacts"), enabled: open });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => get("/api/crm/projects"), enabled: open });
-  const [f, setF] = useState<any>(() => task || { title: "", description: "", priority: "normal", status: "todo", assignee_type: "agent" });
+  const [f, setF] = useState<any>(() => task || { title: "", description: "", priority: "normal", status: "todo", assignee_type: "agent", kind: "human", missed_policy: "run_late" });
+  const others = useQuery({ queryKey: ["tasks", "all"], queryFn: () => get("/api/tasks?status=todo,in_progress,waiting,done,failed"), enabled: open && f.kind === "dependent" });
   const save = useMutation({
     mutationFn: (runNow: boolean) => {
-      const body = { ...f, run_now: runNow, due_at: f.due_at || null, assignee_contact_id: f.assignee_type === "contact" ? f.assignee_contact_id || "" : "" };
+      const body = { ...f, run_now: runNow, due_at: f.due_at || null, start_at: f.start_at || null,
+        depends_on_id: f.kind === "dependent" ? f.depends_on_id || "" : "",
+        assignee_contact_id: f.assignee_type === "contact" ? f.assignee_contact_id || "" : "" };
       return task ? patch(`/api/tasks/${task.id}`, body) : post("/api/tasks", body);
     },
     onSuccess: (_r, runNow) => {
@@ -46,12 +77,33 @@ function TaskForm({ open, onClose, task }: { open: boolean; onClose: () => void;
       <>
         <Button variant="ghost" onClick={onClose}>انصراف</Button>
         {f.assignee_type === "agent" && <Button variant="soft" loading={save.isPending} onClick={() => save.mutate(true)} icon={<Play className="h-4 w-4" />}>ذخیره و اجرا توسط ایجنت</Button>}
-        <Button variant="primary" loading={save.isPending} onClick={() => save.mutate(false)} disabled={!f.title}>ذخیره</Button>
+        <Button variant="primary" loading={save.isPending} onClick={() => save.mutate(false)} disabled={!f.title || (f.kind === "dependent" && !f.depends_on_id)}>ذخیره</Button>
       </>
     }>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="عنوان" className="sm:col-span-2"><Input value={f.title} onChange={(e) => set("title", e.target.value)} autoFocus /></Field>
         <Field label="شرح" className="sm:col-span-2"><Textarea value={f.description || ""} onChange={(e) => set("description", e.target.value)} /></Field>
+        <Field label="نوع اجرا" hint={KIND[f.kind || "human"].hint} className="sm:col-span-2">
+          <Segmented value={f.kind || "human"} onChange={(v) => set("kind", v)} options={Object.entries(KIND).map(([k, v]) => ({ value: k, label: v.l }))} />
+        </Field>
+        {f.kind === "agent" && (
+          <>
+            <Field label="زمان اجرا" hint="اگر خالی بماند، مهلت ملاک اجراست."><Input type="datetime-local" value={isoToLocalInput(f.start_at)} onChange={(e) => set("start_at", localInputToIso(e.target.value))} /></Field>
+            <Field label="اگر زمان اجرا از دست رفت" hint="مثلاً سرور خاموش بوده است.">
+              <Select value={f.missed_policy || "run_late"} onChange={(e) => set("missed_policy", e.target.value)}>
+                <option value="run_late">با تأخیر اجرا شود</option><option value="skip">اجرا نشود و گزارش شود</option>
+              </Select>
+            </Field>
+          </>
+        )}
+        {f.kind === "dependent" && (
+          <Field label="پیش‌نیاز" className="sm:col-span-2">
+            <Select value={f.depends_on_id || ""} onChange={(e) => set("depends_on_id", e.target.value)}>
+              <option value="">انتخاب تسک پیش‌نیاز…</option>
+              {(others.data?.items || []).filter((x: any) => x.id !== task?.id).map((x: any) => <option key={x.id} value={x.id}>{x.title}</option>)}
+            </Select>
+          </Field>
+        )}
         <Field label="وضعیت"><Select value={f.status} onChange={(e) => set("status", e.target.value)}>{STATUS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}<option value="cancelled">لغوشده</option></Select></Field>
         <Field label="اولویت"><Select value={f.priority} onChange={(e) => set("priority", e.target.value)}>{Object.entries(PRIORITY).map(([k, v]) => <option key={k} value={k}>{v.l}</option>)}</Select></Field>
         <Field label="مسئول"><Select value={f.assignee_type} onChange={(e) => set("assignee_type", e.target.value)}>{Object.entries(ASSIGNEE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
@@ -81,8 +133,10 @@ function TaskRow({ t, onEdit }: { t: any; onEdit: () => void }) {
         <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span className="flex items-center gap-1"><User className="h-3 w-3" />{t.assignee_name || ASSIGNEE[t.assignee_type]}</span>
           {t.due_at && <span className={cn("num", new Date(t.due_at) < new Date() && t.status !== "done" && "text-danger")}>⏰ {fmtDate(t.due_at)}</span>}
-          {t.created_by === "agent" && <Badge tone="accent" className="!py-0">ایجنت</Badge>}
+          <KindBadge t={t} />
+          {t.created_by === "agent" && <Badge tone="neutral" className="!py-0">ساخته ایجنت</Badge>}
         </div>
+        {t.result_summary && <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted">{t.result_summary}</div>}
       </button>
       <Badge tone={PRIORITY[t.priority]?.tone}>{PRIORITY[t.priority]?.l}</Badge>
     </motion.div>
@@ -98,8 +152,9 @@ function Kanban({ items, onEdit }: { items: any[]; onEdit: (t: any) => void }) {
     qc.invalidateQueries({ queryKey: ["tasks"] });
   };
   return (
-    <div className="no-scrollbar -mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 lg:mx-0 lg:grid lg:grid-cols-4 lg:px-0">
-      {STATUS.map((col) => {
+    <div className={cn("no-scrollbar -mx-3 flex snap-x gap-4 overflow-x-auto px-3 pb-2 sm:-mx-4 sm:px-4 lg:mx-0 lg:grid lg:px-0",
+      items.some((t) => t.status === "failed") ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+      {STATUS.filter((c) => c.v !== "failed" || items.some((t) => t.status === "failed")).map((col) => {
         const list = items.filter((t) => t.status === col.v);
         return (
           <div key={col.v} onDragOver={(e) => { e.preventDefault(); setOver(col.v); }} onDragLeave={() => setOver(null)}
@@ -114,6 +169,8 @@ function Kanban({ items, onEdit }: { items: any[]; onEdit: (t: any) => void }) {
                 <motion.div layout key={t.id} draggable onDragStart={(e: any) => e.dataTransfer.setData("id", t.id)} onClick={() => onEdit(t)}
                   className="cursor-grab rounded-xl border hairline bg-bg2/60 p-3 transition hover:border-primary/40 active:cursor-grabbing">
                   <div className="text-sm">{t.title}</div>
+                  <div className="mt-1.5 flex flex-wrap gap-1 text-[11px]"><KindBadge t={t} /></div>
+                  {t.result_summary && <div className="mt-1.5 line-clamp-2 text-[11.5px] leading-5 text-muted">{t.result_summary}</div>}
                   <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
                     <span>{t.assignee_name || ASSIGNEE[t.assignee_type]}</span>
                     <Badge tone={PRIORITY[t.priority]?.tone}>{PRIORITY[t.priority]?.l}</Badge>
@@ -168,12 +225,14 @@ function Calendar({ items, onEdit }: { items: any[]; onEdit: (t: any) => void })
 export default function Tasks() {
   const [view, setView] = useState<"list" | "kanban" | "calendar">("kanban");
   const [q, setQ] = useState("");
+  const [kind, setKind] = useState<"all" | "human" | "agent">("all");
   const [edit, setEdit] = useState<any | null>(null);
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
-  const { data, isLoading, error, refetch } = useQuery({ queryKey: ["tasks", "all"], queryFn: () => get("/api/tasks?status=todo,in_progress,waiting,done") });
+  const { data, isLoading, error, refetch } = useQuery({ queryKey: ["tasks", "all"], queryFn: () => get("/api/tasks?status=todo,in_progress,waiting,done,failed") });
   useLive((_d, t) => t === "task.changed" && qc.invalidateQueries({ queryKey: ["tasks"] }));
-  const items: any[] = (data?.items || []).filter((t: any) => !q || t.title.includes(q));
+  const items: any[] = (data?.items || []).filter((t: any) => (!q || t.title.includes(q))
+    && (kind === "all" || (kind === "human" ? (t.kind || "human") === "human" : t.kind === "agent" || t.kind === "dependent")));
 
   return (
     <div>
@@ -187,7 +246,12 @@ export default function Tasks() {
           <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setCreating(true)}>تسک جدید</Button>
         </>
       } />
-      <div className="mb-4 max-w-sm"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جست‌وجوی تسک…" /></div>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="w-full max-w-sm"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جست‌وجوی تسک…" /></div>
+        <Segmented value={kind} onChange={setKind} options={[
+          { value: "all", label: "همه" }, { value: "agent", label: "کارهای ایجنت" }, { value: "human", label: "یادآوری‌های انسانی" },
+        ]} />
+      </div>
       {error && <ErrorBox error={error} retry={refetch} />}
       {isLoading ? <div className="grid gap-3 lg:grid-cols-4">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-64" />)}</div> : (
         <>

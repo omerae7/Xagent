@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
-  Brain, CheckCircle2, CircleSlash, Cloud, Cpu, Download, Globe2, KeyRound, Lock, MessageCircle, Moon, OctagonX, Plus, Power, RefreshCw,
-  Shield, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, User, Wand2, XCircle,
+  Brain, Bot, CheckCircle2, CircleSlash, Cloud, Cpu, Download, ExternalLink, GitPullRequest, Globe2, KeyRound, Lock, MessageCircle, Moon,
+  OctagonX, Plus, Power, RefreshCw, Shield, ShieldCheck, SlidersHorizontal, Sparkles, Square, Trash2, User, Wand2, XCircle,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -12,7 +12,7 @@ import { faInt, fmtDate, setLocale } from "../lib/format";
 import { useLive } from "../lib/live";
 import { toast, toastError } from "../lib/store";
 
-type TabKey = "general" | "ai" | "harness" | "limits" | "dream" | "telegram" | "security" | "system";
+type TabKey = "general" | "ai" | "harness" | "limits" | "dream" | "telegram" | "external" | "security" | "system";
 
 function useSettings() {
   return useQuery({ queryKey: ["settings"], queryFn: () => get("/api/settings") });
@@ -68,7 +68,9 @@ function General() {
 }
 
 // ───────────── هوش مصنوعی ─────────────
-const KIND_ICON: Record<string, string> = { anthropic: "A", openai: "◎", openai_chat: "◎", custom_responses: "↗", google: "G", openrouter: "⇄", deepseek: "D", groq: "⚡", xai: "X", mistral: "M", ollama: "🦙", custom: "⚙" };
+const KIND_ICON: Record<string, string> = { anthropic: "A", openai: "◎", openai_chat: "◎", custom_responses: "↗", google: "G", openrouter: "⇄", deepseek: "D", groq: "⚡", xai: "X", moonshot: "K", kimi_code: "K›", mistral: "M", ollama: "🦙", custom: "⚙" };
+// وضعیت اتصال هر ارائه‌دهنده از سرور (provider_status)
+const PSTATUS_TONE: Record<string, any> = { ready: "success", available: "cyan", needs_setup: "warning", unsupported: "neutral", temporarily_unavailable: "danger", untested: "neutral" };
 const CAPS: [string, string][] = [["tools", "ابزار"], ["vision", "بینایی"], ["stt", "گفتار→متن"], ["tts", "متن→گفتار"], ["embedding", "Embedding"], ["audio_in", "صوت"]];
 
 function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }) {
@@ -130,6 +132,14 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
           {(kind === "custom" || kind === "custom_responses" || kind === "ollama" || kind === "openrouter") && (
             <Field label="نشانی پایه (Base URL)"><Input value={base} onChange={(e) => setBase(e.target.value)} className="ltr" placeholder="https://.../v1" /></Field>
           )}
+          {(preset?.alt_bases || []).length > 0 && (
+            <Field label="منطقه سرویس" hint={kind === "kimi_code" ? "کلید Kimi Code از کنسول Kimi Code گرفته می‌شود و با کلید Kimi Open Platform یکی نیست." : "کلید هر منطقه فقط در همان منطقه معتبر است."}>
+              <Select value={base} onChange={(e) => setBase(e.target.value)} className="ltr">
+                {[preset.base_url, ...preset.alt_bases].map((b: string) => <option key={b} value={b}>{b}</option>)}
+              </Select>
+            </Field>
+          )}
+          {kind === "xai" && <p className="text-[12.5px] leading-6 text-muted">پس از ذخیره، «همگام‌سازی مدل‌ها» مدل‌ها و قیمت‌های واقعی همین کلید را از ‎/v1/language-models می‌خواند (واحد xAI: سنت به ازای ۱۰۰ میلیون توکن، تبدیل‌شده به دلار به ازای ۱ میلیون).</p>}
         </div>
       )}
       {step === 3 && (
@@ -209,7 +219,9 @@ const SRC_FA: Record<string, string> = { probe: "آزمون‌شده", manual: "
 const PRICE_SRC_FA: Record<string, string> = { provider_api: "قیمت از API ارائه‌دهنده", manual: "قیمت دستی", catalog_unverified: "قیمت کاتالوگ (تأییدنشده)", unknown: "قیمت نامشخص" };
 const CAP_FA: Record<string, string> = { chat: "گفتگو", tools: "ابزار", vision: "بینایی" };
 
-function ModelRow({ m }: { m: any }) {
+const THINK_FA: Record<string, string> = { none: "بدون استدلال", toggle: "قابل روشن/خاموش (thinking)", always: "همیشه استدلالی", unknown: "اعلام‌شده؛ نوع کنترل نامعلوم" };
+
+function ModelRow({ m, kind }: { m: any; kind?: string }) {
   const qc = useQueryClient();
   const [testing, setTesting] = useState(false);
   const [probing, setProbing] = useState(false);
@@ -249,6 +261,9 @@ function ModelRow({ m }: { m: any }) {
           </Badge>
         ))}
         {!CAPS.some(([c]) => m.capabilities?.[c]) && <span className="text-[11px] text-muted">قابلیتی ثبت نشده؛ «آزمون قابلیت‌ها» را بزنید.</span>}
+        {meta.reasoning?.efforts?.length > 0 && <Badge tone="accent">استدلال: <bdi className="ltr">{meta.reasoning.efforts.join(" / ")}</bdi></Badge>}
+        {meta.thinking?.value && <Badge tone="accent">{THINK_FA[meta.thinking.control] || "استدلالی"}</Badge>}
+        {meta.pricing_detail?.long_context && <Badge tone="warning">قیمت بافت بلند از <span className="num">{faInt(meta.pricing_detail.long_context.threshold)}</span> توکن</Badge>}
       </div>
       {m.last_error && m.health !== "ok" && <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-danger">{m.last_error_class ? `[${m.last_error_class}] ` : ""}{m.last_error}</p>}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t hairline pt-2.5">
@@ -264,7 +279,7 @@ function ModelRow({ m }: { m: any }) {
       {edit && (
         <Modal open onClose={() => setEdit(false)} title="ویرایش مدل" footer={<>
           <Button variant="danger" onClick={async () => { if (!confirm("مدل حذف شود؟")) return; await del(`/api/settings/ai/models/${m.id}`); refresh(); setEdit(false); }}>حذف</Button>
-          <Button variant="primary" onClick={async () => { try { await patch(`/api/settings/ai/models/${m.id}`, { display_name: f.display_name, capabilities: f.capabilities, context_window: Number(f.context_window), price_in: Number(f.price_in), price_out: Number(f.price_out), price_cache_read: Number(f.price_cache_read), price_cache_write: Number(f.price_cache_write) }); refresh(); setEdit(false); } catch (e) { toastError(e); } }}>ذخیره</Button>
+          <Button variant="primary" onClick={async () => { try { await patch(`/api/settings/ai/models/${m.id}`, { display_name: f.display_name, capabilities: f.capabilities, context_window: Number(f.context_window), price_in: Number(f.price_in), price_out: Number(f.price_out), price_cache_read: Number(f.price_cache_read), price_cache_write: Number(f.price_cache_write), ...(f.thinking_control ? { thinking_control: f.thinking_control } : {}) }); refresh(); setEdit(false); } catch (e) { toastError(e); } }}>ذخیره</Button>
         </>}>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="نام نمایشی" className="sm:col-span-2"><Input value={f.display_name || ""} onChange={(e) => setF({ ...f, display_name: e.target.value })} /></Field>
@@ -272,6 +287,13 @@ function ModelRow({ m }: { m: any }) {
               <p className="mb-2 text-xs text-muted">قابلیت‌ها (برای اعتبارسنجی حالت حرفه‌ای)</p>
               <div className="flex flex-wrap gap-3">{CAPS.map(([c, l]) => <label key={c} className="flex items-center gap-2 text-sm"><Switch checked={!!f.capabilities?.[c]} onChange={(v) => setF({ ...f, capabilities: { ...f.capabilities, [c]: v } })} />{l}</label>)}</div>
             </div>
+            {(kind === "moonshot" || kind === "kimi_code") && (
+              <Field label="کنترل استدلال (thinking)" className="sm:col-span-2" hint="فقط طبق مستندات همین مدل تنظیم کنید؛ «قابل روشن/خاموش» پارامتر thinking را بر اساس عمق کار می‌فرستد.">
+                <Select value={f.thinking_control || meta.thinking?.control || "none"} onChange={(e) => setF({ ...f, thinking_control: e.target.value })}>
+                  <option value="none">بدون پارامتر thinking</option><option value="toggle">قابل روشن/خاموش</option><option value="always">همیشه استدلالی (پارامتر ارسال نمی‌شود)</option>
+                </Select>
+              </Field>
+            )}
             <Field label="پنجره کانتکست"><Input type="number" value={f.context_window} onChange={(e) => setF({ ...f, context_window: e.target.value })} /></Field>
             <Field label="قیمت ورودی ($/M)"><Input type="number" step="0.01" value={f.price_in} onChange={(e) => setF({ ...f, price_in: e.target.value })} /></Field>
             <Field label="قیمت خروجی ($/M)"><Input type="number" step="0.01" value={f.price_out} onChange={(e) => setF({ ...f, price_out: e.target.value })} /></Field>
@@ -324,7 +346,7 @@ function ProviderCard({ p, models }: { p: any; models: any[] }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="truncate font-medium">{p.name}</span>
-            {p.last_test_ok != null && <Badge tone={p.last_test_ok ? "success" : "danger"} dot>{p.last_test_ok ? "اتصال موفق" : "اتصال ناموفق"}</Badge>}
+            {p.status && <span title={p.status_reason || ""}><Badge tone={PSTATUS_TONE[p.status] || "neutral"} dot>{p.status_label}</Badge></span>}
             <Badge>{faInt(models.length)} مدل</Badge>
           </div>
           <div className="ltr mono mt-0.5 truncate text-end text-[11px] text-muted">{p.api_key_masked || "بدون کلید"}{p.base_url ? ` · ${p.base_url}` : ""}</div>
@@ -341,12 +363,20 @@ function ProviderCard({ p, models }: { p: any; models: any[] }) {
         </span>
       </div>
       <div className="space-y-2 p-3.5">
-        {models.map((m: any) => <ModelRow key={m.id} m={m} />)}
+        {p.status_reason && p.status !== "ready" && <p className="text-[12px] leading-5 text-muted">{p.status_reason}</p>}
+        {models.map((m: any) => <ModelRow key={m.id} m={m} kind={p.kind} />)}
         {!models.length && <p className="text-center text-xs text-muted">هنوز مدلی از این ارائه‌دهنده ثبت نشده؛ «همگام‌سازی مدل‌ها» فهرست واقعی حساب شما را می‌آورد.</p>}
       </div>
     </div>
   );
 }
+
+const ROUTING_HINT: Record<string, string> = {
+  custom: "همان ترتیب مدل‌های مدیر و کارمند که پایین تعیین می‌کنید (رفتار قبلی، بدون تغییر).",
+  economy: "کمترین «هزینه مورد انتظار یک اجرای موفق» با حداقل کیفیت؛ مدل بدون قیمت معتبر ارزان فرض نمی‌شود.",
+  balanced: "تعادل احتمال موفقیت، هزینه مورد انتظار و تأخیر بر پایه سابقه واقعی هر مدل؛ کار پیچیده وزن کیفیت بیشتری دارد.",
+  quality: "بیشترین کیفیت و اطمینان در محدوده بودجه باقی‌مانده هر کار (سقف‌های Stop-Loss همیشه سخت‌اند).",
+};
 
 function AI() {
   const { v, setV, save, saving } = useSection<any>("ai");
@@ -368,6 +398,20 @@ function AI() {
           </div>
           <Segmented value={v.mode} onChange={(m) => setV({ ...v, mode: m })} options={[{ value: "smart", label: <span className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" />اسمارت</span> }, { value: "pro", label: <span className="flex items-center gap-1"><SlidersHorizontal className="h-3.5 w-3.5" />حرفه‌ای</span> }]} />
         </div>
+        {v.mode === "smart" && (
+          <div className="mt-4 border-t hairline pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[14px] font-semibold">سیاست انتخاب مدل</div>
+                <p className="text-xs leading-5 text-muted">{ROUTING_HINT[v.routing_policy || "custom"]}</p>
+              </div>
+              <Segmented value={v.routing_policy || "custom"} onChange={(rp) => setV({ ...v, routing_policy: rp })} options={[
+                { value: "custom", label: "دقیقاً زنجیره من" }, { value: "economy", label: "اقتصادی" },
+                { value: "balanced", label: "متعادل" }, { value: "quality", label: "بیشترین کیفیت" },
+              ]} />
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card>
@@ -681,6 +725,123 @@ function System() {
   );
 }
 
+// ───────────── اجراکننده بیرونی: Cursor Cloud Agents ─────────────
+const EXT_TONE: Record<string, any> = { running: "primary", creating: "primary", reserved: "neutral", unknown: "warning", finished: "success", error: "danger", cancelled: "neutral", expired: "neutral", rejected: "danger" };
+const CSTATUS_FA: Record<string, string> = { ready: "آماده", needs_setup: "نیازمند تنظیم", temporarily_unavailable: "موقتاً در دسترس نیست", untested: "آزمون‌نشده" };
+
+function CursorAgents() {
+  const qc = useQueryClient();
+  const cfgQ = useQuery({ queryKey: ["cursor-config"], queryFn: () => get("/api/external-agents/cursor/config") });
+  const runsQ = useQuery({ queryKey: ["external-runs"], queryFn: () => get("/api/external-agents?limit=30"), refetchInterval: 20000 });
+  const [f, setF] = useState<any>(null);
+  const [key, setKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  useEffect(() => { if (cfgQ.data && !f) setF({ ...cfgQ.data.config, repos: cfgQ.data.config.allowed_repos.join("\n"), refs: cfgQ.data.config.allowed_refs.join("\n") }); }, [cfgQ.data, f]);
+  if (cfgQ.error) return <ErrorBox error={cfgQ.error} retry={cfgQ.refetch} />;
+  if (!f || !cfgQ.data) return <Skeleton className="h-72" />;
+  const d = cfgQ.data;
+  const lines = (t: string) => t.split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+  const save = async (extra: any = {}) => {
+    setSaving(true);
+    try {
+      const r = await put("/api/external-agents/cursor/config", {
+        enabled: f.enabled, allowed_repos: lines(f.repos), allowed_refs: lines(f.refs), auto_create_pr: f.auto_create_pr,
+        max_concurrent: Number(f.max_concurrent), max_launches_per_day: Number(f.max_launches_per_day), model: f.model || "",
+        poll_seconds: Number(f.poll_seconds), max_runtime_hours: Number(f.max_runtime_hours), ...(key ? { api_key: key } : {}), ...extra,
+      });
+      qc.setQueryData(["cursor-config"], r);
+      setF({ ...r.config, repos: r.config.allowed_repos.join("\n"), refs: r.config.allowed_refs.join("\n") });
+      setKey("");
+      toast("تنظیمات Cursor ذخیره شد", "success");
+    } catch (e) { toastError(e); } finally { setSaving(false); }
+  };
+  const test = async () => {
+    setTesting(true);
+    try {
+      const r = await post("/api/external-agents/cursor/test");
+      toast(r.status === "ready" ? `اتصال برقرار است (${r.api_key_name || "کلید"} · ${faInt((r.models || []).length)} مدل)` : r.reason, r.status === "ready" ? "success" : "error", 8000);
+      qc.invalidateQueries({ queryKey: ["cursor-config"] });
+    } catch (e) { toastError(e); } finally { setTesting(false); }
+  };
+  const models: string[] = d.last_check?.models || [];
+  const items: any[] = runsQ.data?.items || [];
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader title="Cursor Cloud Agents" icon={<Bot className="h-4 w-4" />}
+          sub="اجراکننده ایجنت کدنویسی روی مخزن‌های مجاز — نه یک مدل زبانی؛ در زنجیره مدل‌ها قرار نمی‌گیرد."
+          actions={<span className="flex items-center gap-2"><Badge tone={PSTATUS_TONE[d.status] || "neutral"} dot>{CSTATUS_FA[d.status] || d.status}</Badge><Switch checked={!!f.enabled} onChange={(x) => setF({ ...f, enabled: x })} label="فعال" /></span>} />
+        <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5">
+          {d.status_reason && d.status !== "ready" && <p className="text-[12.5px] leading-6 text-muted sm:col-span-2">{d.status_reason}</p>}
+          <Field label="کلید API (رمزشده در سرور؛ هرگز نمایش داده نمی‌شود)" hint={d.has_key ? `کلید فعلی: ${d.api_key_masked}` : "از داشبورد Cursor ← Integrations بسازید."} className="sm:col-span-2">
+            <Input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder={d.has_key ? "برای تغییر، کلید تازه را وارد کنید" : "crsr_…"} className="ltr" />
+          </Field>
+          <Field label="مخزن‌های مجاز (هر خط یک مخزن)" hint="فقط همین مخزن‌ها به Cursor سپرده می‌شوند؛ مثل https://github.com/owner/repo">
+            <Textarea value={f.repos} onChange={(e) => setF({ ...f, repos: e.target.value })} className="ltr min-h-[96px]" />
+          </Field>
+          <Field label="شاخه‌های مبدأ مجاز (اختیاری)" hint="خالی = شاخه پیش‌فرض مخزن. کار همیشه روی شاخه تازه انجام می‌شود، نه روی همین شاخه.">
+            <Textarea value={f.refs} onChange={(e) => setF({ ...f, refs: e.target.value })} className="ltr min-h-[96px]" />
+          </Field>
+          <Field label="مدل Cursor" hint={models.length ? "فهرست از ‎/v1/models همین کلید" : "پس از «آزمون اتصال» فهرست مدل‌ها می‌آید؛ خالی = پیش‌فرض Cursor"}>
+            <Select value={f.model || ""} onChange={(e) => setF({ ...f, model: e.target.value })}>
+              <option value="">پیش‌فرض Cursor</option>
+              {[...new Set([...(f.model ? [f.model] : []), ...models])].map((m) => <option key={m} value={m}>{m}</option>)}
+            </Select>
+          </Field>
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-line/5 px-3.5 py-3">
+            <div className="min-w-0"><div className="text-[13.5px] font-medium">ساخت Pull Request خودکار</div><p className="text-[12px] leading-5 text-muted">Merge خودکار هرگز انجام نمی‌شود؛ بررسی و Merge با شماست.</p></div>
+            <Switch checked={!!f.auto_create_pr} onChange={(x) => setF({ ...f, auto_create_pr: x })} />
+          </div>
+          <Field label="حداکثر اجرای هم‌زمان"><Input type="number" min={1} max={10} value={f.max_concurrent} onChange={(e) => setF({ ...f, max_concurrent: e.target.value })} /></Field>
+          <Field label="حداکثر واگذاری در ۲۴ ساعت" hint="سقف سخت هزینه؛ هزینه هر اجرا از API قابل دریافت نیست."><Input type="number" min={0} max={100} value={f.max_launches_per_day} onChange={(e) => setF({ ...f, max_launches_per_day: e.target.value })} /></Field>
+          <Field label="فاصله پایش وضعیت (ثانیه)" hint="پایش بدون هیچ فراخوانی مدل زبانی"><Input type="number" min={15} max={3600} value={f.poll_seconds} onChange={(e) => setF({ ...f, poll_seconds: e.target.value })} /></Field>
+          <Field label="سقف زمان هر اجرا (ساعت)" hint="پس از آن خودکار لغو می‌شود"><Input type="number" min={1} max={72} value={f.max_runtime_hours} onChange={(e) => setF({ ...f, max_runtime_hours: e.target.value })} /></Field>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t hairline px-5 py-3">
+          {d.has_key && <Button variant="ghost" onClick={() => { if (confirm("کلید Cursor حذف شود؟")) save({ clear_key: true }); }}>حذف کلید</Button>}
+          <Button variant="soft" loading={testing} onClick={test} disabled={!d.has_key}>آزمون اتصال (بدون ساخت Agent)</Button>
+          <Button variant="primary" loading={saving} onClick={() => save()}>ذخیره</Button>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="کارهای واگذارشده" icon={<GitPullRequest className="h-4 w-4" />} sub="وضعیت از Cursor پایش می‌شود؛ نتیجه نهایی در میز کار هم گزارش می‌شود. هزینه: نامعلوم" />
+        <div className="space-y-2 p-3 sm:p-4">
+          {runsQ.isLoading && <Skeleton className="h-20" />}
+          {!runsQ.isLoading && items.length === 0 && <p className="py-6 text-center text-sm text-muted">هنوز کاری به Cursor سپرده نشده است. در گفتگو بگویید مثلاً «باگ ورود در مخزن owner/repo را رفع کن».</p>}
+          {items.map((r) => (
+            <div key={r.id} className="die die-sm die-sunk p-3">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{r.title}</span>
+                <Badge tone={EXT_TONE[r.status] || "neutral"} dot>{r.status_label}</Badge>
+              </div>
+              <div className="ltr mono mt-1 truncate text-end text-[11px] text-muted">{r.repo_url}{r.branch ? ` · ${r.branch}` : ""}</div>
+              {r.result_summary && <p className="mt-1.5 line-clamp-3 text-[12.5px] leading-6">{r.result_summary}</p>}
+              {r.error && r.status !== "running" && <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-danger">{r.error}</p>}
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-t hairline pt-2 text-[11.5px] text-muted">
+                <span className="num">{fmtDate(r.created_at)}</span>
+                <span>· هزینه: نامعلوم</span>
+                <span className="ms-auto flex flex-wrap gap-1.5">
+                  {r.pr_url && <a href={r.pr_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-primary ring-1 ring-inset ring-primary/25 hover:bg-primary/8"><GitPullRequest className="h-3.5 w-3.5" />Pull Request</a>}
+                  {r.agent_url && <a href={r.agent_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 ring-1 ring-inset ring-line/20 hover:bg-line/6"><ExternalLink className="h-3.5 w-3.5" />Cursor</a>}
+                  {["reserved", "creating", "running", "unknown"].includes(r.status) && !r.cancel_requested && (
+                    <Button size="sm" variant="outline" icon={<Square className="h-3.5 w-3.5" />} onClick={async () => {
+                      if (!confirm("اجرای Cursor لغو شود؟")) return;
+                      try { const x = await post(`/api/external-agents/${r.id}/cancel`); toast(x.message, "success"); qc.invalidateQueries({ queryKey: ["external-runs"] }); } catch (e) { toastError(e); }
+                    }}>لغو</Button>
+                  )}
+                  {r.cancel_requested && r.status !== "cancelled" && <Badge tone="warning">در حال لغو</Badge>}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function Settings() {
   const [params, setParams] = useSearchParams();
   const tab = (params.get("tab") as TabKey) || "general";
@@ -692,6 +853,7 @@ export default function Settings() {
     { value: "limits" as const, label: "حلقه و Stop-Loss", icon: <CircleSlash className="h-4 w-4" /> },
     { value: "dream" as const, label: "رویا", icon: <Moon className="h-4 w-4" /> },
     { value: "telegram" as const, label: "تلگرام", icon: <MessageCircle className="h-4 w-4" /> },
+    { value: "external" as const, label: "ایجنت بیرونی (Cursor)", icon: <Bot className="h-4 w-4" /> },
     { value: "security" as const, label: "امنیت", icon: <Lock className="h-4 w-4" /> },
     { value: "system" as const, label: "سیستم", icon: <Cpu className="h-4 w-4" /> },
   ], []);
@@ -707,6 +869,7 @@ export default function Settings() {
         {tab === "limits" && <Limits />}
         {tab === "dream" && <DreamSettings />}
         {tab === "telegram" && <Telegram />}
+        {tab === "external" && <CursorAgents />}
         {tab === "security" && <Security />}
         {tab === "system" && <System />}
       </div>

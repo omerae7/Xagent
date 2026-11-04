@@ -1,6 +1,6 @@
 /**
- * خط زمان عمودی موج‌دار مراحل اجرا (الهام از مسیر شماره‌دار عمودی تصاویر مرجع).
- * هر مرحله یک گره شماره‌دار روی یک خط نازک موجی است؛ خط هر بخش هنگام ظهور کشیده می‌شود،
+ * خط زمان عمودی مراحل اجرا (الهام از مسیر شماره‌دار عمودی تصاویر مرجع).
+ * هر مرحله یک گره شماره‌دار روی یک خط عمودی صاف و نازک است؛ خط هر بخش هنگام ظهور از بالا به پایین کشیده می‌شود،
  * مرحله در حال اجرا هاله تپنده دارد و خطا/انسداد با رنگ وضعیت مشخص می‌شود.
  */
 
@@ -40,7 +40,6 @@ export function Timeline({ items, live, size = "md", className }: { items: Timel
     <ol className={cn("relative", className)}>
       {all.map((it, i) => {
         const last = i === all.length - 1;
-        const bulge = i % 2 === 0 ? 11 : -11;
         const cx = gutter / 2;
         return (
           <motion.li key={it.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
@@ -49,7 +48,7 @@ export function Timeline({ items, live, size = "md", className }: { items: Timel
               {!last && (
                 <svg className="absolute overflow-visible" style={{ top: node / 2, insetInlineStart: 0, width: gutter, height: "100%" }}
                   viewBox={`0 0 ${gutter} 100`} preserveAspectRatio="none" aria-hidden>
-                  <motion.path d={`M ${cx} 0 C ${cx + bulge} 34, ${cx + bulge} 66, ${cx} 100`} fill="none"
+                  <motion.path d={`M ${cx} 0 L ${cx} 100`} fill="none"
                     stroke={it.status === "error" ? "rgb(var(--danger))" : "rgb(var(--primary))"} strokeOpacity={all[i + 1]?.status === "pending" ? 0.28 : 0.45}
                     strokeWidth="1.25" vectorEffect="non-scaling-stroke" strokeDasharray={all[i + 1]?.status === "pending" ? "3 5" : undefined}
                     initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }} />
