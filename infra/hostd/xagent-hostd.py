@@ -801,7 +801,13 @@ def main() -> None:
             pass
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         old = os.umask(0o117)
-        listener.bind(cfg["socket"])
+        # اتصال با نام نسبی در پوشه سوکت: محدودیت ۱۰۸ نویسه مسیر AF_UNIX برای مسیرهای نصب طولانی
+        cwd = os.getcwd()
+        os.chdir(os.path.dirname(cfg["socket"]))
+        try:
+            listener.bind(os.path.basename(cfg["socket"]))
+        finally:
+            os.chdir(cwd)
         os.umask(old)
         if cfg.get("socket_gid") is not None:
             os.chown(cfg["socket"], -1, int(cfg["socket_gid"]))

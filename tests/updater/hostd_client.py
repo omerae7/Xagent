@@ -28,7 +28,12 @@ def call(req_op, a):
     req["mac"] = hmac.new(key, canonical(req), hashlib.sha256).hexdigest()
     c = socket.socket(socket.AF_UNIX)
     c.settimeout(20)
-    c.connect(sock)
+    cwd = os.getcwd()
+    os.chdir(os.path.dirname(sock))  # مسیر نسبی (محدودیت طول مسیر AF_UNIX)
+    try:
+        c.connect(os.path.basename(sock))
+    finally:
+        os.chdir(cwd)
     c.sendall(json.dumps(req).encode() + b"\n")
     line = c.makefile().readline()
     c.close()
