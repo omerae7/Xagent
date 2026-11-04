@@ -30,8 +30,8 @@ from xagent_core import bus
 from xagent_core.config import get_settings
 from xagent_core.db import session_scope, utcnow
 from xagent_core.models import Conversation, DreamReport, Run, SystemMetric
-from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_core.redact import install_log_scrubber
+from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_tools import installer
 
 from .inbox import process_event
