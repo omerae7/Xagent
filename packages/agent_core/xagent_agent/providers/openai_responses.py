@@ -128,8 +128,10 @@ class ResponsesProvider(OpenAICompatProvider):
                     elif part.get("type") == "refusal":
                         texts.append(part.get("refusal") or "The model refused the request.")
         usage_data = data.get("usage") or {}
+        input_details = usage_data.get("input_tokens_details") or {}
+        output_details = usage_data.get("output_tokens_details") or {}
         prompt = int(usage_data.get("input_tokens") or 0)
-        cached = int((usage_data.get("input_tokens_details") or {}).get("cached_tokens") or 0)
+        cached = int(input_details.get("cached_tokens") or 0)
         return LLMResponse(
             text="".join(texts) or (data.get("output_text") or ""),
             tool_calls=calls,
@@ -137,7 +139,13 @@ class ResponsesProvider(OpenAICompatProvider):
                 input_uncached=max(0, prompt - cached),
                 cache_read=cached,
                 output=int(usage_data.get("output_tokens") or 0),
+                reasoning_tokens=int(output_details.get("reasoning_tokens") or 0),
+                audio_input_tokens=int(input_details.get("audio_tokens") or 0),
+                audio_output_tokens=int(output_details.get("audio_tokens") or 0),
+                details={"input_tokens_details": input_details, "output_tokens_details": output_details},
+                reported=data.get("usage") is not None,
             ),
+            provider_request_id=str(response.headers.get("x-request-id") or data.get("id") or "") or None,
             stop_reason=data.get("status") or "completed",
             model=data.get("model") or req.model,
             latency_ms=int((time.monotonic() - t0) * 1000),
