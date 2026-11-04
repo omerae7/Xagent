@@ -215,7 +215,11 @@ xa rollback --yes >"$W/s5.log" || fail "۵. xagent rollback ناموفق بود"
 pass "۵. xagent rollback: نسخه و Schema بازگشت"
 check '[ "$(q "SELECT note FROM e2e_probe WHERE id=2")" = "after-update" ]' \
   "۵ب (اصلاح ۶). داده‌ای که پس از آپدیت ثبت شد پس از Rollback دستی در دیتابیس اصلی باقی ماند"
+cp "$T/data/control/update.status" "$W/dry-status-before"
+cp "$T/data/control/update.log" "$W/dry-log-before"
 xa update --dry-run >"$W/s5b.log" || fail "۵. پس از Rollback، xagent update بدون --ref باید نسخه main را پیشنهاد دهد"
+cmp -s "$W/dry-status-before" "$T/data/control/update.status" || fail "۶. Dry Run نباید گزارش آخرین آپدیت را تغییر دهد"
+cmp -s "$W/dry-log-before" "$T/data/control/update.log" || fail "۶. Dry Run نباید لاگ آخرین آپدیت را بازنویسی کند"
 grep -q "${GOOD:0:12}" "$W/s5b.log" || fail "۵. نسخه هدف پیشنهادی باید آخرین main باشد"
 pass "۶. «xagent update» بدون گزینه پس از مهاجرت، شاخه main را دنبال می‌کند"
 
