@@ -43,6 +43,9 @@ PRO_ROLES = [
 
 class AISettings(BaseModel):
     mode: Literal["smart", "pro"] = "smart"
+    # مسیریابی مدل در حالت اسمارت: custom = دقیقاً زنجیره و ترتیب کارفرما (رفتار قبلی، پیش‌فرض برای حفظ تنظیمات)
+    # economy | balanced | quality = انتخاب خودکار از میان مدل‌های فعال بر اساس هزینه کل مورد انتظار، کیفیت، تأخیر و سلامت
+    routing_policy: Literal["economy", "balanced", "quality", "custom"] = "custom"
     smart: SmartModeSettings = Field(default_factory=SmartModeSettings)
     pro: dict[str, str | None] = Field(default_factory=lambda: {r: None for r in PRO_ROLES})
     embedding_model_id: str | None = None  # None → جاسازی محلی (hash) بدون هزینه

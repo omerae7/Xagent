@@ -11,6 +11,7 @@ from xagent_core.models import AIModel, AIProvider
 from xagent_core.settings_store import AISettings, get_setting
 
 from .providers.registry import BoundModel, load_model
+from .router import TaskProfile, route
 
 # نقش‌های حالت حرفه‌ای و قابلیت لازم برای اعتبارسنجی
 ROLE_CAPS: dict[str, str | None] = {
@@ -43,7 +44,8 @@ MANAGER_ROLES = {"management", "goal", "planning", "evaluation", "dream"}
 @dataclass
 class Selection:
     models: list[BoundModel]
-    tier: str  # manager | worker | pro | override
+    tier: str  # manager | worker | pro | override | routed
+    decision: dict | None = None  # علت انتخاب مسیریاب (برای ثبت و نمایش)
 
     @property
     def primary(self) -> BoundModel | None:
@@ -57,6 +59,18 @@ async def _bind_many(session: AsyncSession, ids: list[str], enabled_flags: list[
             continue
         b = await load_model(session, mid)
         if b is not None:
+            out.append(b)
+    return out
+
+
+async def _all_enabled(session: AsyncSession) -> list[BoundModel]:
+    rows = (await session.execute(
+        select(AIModel.id).join(AIProvider, AIProvider.id == AIModel.provider_id)
+        .where(AIModel.enabled.is_(True), AIProvider.enabled.is_(True)).order_by(AIModel.created_at))).scalars().all()
+    out = []
+    for mid in rows:
+        b = await load_model(session, mid)
+        if b is not None and not (b.capabilities or {}).get("embedding"):
             out.append(b)
     return out
 
@@ -84,6 +98,7 @@ async def select_models(
     tier_hint: str = "worker",
     override_model_id: str | None = None,
     need_cap: str | None = None,
+    profile: TaskProfile | None = None,
 ) -> Selection:
     """برگرداندن زنجیره مدل‌ها (اولی اصلی، بقیه Fallback) برای یک نقش."""
     ai = await get_setting(session, "ai", AISettings)
@@ -120,6 +135,14 @@ async def select_models(
             chain = await _any_with_cap(session, cap)
         return Selection(chain, "pro")
 
+    if ai.routing_policy != "custom" and cap not in ("stt", "tts"):
+        pool = await _all_enabled(session)
+        prof = profile or TaskProfile(complexity="complex" if (role in MANAGER_ROLES or tier_hint == "manager") else "simple")
+        if cap and cap not in prof.need_caps and cap in ("tools", "vision"):
+            prof.need_caps = (*prof.need_caps, cap)
+        ordered, decision = await route(session, pool, ai.routing_policy, prof)
+        if ordered:
+            return Selection(ordered[:3], "routed", decision)
     managers = await _bind_many(session, ai.smart.manager_model_ids, ai.smart.manager_enabled or None)
     workers = await _bind_many(session, ai.smart.worker_model_ids, ai.smart.worker_enabled or None)
     if role in MANAGER_ROLES or tier_hint == "manager":

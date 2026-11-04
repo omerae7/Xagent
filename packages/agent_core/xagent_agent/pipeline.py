@@ -473,9 +473,23 @@ class AgentRunner:
             chain = [b for b in [await _lm(rc.session, mid) for mid in employee.model_ids] if b]
             chain += [m for m in (await select_models(rc.session, "execution", "worker")).models if m.id not in {c.id for c in chain}]
         else:
+            from .router import TaskProfile
+
+            groups0 = set(plan.get("tool_groups", []))
+            budget_left = None
+            if s.get("max_cost") is not None or rc.stoploss.max_cost_per_task_usd:
+                cap_usd = float(s.get("max_cost") if s.get("max_cost") is not None else rc.stoploss.max_cost_per_task_usd)
+                budget_left = max(0.0, cap_usd - float(run.cost_usd or 0))
+            profile = TaskProfile(complexity="complex" if (complex_task or s.get("escalated")) else "simple",
+                                  calls=8 if groups0 & {"browser", "desktop"} else (6 if complex_task else 3),
+                                  budget_usd=budget_left, need_caps=("vision",) if images else ())
             exec_sel = await select_models(rc.session, "execution", "manager" if s.get("escalated") else tier,
-                                           run.model_override)
+                                           run.model_override, profile=profile)
             chain = exec_sel.models
+            if exec_sel.decision and not s.get("route_logged"):
+                s["route_logged"] = True
+                await self._step(rc, "info", f"انتخاب مدل: {exec_sel.decision.get('chosen')} "
+                                 f"(سیاست {exec_sel.decision.get('policy')})", detail=exec_sel.decision)
         chain = await self._ensure_tool_chain(rc, chain)
         if not chain:
             raise NoModelError("هیچ مدل فعالی برای اجرا وجود ندارد. از تنظیمات ← هوش مصنوعی یک ارائه‌دهنده و کلید API اضافه کنید؛ "

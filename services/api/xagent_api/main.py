@@ -21,7 +21,7 @@ from xagent_core.db import dispose_engine, get_engine
 from xagent_core.redact import install_log_scrubber, scrub
 
 from .bootstrap import bootstrap
-from .routers import auth, chat, control, host, inbox, integrations, live, memory, settings, work
+from .routers import auth, chat, control, host, inbox, insights, integrations, live, memory, settings, work
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 install_log_scrubber()
@@ -67,7 +67,7 @@ async def validation_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": "داده نامعتبر: " + "؛ ".join(errors)})
 
 
-for r in (auth, chat, live, work, memory, settings, integrations, control, host, inbox):
+for r in (auth, chat, live, work, memory, settings, integrations, control, host, inbox, insights):
     app.include_router(r.router)
 
 

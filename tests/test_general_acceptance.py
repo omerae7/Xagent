@@ -432,3 +432,62 @@ async def test_J_worker_crash_mid_mission_resumes_without_repeating(app_client, 
 
 
 _ = (json, func, MissionAction)
+
+
+# ── D: مسیریاب مدل بر اساس سیاست، کیفیت، هزینه مورد انتظار، تأخیر، سلامت و بودجه ──
+async def test_D_model_router_policies(app_client, configured_model):
+    from decimal import Decimal
+
+    from xagent_agent.providers.registry import load_model
+    from xagent_agent.router import TaskProfile, route
+    from xagent_core.models import AIModel, UsageEvent
+
+    async with session_scope() as s:
+        base = await s.get(AIModel, uuid.UUID(configured_model))
+        specs = {  # نام: (قیمت ورودی، خروجی، کیفیت، ابزار، سلامت، تأخیر، نرخ موفقیت)
+            "d-cheap-slow": (0.1, 0.4, 0.55, True, "ok", 9000, 0.95),
+            "d-fast-mid": (0.5, 2.0, 0.72, True, "ok", 800, 0.98),
+            "d-expensive": (15, 75, 0.95, True, "ok", 3000, 0.99),
+            "d-broken": (0.05, 0.1, 0.9, True, "failing", 500, 0.2),
+            "d-notools": (0.01, 0.02, 0.6, False, "ok", 400, 0.99),
+        }
+        ids = {}
+        for name, (pin, pout, q, tools, health, lat, ok) in specs.items():
+            m = AIModel(provider_id=base.provider_id, model_name=f"{name}-{uuid.uuid4().hex[:4]}", display_name=name,
+                        enabled=True, capabilities={"tools": tools}, capability_meta={"quality": q}, context_window=128000,
+                        price_in=Decimal(str(pin)), price_out=Decimal(str(pout)), pricing_source="manual", health=health)
+            s.add(m)
+            await s.flush()
+            ids[name] = m.id
+            for i in range(20):
+                s.add(UsageEvent(model_id=m.id, model_name=m.model_name, purpose="execution", latency_ms=lat,
+                                 success=i < int(ok * 20), attempt_status="confirmed"))
+    async with session_scope() as s:
+        models = [await load_model(s, ids[n]) for n in specs]
+        simple = TaskProfile(complexity="simple", need_caps=("tools",), calls=3)
+        complex_ = TaskProfile(complexity="complex", need_caps=("tools",), calls=6)
+        eco, d_eco = await route(s, models, "economy", simple)
+        bal, d_bal = await route(s, models, "balanced", simple)
+        qual, d_q = await route(s, models, "quality", complex_)
+        capped, d_cap = await route(s, models, "quality", TaskProfile(complexity="complex", need_caps=("tools",),
+                                                                        calls=6, budget_usd=0.05))
+    label = lambda ms: [m.label for m in ms]  # noqa: E731
+    assert label(eco)[0] == "d-cheap-slow", d_eco
+    assert label(bal)[0] == "d-fast-mid", d_bal
+    assert label(qual)[0] == "d-expensive", d_q
+    assert "d-expensive" not in label(capped) and label(capped)[0] == "d-fast-mid", d_cap
+    for ms in (eco, bal, qual, capped):
+        assert "d-broken" not in label(ms) and "d-notools" not in label(ms), "Provider خراب یا مدل بدون ابزار انتخاب شد"
+    assert d_cap["reasons"] and any("بودجه" in r for r in d_cap["reasons"])
+    assert all(c["price"] == "verified" for c in d_bal["candidates"])
+
+
+async def test_observability_breakdown_and_run_metrics(app_client, configured_model, runner):
+    run = await _chat(app_client, runner, "سلام")
+    m = (await app_client.get(f"/api/runs/{run.id}/metrics")).json()
+    assert m["llm_calls"] >= 1 and m["models"] and m["models"][0]["calls"] >= 1
+    assert abs(sum(x["cost_verified"] + x["cost_estimated"] for x in m["models"]) - m["cost_usd"]) < 1e-6
+    for dim in ("model", "provider", "employee", "routine", "mission", "purpose", "day", "tool"):
+        r = await app_client.get(f"/api/usage/breakdown?dimension={dim}&days=7")
+        assert r.status_code == 200, (dim, r.text)
+        assert isinstance(r.json()["items"], list)
