@@ -266,6 +266,12 @@ ok "Schema دیتابیس: $CUR_REV"
 
 # ───────────── ۱۱. تثبیت ─────────────
 step "تثبیت نسخه"
+# اگر هدف یک شاخه دیگر بود (مثلاً مهاجرت از شاخه قدیمی به main)، منبع به‌روزرسانی‌های بعدی هم همان شاخه می‌شود
+if [ "$REF" != "$BRANCH" ] && git show-ref --verify -q "refs/remotes/origin/$REF"; then
+  envset XAGENT_REPO_BRANCH "$REF"
+  ok "شاخه منبع به‌روزرسانی از «$BRANCH» به «$REF» تغییر کرد"
+  BRANCH="$REF"
+fi
 git checkout -q -B "$BRANCH" "$TARGET" 2>/dev/null || git checkout -q --detach "$TARGET"
 if [ -n "${PATCH:-}" ]; then
   # فایل‌های ردیابی‌نشده اپراتور اگر با نسخه جدید تداخل ندارند برگردانده می‌شوند؛

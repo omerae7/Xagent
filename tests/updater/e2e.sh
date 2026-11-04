@@ -2,7 +2,7 @@
 # ════════════════════════════════════════════════════════════════════
 #  آزمون انتهابه‌انتهای «xagent update» روی یک نصب آزمایشی کامل (Docker)
 #
-#   ۰. نصب نسخه فعلی + داده نمونه + نصب ابزار ثابت با bootstrap.sh (مسیر مهاجرت نسخه قدیم)
+#   ۰. نصب نسخه فعلی روی «شاخه قدیمی» + داده نمونه + نصب ابزار ثابت با bootstrap.sh (مسیر مهاجرت نسخه قدیم)
 #   ۱. Migration خراب          ← باید پیش از استقرار متوقف شود؛ دیتابیس و سرویس دست‌نخورده
 #   ۲. سلامت خراب پس از Migration ← Rollback خودکار تگ ایمیج و بازیابی دیتابیس
 #   ۳. به‌روزرسانی موفق با Migration و تغییرات محلی ← حفظ داده، patch/stash، بازگرداندن فایل اپراتور
@@ -32,6 +32,8 @@ BASE="$(git -C "$REPO" rev-parse HEAD)"
 rm -rf "$REMOTE" "$WORK" "$T"
 git clone -q --bare "$REPO" "$REMOTE"
 git -C "$REMOTE" branch -f main "$BASE"; git -C "$REMOTE" symbolic-ref HEAD refs/heads/main
+# سرور قدیمی روی شاخه دیگری نصب شده است (مثل fix/... روی VPS فعلی)
+git -C "$REMOTE" branch -f legacy-branch "$BASE"
 git clone -q "$REMOTE" "$WORK"
 git -C "$WORK" config user.email e2e@xagent.local; git -C "$WORK" config user.name "X Agent E2E"
 HEAD_REV="$(python3 - "$REPO/services/api/migrations/versions" <<'PY'
@@ -56,7 +58,7 @@ mkmig() {  # mkmig <rev> <sql...>
 publish() { git -C "$WORK" push -q -f "$REMOTE" "HEAD:main"; }
 
 # ── ۰. نصب نسخه پایه ──
-git clone -q --branch main "$REMOTE" "$T/app"
+git clone -q --branch legacy-branch "$REMOTE" "$T/app"
 mkdir -p "$T/data/control" "$T/runner-home" "$T/backups"
 chown -R 1001:1001 "$T/data"; chown 1000:1000 "$T/runner-home"
 umask 077
@@ -71,7 +73,7 @@ XAGENT_PUBLIC_URL=https://localhost
 XAGENT_SITE_ADDRESS=localhost
 XAGENT_TLS=internal
 XAGENT_REPO_URL=$REMOTE
-XAGENT_REPO_BRANCH=main
+XAGENT_REPO_BRANCH=legacy-branch
 XAGENT_IMAGE_TAG=${BASE:0:12}
 COMPOSE_PROFILES=
 XAGENT_SANDBOX=runner
@@ -89,7 +91,7 @@ pass "۰. نصب پایه (${BASE:0:12}) و نصب ابزار ثابت با boot
 git -C "$WORK" checkout -q -B e2e-broken-mig "$BASE"
 mkmig e2e1 "CREATE TABLE e2e_tmp(id int)" "SELECT * FROM e2e_table_that_does_not_exist"
 git -C "$WORK" add -A; git -C "$WORK" commit -qm "e2e: broken migration"; publish
-if xa update --yes >"$W/s1.log"; then fail "۱. به‌روزرسانی با Migration خراب نباید موفق شود"; fi
+if xa update --ref main --yes >"$W/s1.log"; then fail "۱. به‌روزرسانی با Migration خراب نباید موفق شود"; fi
 [ "$(state)" = "failed" ] || fail "۱. وضعیت باید failed باشد"
 [ "$(head_commit)" = "$BASE" ] || fail "۱. نسخه نباید تغییر کند"
 [ "$(q 'SELECT version_num FROM alembic_version')" = "$HEAD_REV" ] || fail "۱. دیتابیس اصلی تغییر کرده است"
@@ -103,7 +105,7 @@ mkmig e2e1 "CREATE TABLE e2e_tmp(id int)" "UPDATE e2e_probe SET note = 'migrated
 grep -q 'status_code=200 if ok_db and ok_redis else 503' "$WORK/services/api/xagent_api/main.py" || fail "۲. الگوی health برای خراب‌کردن یافت نشد"
 sed -i 's/status_code=200 if ok_db and ok_redis else 503/status_code=503/' "$WORK/services/api/xagent_api/main.py"
 git -C "$WORK" add -A; git -C "$WORK" commit -qm "e2e: broken health"; publish
-XAGENT_HEALTH_TRIES=12 xa update --yes >"$W/s2.log" && fail "۲. نسخه ناسالم نباید تثبیت شود"
+XAGENT_HEALTH_TRIES=12 xa update --ref main --yes >"$W/s2.log" && fail "۲. نسخه ناسالم نباید تثبیت شود"
 [ "$(state)" = "rolled_back" ] || fail "۲. وضعیت باید rolled_back باشد (فعلی: $(state))"
 [ "$(head_commit)" = "$BASE" ] || fail "۲. کد باید به نسخه پایه برگردد"
 [ "$(q 'SELECT version_num FROM alembic_version')" = "$HEAD_REV" ] || fail "۲. Schema باید بازگردد"
@@ -118,7 +120,7 @@ mkmig e2e1 "CREATE TABLE e2e_tmp(id int)" "UPDATE e2e_probe SET note = 'migrated
 git -C "$WORK" add -A; git -C "$WORK" commit -qm "e2e: good migration"; publish
 GOOD="$(git -C "$WORK" rev-parse HEAD)"
 echo "# local edit" >> "$T/app/README.md"; echo "operator" > "$T/app/operator-notes.txt"
-xa update --yes >"$W/s3.log" || fail "۳. به‌روزرسانی موفق انجام نشد"
+xa update --ref main --yes >"$W/s3.log" || fail "۳. به‌روزرسانی موفق انجام نشد"
 [ "$(state)" = "done" ] || fail "۳. وضعیت باید done باشد"
 [ "$(head_commit)" = "$GOOD" ] || fail "۳. نسخه جدید فعال نشد"
 [ "$(q 'SELECT version_num FROM alembic_version')" = "e2e1" ] || fail "۳. Migration اعمال نشد"
@@ -128,6 +130,7 @@ git -C "$T/app" stash list | grep -q xagent-update- || fail "۳. stash تغیی�
 [ -f "$T/app/operator-notes.txt" ] || fail "۳. فایل اپراتور بازگردانده نشد"
 grep -q '"previous_commit":"'"$BASE"'"' "$T/data/control/version.json" || fail "۳. version.json نسخه قبلی را ثبت نکرد"
 dc exec -T redis redis-cli GET xagent:worker:heartbeat | grep -q . || fail "۳. Worker فعال نیست"
+grep -q '^XAGENT_REPO_BRANCH=main$' "$T/app/.env" || fail "۳. شاخه منبع پس از مهاجرت به main تغییر نکرد"
 pass "۳. به‌روزرسانی موفق؛ داده و تنظیمات حفظ شد؛ تغییرات محلی در patch/stash و فایل اپراتور بازگردانده شد"
 
 # ── ۴. Rollback دستی ──
@@ -138,6 +141,9 @@ xa rollback --yes >"$W/s4.log" || fail "۴. xagent rollback ناموفق بود"
 AFTER_DB="$(q "SELECT datname FROM pg_database WHERE datname LIKE 'xagent_after_update_%'" postgres | head -1)"
 [ -n "$AFTER_DB" ] && [ "$(q 'SELECT note FROM e2e_probe WHERE id=2' "$AFTER_DB")" = "after-update" ] || fail "۴. داده‌های پس از به‌روزرسانی نگه داشته نشدند"
 pass "۴. xagent rollback: نسخه و Schema بازگشت؛ داده‌های پس از به‌روزرسانی در $AFTER_DB حفظ شد"
+xa update --dry-run >"$W/s4b.log" || fail "۴. پس از Rollback، xagent update بدون --ref باید نسخه main را پیشنهاد دهد"
+grep -q "${GOOD:0:12}" "$W/s4b.log" || fail "۴. نسخه هدف پیشنهادی باید آخرین main باشد"
+pass "۴ب. «xagent update» بدون گزینه پس از مهاجرت، شاخه main را دنبال می‌کند"
 
 # ── ۵. اسرار ──
 for k in POSTGRES_PASSWORD XAGENT_SECRET_KEY RUNNER_TOKEN DESKTOP_TOKEN; do
