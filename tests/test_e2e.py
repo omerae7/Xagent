@@ -94,7 +94,7 @@ async def test_harness_approval_flow(app_client, configured_model, runner):
     assert r.status_code == 200
     run = await _run(runner, str(run.id))
     # تلگرام در محیط تست متصل نیست → ابزار صادقانه خطا می‌دهد و ایجنت گزارش می‌کند
-    assert run.status == "succeeded"
+    assert run.status == "failed" and run.stop_reason == "validation"
     async with session_scope() as s:
         a = await s.get(Approval, uuid.UUID(ap["id"]))
         assert a.status == "approved"
@@ -107,7 +107,7 @@ async def test_harness_forbidden_blocks(app_client, configured_model, runner):
     assert r.status_code == 200
     data = await _send(app_client, "به رضا پیام بده که جلسه لغو شد")
     run = await _run(runner, data["run"]["id"])
-    assert run.status == "succeeded"
+    assert run.status == "failed" and run.stop_reason == "validation"
     async with session_scope() as s:
         n = (await s.execute(select(func.count()).select_from(Approval).where(Approval.run_id == run.id))).scalar_one()
         assert n == 0

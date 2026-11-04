@@ -163,24 +163,31 @@ async def test_acceptance_ten_minute_telegram_mission(app_client, configured_mod
                 fake.fail_next_sends = 1  # خطای موقت ابزار
             at(minute)
             before = len(mock_llm.calls)
-            if minute == 7:
+            if minute in (1, 7):
                 # دو Scheduler هم‌زمان: فقط یک اجرا برای این نوبت
                 counts = await asyncio.gather(tick_routines(fake), tick_routines(fake))
-                assert sorted(counts) == [0, 1]
+                assert sorted(counts) == ([0, 1] if minute == 1 else [0, 0])
             else:
                 await tick_routines(fake)
             # فاصله‌های انتظار و خود تیک زمان‌بند هیچ فراخوانی مدلی ندارند
             assert len(mock_llm.calls) == before, f"تیک دقیقه {minute} مدل را صدا زد"
             runs = await _routine_runs(rid)
             pending = [x for x in runs if x.status == "queued"]
+            if minute >= 5:
+                async with session_scope() as s:
+                    rr = await s.get(Routine, rid)
+                    assert rr.circuit_state == "open" and rr.failure_count == 3
+                assert pending == []
+                llm_by_tick[str(minute)] = 0
+                continue
             assert len(pending) == 1, f"دقیقه {minute}: {[x.status for x in runs]}"
-            if minute == 6:
+            if minute == 3:
                 # ری‌استارت شبیه‌سازی‌شده پیش از اجرا: بازیابی همان اجرا را برمی‌گرداند، نوبت دوباره ساخته نمی‌شود
                 await reconcile_runs(stale_after_seconds=0)
                 await tick_routines(fake)
                 async with session_scope() as s:
                     rr = await s.get(Routine, rid)
-                    assert await claim_occurrence(s, rr, t0 + timedelta(minutes=6)) is None
+                    assert await claim_occurrence(s, rr, t0 + timedelta(minutes=3)) is None
                 assert len(await _routine_runs(rid)) == len(runs)
             await runner.execute(pending[0].id)
             await after_routine_run(pending[0].id, fake)
@@ -198,22 +205,23 @@ async def test_acceptance_ten_minute_telegram_mission(app_client, configured_mod
     runs = await _routine_runs(rid)
     async with session_scope() as s:
         routine = await s.get(Routine, rid)
-        # ۷) هیچ نوبتی دوبار پردازش نشد؛ ۱۰ نوبت = ۱۰ اجرا
+        # Rejected/failed actions now fail honestly and open the existing circuit.
         keys = [x.dedupe_key for x in runs]
-        assert len(keys) == len(set(keys)) == 10
+        assert len(keys) == len(set(keys)) == 5
         slots = sorted(datetime.fromisoformat(k.split(f"routine:{rid}:", 1)[1]) for k in keys)
-        assert slots == [t0 + timedelta(minutes=i) for i in range(10)]
-        assert all(x.status == "succeeded" for x in runs), [(x.status, x.error) for x in runs]
+        assert slots == [t0 + timedelta(minutes=i) for i in range(5)]
+        assert [x.status for x in runs] == ["succeeded", "succeeded", "failed", "failed", "failed"]
+        assert all(x.stop_reason == "validation" for x in runs[2:])
         # ۱۴) وضعیت نهایی دقیق
         assert routine.status == "completed" and routine.completion_reason in ("max_runs", "end_at")
-        assert routine.next_run_at is None and routine.run_count == 10
-        assert routine.success_count + routine.no_change_count == 10 and routine.failure_count == 0
-        # ۸ و ۹) پیام مجاز پردازش شد؛ پیام تکراری پاسخ دوباره نگرفت؛ خطای موقت دوباره تلاش شد
-        assert [(m["chat"], m["reply_to"]) for m in fake.sent] == [("ali", 501), ("ali", 502)]
+        assert routine.next_run_at is None and routine.run_count == 5
+        assert routine.success_count + routine.no_change_count == 2 and routine.failure_count == 3
+        # The first verified send is retained; the failed second send is never reported sent.
+        assert [(m["chat"], m["reply_to"]) for m in fake.sent] == [("ali", 501)]
         acts = (await s.execute(select(MissionAction).where(MissionAction.mission_id == routine.mission_id))).scalars().all()
-        # صندوق خروجی: یک ردیف برای هر پیام مقصد؛ تلاش قطعاً‌ناموفق ۵۰۲ همان ردیف را به sent رساند
+        # Outbox keeps one row per destination message, including the confirmed failure.
         ali = {a.ref: a for a in acts if a.target == "ali"}
-        assert {k: v.status for k, v in ali.items()} == {"501": "sent", "502": "sent"}
+        assert {k: v.status for k, v in ali.items()} == {"501": "sent", "502": "failed"}
         assert ali["502"].detail.get("error") == "ConnectionRefusedError"
         # ۱۰) پیام خارج از محدوده (و دستور تزریقی فایل) هیچ اقدامی ایجاد نکرد
         assert not any(m["chat"] == "eve" for m in fake.sent)
@@ -221,7 +229,7 @@ async def test_acceptance_ten_minute_telegram_mission(app_client, configured_mod
         assert not any(a.target.endswith("bot") for a in acts), "پیام ربات نباید پردازش شود"
         usage = (await s.execute(select(func.count()).select_from(UsageEvent).where(
             UsageEvent.run_id.in_([x.id for x in runs])))).scalar_one()
-        assert usage == 8, "هر فراخوانی مدل باید در دفتر مصرف ثبت شود"
+        assert usage == sum(x.llm_calls for x in runs), "هر فراخوانی مدل باید در دفتر مصرف ثبت شود"
         # ۱۱ و ۱۷) گزارش‌های مهم در میز کار؛ بدون گزارش تکراری حتی با اجرای دوباره پس‌پردازش
         items = (await s.execute(select(InboxItem).where(InboxItem.routine_id == rid))).scalars().all()
     for x in runs:
@@ -231,11 +239,11 @@ async def test_acceptance_ten_minute_telegram_mission(app_client, configured_mod
     assert again == len(items), "پس‌پردازش دوباره گزارش تکراری ساخت"
     kinds = sorted(i.kind for i in items)
     assert kinds.count("mission") == 1 and kinds.count("message") == 1, kinds
-    assert kinds.count("report") == 3, kinds  # دقیقه‌های ۲، ۴ و ۵ (رویداد داشتند)؛ نوبت‌های بی‌تغییر گزارشی ندارند
+    assert kinds.count("error") == 3 and kinds.count("report") == 0, kinds
     eve_item = next(i for i in items if i.kind == "message")
     assert "eve" in eve_item.title
     # ۱۲) فقط نوبت‌های دارای رویداد مدل را صدا زدند
-    assert {k: v for k, v in llm_by_tick.items() if v} == {"2": 4, "4": 2, "5": 2}, llm_by_tick
+    assert {k: v for k, v in llm_by_tick.items() if v} == {"2": 5, "3": 5, "4": 6}, llm_by_tick
     # ۱۵) هیچ Lease بی‌صاحبی باقی نماند
     redis = bus.get_redis()
     leftovers = [k async for k in redis.scan_iter("xagent:lease:routine:*")] + \
@@ -244,7 +252,7 @@ async def test_acceptance_ten_minute_telegram_mission(app_client, configured_mod
     # ۱۶) تعداد فراخوانی و هزینه قابل اندازه‌گیری و با جمع اجراها سازگار است
     total = sum((Decimal(x.cost_usd or 0) for x in runs), Decimal(0))
     assert total > 0 and abs(Decimal(routine.spent_usd) - total) < Decimal("0.000001")
-    assert sum(x.llm_calls for x in runs) == sum(llm_by_tick.values()) == 8
+    assert sum(x.llm_calls for x in runs) == sum(llm_by_tick.values()) > 0
 
 
 async def test_stop_all_blocks_new_routine_runs_and_keeps_records(app_client, configured_model, virtual_clock):

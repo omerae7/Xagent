@@ -1,0 +1,92 @@
+{
+  "baseline": "49c09bcb86fecf2254998c37e3217104b51aecb5",
+  "branch": "audit/xagent-architecture",
+  "scope": "Critical Fix 1 only",
+  "baseline_regression_run": {
+    "tests": 17,
+    "failed": 15,
+    "passed": 2
+  },
+  "intermediate_runs": [
+    {
+      "label": "initial compatibility",
+      "passed": 223,
+      "failed": 16
+    },
+    {
+      "label": "affected acceptance suites",
+      "passed": 78,
+      "failed": 5
+    },
+    {
+      "label": "before final test-fixture isolation",
+      "passed": 251,
+      "failed": 3
+    },
+    {
+      "label": "before finalization guard",
+      "passed": 254,
+      "failed": 0
+    }
+  ],
+  "final_suite": {
+    "command": "/workspace/xagent-audit-venv/bin/pytest -q --junitxml=/workspace/xagent-audit-results/critical1-complete.xml",
+    "tests": 256,
+    "passed": 256,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 63.807
+  },
+  "new_regressions": {
+    "file": "tests/test_execution_validation.py",
+    "tests": 34,
+    "passed": 34
+  },
+  "static_checks": {
+    "ruff check packages services tests": "passed",
+    "Python compileall packages services tests": "passed",
+    "git diff --check": "passed"
+  },
+  "evidence_limits": [
+    "Model responses scripted; no live paid API calls",
+    "PostgreSQL, pgvector, Redis, filesystem and settlement code exercised locally",
+    "No external Telegram/browser/production qualification",
+    "Frontend unchanged; build/typecheck not rerun"
+  ],
+  "files": {
+    "modified": [
+      "packages/agent_core/xagent_agent/pipeline.py",
+      "packages/agent_core/xagent_agent/prompts.py",
+      "tests/conftest.py",
+      "tests/test_autonomy_acceptance.py",
+      "tests/test_e2e.py",
+      "tests/test_general_acceptance.py",
+      "tests/test_manager.py",
+      "tests/test_usage_dream_guard.py"
+    ],
+    "added": [
+      "docs/audits/2026-11-05/README.md",
+      "docs/audits/2026-11-05/architecture-audit.md",
+      "docs/audits/2026-11-05/baseline-pytest.txt",
+      "docs/audits/2026-11-05/baseline-python-dependencies.txt",
+      "docs/audits/2026-11-05/baseline-reproductions.json",
+      "docs/audits/2026-11-05/baseline-sdk-retry.json",
+      "docs/audits/2026-11-05/baseline_probe.py",
+      "docs/audits/2026-11-05/critical-fix-1.md",
+      "docs/audits/2026-11-05/sha256sums.txt",
+      "docs/audits/2026-11-05/verification.json",
+      "packages/agent_core/xagent_agent/validation.py",
+      "tests/test_execution_validation.py"
+    ],
+    "deleted": []
+  },
+  "review_state": {
+    "committed": false,
+    "pushed": false,
+    "merged": false,
+    "deployed": false,
+    "schema_changes": false
+  },
+  "raw_evidence_directory": "/workspace/xagent-audit-results"
+}
