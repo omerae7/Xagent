@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -34,12 +35,17 @@ def ser_approval(a: Approval, extra: dict | None = None) -> dict:
     from xagent_tools.registry import BUILTIN_BY_NAME
 
     tool = BUILTIN_BY_NAME.get(a.tool_name)
+    label = "اقدام خارج از محدوده مجوز مأموریت" if a.category == "mission_scope" else \
+        CATEGORIES.get(a.category, {}).get("label", a.category)
     return ser(a, extra={
-        "category_label": CATEGORIES.get(a.category, {}).get("label", a.category),
+        "category_label": label,
         "tool_label": tool.label if tool else a.tool_name,
+        # اثرانگشت اتصال تأیید داخلی است و نمایش داده نمی‌شود
+        "args": {k: v for k, v in (a.args or {}).items() if not str(k).startswith("__")},
         **(extra or {}),
     })
 MAX_UPLOAD = 50 * 1024 * 1024
+APPROVAL_PENDING_TTL = timedelta(hours=72)
 
 
 class SendIn(BaseModel):
@@ -338,8 +344,10 @@ async def resume_run(rid: str, body: ResumeIn, user: User = Depends(owner_user),
 @router.get("/approvals")
 async def list_approvals(status: str = "pending", _: User = Depends(current_user),
                          session: AsyncSession = Depends(get_session)):
-    rows = (await session.execute(select(Approval).where(Approval.status == status)
-                                  .order_by(Approval.created_at.desc()).limit(100))).scalars().all()
+    q = select(Approval).order_by(Approval.created_at.desc()).limit(100)
+    if status != "all":
+        q = q.where(Approval.status == status)
+    rows = (await session.execute(q)).scalars().all()
     out = []
     for a in rows:
         run = await session.get(Run, a.run_id)
@@ -356,6 +364,12 @@ async def decide(aid: str, body: DecisionIn, user: User = Depends(owner_user),
         raise HTTPException(404, "درخواست یافت نشد")
     if a.status != "pending":
         raise HTTPException(409, "قبلاً تصمیم‌گیری شده است")
+    if body.decision == "approve" and utcnow() - a.created_at > APPROVAL_PENDING_TTL:
+        # کارت اجازه قدیمی ممکن است با وضعیت فعلی همخوان نباشد؛ تأیید آن عملیاتی را مجاز نمی‌کند
+        a.status, a.decided_at, a.decided_by = "expired", utcnow(), user.username
+        await audit(session, user.username, "approval.expired", a.tool_name, {"run_id": str(a.run_id)})
+        await session.commit()
+        raise HTTPException(409, "این درخواست اجازه منقضی شده است؛ کار را دوباره درخواست کنید")
     a.status = "approved" if body.decision == "approve" else "denied"
     a.decided_at = utcnow()
     a.decided_by = user.username

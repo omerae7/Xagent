@@ -64,6 +64,12 @@ from .validation import (
 )
 
 TOOL_TIMEOUT = 300
+# «ask» دروازه مأموریت: اقدام خارج از محدوده که فقط با تأیید صریح کارفرما برای همین عملیات مجاز می‌شود.
+# عمداً در harness.CATEGORIES نیست تا با تنظیم «خودکار» قابل دور زدن نباشد.
+MISSION_ASK = "mission_scope"
+MISSION_ASK_LABEL = "اقدام خارج از محدوده مجوز مأموریت"
+# اعتبار تأیید کارفرما پس از تصمیم؛ تأیید کهنه هرگز اجرا را مجاز نمی‌کند
+APPROVAL_TTL = timedelta(hours=24)
 FALLBACK_FROM = {"http_request", "web_fetch"}
 TERMINAL = {"succeeded", "failed", "stopped", "cancelled"}
 
@@ -730,6 +736,14 @@ class AgentRunner:
         except ValueError:
             return None
 
+    async def _employee_groups(self, rc: RunCtx) -> set[str] | None:
+        """گروه‌های مجاز کارمند (+ پایه و حافظه)؛ None یعنی کارمند محدودیت گروه ندارد یا اجرای کارمند نیست."""
+        emp = await self._employee(rc)
+        groups = set(getattr(emp, "tool_groups", None) or [])
+        if not groups:
+            return None
+        return (groups | {"core", "memory"}) - {"admin", "host"}
+
     async def _tools_for(self, rc: RunCtx, groups: list[str], query: str, employee) -> list[Tool]:
         """ابزارهای این اجرا: گروه‌های لازم + بارگذار پویا + ابزارهای خواندنی اداره سیستم برای کارفرما."""
         from .control.host_tools import HOST_TOOLS
@@ -741,6 +755,10 @@ class AgentRunner:
             allowed = set(((mission.scope or {}) if mission else {}).get("tools") or [])
             return [t for t in BUILTIN if t.name in allowed]
         tools = await select_tools(rc.session, [g for g in groups if g not in ("admin", "host")], query)
+        emp_allowed = await self._employee_groups(rc)
+        if emp_allowed is not None:
+            # tool_groups کارمند مرز اجرایی است (نه فقط ترجیح): ابزار گروه دیگر نه نمایش داده و نه اجرا می‌شود
+            tools = [t for t in tools if t.group in emp_allowed]
         tools.append(LOAD_TOOL)
         # ابزارهای اداره سیستم فقط برای اجرای کارفرما (نه کارمند، نه رویداد بیرونی، نه Viewer)
         if rc.is_owner and employee is None:
@@ -860,6 +878,12 @@ class AgentRunner:
                 wanted = [g for g in (args.get("groups") or []) if isinstance(g, str)]
                 if not rc.is_owner:
                     wanted = [g for g in wanted if g not in ("admin", "host")]
+                emp_allowed = await self._employee_groups(rc)
+                refused = [g for g in wanted if emp_allowed is not None and g not in emp_allowed]
+                if refused:
+                    wanted = [g for g in wanted if g not in refused]
+                    await self._step(rc, "info", f"گروه ابزار خارج از اختیار کارمند: {', '.join(refused)}",
+                                     status="blocked", detail={"allowed": sorted(emp_allowed or [])})
                 s["extra_groups"] = sorted(set(s.get("extra_groups", [])) | set(wanted))
                 emp = await self._employee(rc)
                 new_tools = await self._tools_for(rc, sorted(set(wanted) | set(s["extra_groups"])), rc.run.input, emp)
@@ -882,33 +906,32 @@ class AgentRunner:
                     s["abort_reason"] = "کنترلر حلقه: درخواست مکرر ابزار ناموجود؛ اجرا متوقف شد."
                     return
                 continue
-            cats = approved.get(cid, [])
+            cats = list(approved.get(cid, []))
             category = tool.category_for(args)
-            if s.get("mission_id") and category and category not in cats:
-                verdict = await self._mission_gate(rc, cid, tool, args, category, rules, transcript, loop)
+            if s.get("mission_id"):
+                # مجوز مأموریت در لحظه اجرا (حتی پس از تأیید قبلی) دوباره سنجیده می‌شود: لغو/انقضا/تغییر محدوده
+                verdict, why = await self._mission_gate(rc, cid, tool, args, category, rules, transcript, loop)
                 if verdict == "blocked":
                     continue
-                if verdict == "allow":
-                    cats.append(category)
-                    approved[cid] = cats
-            elif s.get("mission_id"):
-                verdict = await self._mission_gate(rc, cid, tool, args, None, rules, transcript, loop)
-                if verdict == "blocked":
-                    continue
+                if verdict == "ask":
+                    # «ask» هرگز بدون تأیید صریح همین عملیات اجرا نمی‌شود — با یا بدون دسته Harness
+                    d = await self._harness_decide(rc, cid, tool, MISSION_ASK, args, rules, reason=why, force_ask=True)
+                    if d != "allow":
+                        self._deny_call(rc, cid, name, args, transcript, loop, d)
+                        continue
+                    cats = sorted(set(cats) | {MISSION_ASK} | ({category} if category else set()))
+                elif category:
+                    cats = sorted(set(cats) | {category})
+                approved[cid] = cats
             # تصمیم Harness (قطعی، سمت سرور)
             decision = None
             if category and category not in cats:
                 decision = await self._harness_decide(rc, cid, tool, category, args, rules)
-                if decision == "deny":
-                    self._record_evidence(rc, cid, name, args, ToolResult(False, "عملیات مجاز نیست"))
-                    transcript.append(LLMMessage("tool", "⛔ این عملیات طبق Harness ممنوع است یا کارفرما اجازه نداد. "
-                                                 "راه دیگری پیشنهاد کن یا به کارفرما گزارش بده.",
-                                                 tool_call_id=cid, tool_name=name, is_error=True))
-                    loop.observe(name, args, False)
+                if decision != "allow":
+                    self._deny_call(rc, cid, name, args, transcript, loop, decision)
                     continue
-                if decision == "allow":
-                    cats.append(category)
-                    approved[cid] = cats
+                cats.append(category)
+                approved[cid] = cats
             tctx.extra["approved"] = set(cats)
             tctx.extra["tool_call_id"] = cid
             st = await self._step(rc, "tool", tool.label or name, status="running", tool_name=name,
@@ -976,6 +999,17 @@ class AgentRunner:
                 transcript.append(LLMMessage("user", prompts.RECOVERY_NOTE.format(
                     reason="خطای تکراری", diagnosis=self._diagnose(result.output))))
 
+    def _deny_call(self, rc: RunCtx, cid: str, name: str, args: dict, transcript: list[LLMMessage],
+                   loop: LoopController, decision: str) -> None:
+        """ردّ اجرای ابزار با شاهد «رد شد» (نه موفق) و پیام صادقانه به مدل."""
+        text = {"mismatch": "تأیید کارفرما برای همین عملیات با این پارامترها نیست؛ عملیات تغییرکرده اجرا نشد.",
+                "expired": "تأیید کارفرما منقضی شده است؛ عملیات اجرا نشد و تأیید تازه لازم است."}.get(
+            decision, "این عملیات طبق Harness/مجوز ممنوع است یا کارفرما اجازه نداد.")
+        self._record_evidence(rc, cid, name, args, ToolResult(False, text))
+        transcript.append(LLMMessage("tool", f"⛔ {text} راه دیگری پیشنهاد کن یا به کارفرما گزارش بده.",
+                                     tool_call_id=cid, tool_name=name, is_error=True))
+        loop.observe(name, args, False)
+
     @staticmethod
     def _record_evidence(rc: RunCtx, cid: str, name: str, args: dict, result: ToolResult,
                          verification_required: bool = True) -> None:
@@ -1016,23 +1050,28 @@ class AgentRunner:
             diagnosis=f"روش جایگزین مجاز: {nxt} با همان نشانی {url}؛ نتیجه را از داده مشاهده‌شده تأیید کن.")))
 
     async def _mission_gate(self, rc: RunCtx, cid: str, tool: Tool, args: dict, category: str | None, rules: dict,
-                            transcript: list[LLMMessage], loop: LoopController) -> str:
-        """دروازه مجوز مأموریت (پیش از Harness): allow | ask (کارت اجازه عادی) | blocked."""
+                            transcript: list[LLMMessage], loop: LoopController) -> tuple[str, str]:
+        """دروازه مجوز مأموریت (پیش از Harness و در لحظه اجرا): ('allow'|'ask'|'blocked', دلیل).
+
+        deny و out_of_scope → blocked؛ ask → فقط با تأیید صریح همین عملیات (MISSION_ASK)؛ allow → در محدوده.
+        «ممنوع» در Harness مطلق است و نه مجوز مأموریت و نه تأیید ask آن را دور نمی‌زند.
+        """
         s = rc.state
         mission = await self._mission(rc)
         verdict, why = await missions.check_call(rc.session, mission, tool.name, args, s)
-        if verdict == "allow" and category:
+        if category and verdict in ("allow", "ask"):
             d = harness.evaluate(rules.get(category), category, tool.action, args)
-            if d.action == "deny":  # «ممنوع» در Harness مطلق است و مجوز مأموریت آن را دور نمی‌زند
+            if d.action == "deny":
                 verdict, why = "deny", d.reason
-            else:
+        if verdict == "allow":
+            if category:
                 await self._step(rc, "info", f"پوشش مجوز مأموریت: {tool.label or tool.name}", tool_name=tool.name,
                                  detail={"reason": why, "category": category})
-                return "allow"
-        if verdict == "allow":
-            return "allow"
+            return "allow", why
         if verdict == "ask":
-            return "ask"
+            return "ask", why
+        if verdict not in ("deny", "out_of_scope"):
+            verdict, why = "deny", f"نتیجه نامعتبر دروازه مأموریت ({verdict}); پیش‌فرض امن: رد"
         target = str(args.get("chat", ""))
         ev = next((e for e in ((s.get("event_payload") or {}).get("new_messages") or [])
                    if missions.norm(target) in {missions.norm(e.get(k)) for k in ("chat", "chat_id") if e.get(k) is not None}), None)
@@ -1055,12 +1094,23 @@ class AgentRunner:
                                      tool_call_id=cid, tool_name=tool.name, is_error=True))
         self._record_evidence(rc, cid, tool.name, args, ToolResult(False, "عملیات خارج از محدوده مجوز است"))
         loop.observe(tool.name, args, False)
-        return "blocked"
+        return "blocked", why
+
+    @staticmethod
+    def _binding(rc: RunCtx, tool: Tool, category: str, args: dict) -> str:
+        """اثرانگشت عملیات تأییدشده: ابزار + دسته + آرگومان‌های کامل + کارمند + Run (نه فقط شناسه فراخوانی)."""
+        raw = json.dumps({"tool": tool.name, "category": category, "args": args, "run": str(rc.run.id),
+                          "employee": str(rc.run.employee_id) if rc.run.employee_id else None},
+                         sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(raw.encode()).hexdigest()
 
     async def _harness_decide(
-        self, rc: RunCtx, cid: str, tool: Tool, category: str, args: dict, rules: dict, reason: str | None = None
+        self, rc: RunCtx, cid: str, tool: Tool, category: str, args: dict, rules: dict, reason: str | None = None,
+        force_ask: bool = False,
     ) -> str:
-        # آیا قبلاً برای این فراخوانی تصمیم گرفته شده؟
+        """allow | deny | mismatch | expired — یا Paused تا تصمیم کارفرما. force_ask: تنظیم «خودکار» نادیده گرفته می‌شود."""
+        sig = self._binding(rc, tool, category, args)
+        # آیا قبلاً برای این فراخوانی تصمیم گرفته شده؟ (همان Run؛ تأیید Run دیگر هرگز استفاده نمی‌شود)
         existing = (
             await rc.session.execute(
                 select(Approval).where(Approval.run_id == rc.run.id, Approval.tool_call_id == cid,
@@ -1068,21 +1118,38 @@ class AgentRunner:
             )
         ).scalars().first()
         if existing is not None:
+            bound = ((existing.args or {}).get("__binding") or {}).get("sig")
+            if bound and bound != sig:
+                await self._step(rc, "approval", f"تأیید با عملیات فعلی مطابقت ندارد: {tool.label or tool.name}",
+                                 status="blocked", tool_name=tool.name, detail={"category": category})
+                return "mismatch"
             if existing.status == "approved":
+                if existing.decided_at is not None and utcnow() - existing.decided_at > APPROVAL_TTL:
+                    existing.status = "expired"
+                    await self._step(rc, "approval", f"تأیید منقضی شده است: {tool.label or tool.name}",
+                                     status="blocked", tool_name=tool.name, detail={"category": category})
+                    return "expired"
                 return "allow"
             if existing.status in ("denied", "expired"):
                 return "deny"
             raise Paused("waiting_approval", "منتظر تصمیم کارفرما", "approval")
-        d = harness.evaluate(rules.get(category), category, tool.action, args)
+        if category == MISSION_ASK:
+            d = harness.Decision("ask", reason or MISSION_ASK_LABEL, MISSION_ASK)
+        else:
+            d = harness.evaluate(rules.get(category), category, tool.action, args)
+            if force_ask and d.action == "allow":
+                d = harness.Decision("ask", reason or d.reason, category, d.rule_text)
+        label = MISSION_ASK_LABEL if category == MISSION_ASK else harness.CATEGORIES.get(category, {}).get("label", category)
         await self._step(rc, "approval" if d.action == "ask" else "info",
-                         f"Harness: {harness.CATEGORIES.get(category, {}).get('label', category)} → "
+                         f"Harness: {label} → "
                          f"{ {'allow': 'مجاز', 'ask': 'نیازمند اجازه', 'deny': 'ممنوع'}[d.action] }",
                          status="blocked" if d.action != "allow" else "ok",
                          detail={"reason": d.reason, "category": category}, tool_name=tool.name)
         if d.action in ("allow", "deny"):
             return d.action
         ap = Approval(
-            run_id=rc.run.id, tool_call_id=cid, category=category, tool_name=tool.name, args=harness.redact(args),
+            run_id=rc.run.id, tool_call_id=cid, category=category, tool_name=tool.name,
+            args={**harness.redact(args), "__binding": {"sig": sig, "employee": str(rc.run.employee_id or "")}},
             reason=reason or d.reason,
         )
         rc.session.add(ap)
@@ -1090,7 +1157,7 @@ class AgentRunner:
         await bus.publish("approval.created", {
             "id": str(ap.id), "run_id": str(rc.run.id),
             "conversation_id": str(rc.run.conversation_id) if rc.run.conversation_id else None,
-            "category": category, "category_label": harness.CATEGORIES.get(category, {}).get("label", category),
+            "category": category, "category_label": label,
             "tool_name": tool.name, "tool_label": tool.label, "args": harness.redact(args), "reason": ap.reason,
             "rule_text": d.rule_text,
         })
