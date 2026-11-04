@@ -144,34 +144,20 @@ async def test_manager_changes_survive_restart(app_client, configured_model, run
 async def test_web_search_runs_without_desktop(app_client, configured_model, runner, mock_llm, monkeypatch):
     """جست‌وجوی وب فقط با HTTP انجام می‌شود؛ دسکتاپ در دسترس نیست و اجرا باید موفق باشد."""
     from xagent_core.config import get_settings
-    from xagent_tools.builtin import web
-
     s = get_settings()
     monkeypatch.setattr(s, "desktop_url", "http://127.0.0.1:9")
     seen: list[str] = []
+    from xagent_tools import net
 
-    class FakeClient:
-        def __init__(self, *a, **k):
-            pass
+    async def fake_safe_request(method, url, **kw):
+        import httpx
 
-        async def __aenter__(self):
-            return self
+        seen.append(url)
+        html = ('<div class="result"><a class="result__a" href="https://example.org/coin">قیمت سکه امروز</a>'
+                '<a class="result__snippet">سکه امامی امروز ثبت شد</a></div>')
+        return net.SafeResponse(200, url, httpx.Headers({"content-type": "text/html"}), html.encode())
 
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, url):
-            import httpx
-
-            seen.append(url)
-            html = ('<div class="result"><a class="result__a" href="https://example.org/coin">قیمت سکه امروز</a>'
-                    '<a class="result__snippet">سکه امامی امروز ثبت شد</a></div>')
-            return httpx.Response(200, text=html, request=httpx.Request("GET", url))
-
-    class FakeHttpx:
-        AsyncClient = FakeClient
-
-    monkeypatch.setattr(web, "httpx", FakeHttpx)
+    monkeypatch.setattr(net, "safe_request", fake_safe_request)
     mock_llm.scenarios["قیمت سکه را از وب"] = [("web_search", {"query": "قیمت سکه امروز"})]
     try:
         data = (await app_client.post("/api/chat/send", json={"text": "قیمت سکه را از وب پیدا کن"})).json()

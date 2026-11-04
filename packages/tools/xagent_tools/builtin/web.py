@@ -2,35 +2,23 @@
 
 from __future__ import annotations
 
-import ipaddress
 import re
-import socket
 from typing import Any
 from urllib.parse import quote_plus, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 
 from xagent_core.text import truncate
 
+from .. import net
 from ..base import Tool, ToolContext, ToolResult, obj, s
 
-UA = "Mozilla/5.0 (X11; Linux x86_64) XAgent/0.1"
+UA = net.UA
 
 
 def _block_internal(url: str) -> None:
-    """جلوگیری از SSRF به سرویس‌های داخلی (دیتابیس، Redis، دیمن دسکتاپ)."""
-    host = (urlparse(url).hostname or "").lower()
-    if not host or host == "localhost" or host.endswith((".internal", ".local", ".localhost")):
-        raise PermissionError("دسترسی به نشانی داخلی مجاز نیست.")
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror as e:
-        raise ValueError(f"نام دامنه قابل حل نیست: {host}") from e
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-            raise PermissionError("دسترسی به شبکه داخلی سرور مجاز نیست.")
+    """سازگاری عقب‌رو: بررسی اولیه نام میزبان (بررسی کامل و Pinning در net.safe_request)."""
+    net._check_host(urlparse(url).hostname or "")
 
 
 def html_to_text(html: str) -> tuple[str, str]:
@@ -48,9 +36,7 @@ async def web_fetch(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     url = a["url"]
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    _block_internal(url)
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers={"User-Agent": UA}) as c:
-        r = await c.get(url)
+    r = await net.safe_request("GET", url, timeout=30)
     ctype = r.headers.get("content-type", "")
     if "html" in ctype:
         title, text = html_to_text(r.text)
@@ -69,8 +55,7 @@ async def web_fetch(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
 
 async def web_search(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     q = a["query"]
-    async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers={"User-Agent": UA}) as c:
-        r = await c.get(f"https://html.duckduckgo.com/html/?q={quote_plus(q)}&kl=ir-fa")
+    r = await net.safe_request("GET", f"https://html.duckduckgo.com/html/?q={quote_plus(q)}&kl=ir-fa", timeout=25)
     soup = BeautifulSoup(r.text, "html.parser")
     results = []
     for res in soup.select(".result")[: int(a.get("limit", 8))]:
@@ -85,10 +70,9 @@ async def web_search(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
 
 async def http_request(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     url = a["url"]
-    _block_internal(url)
     method = a.get("method", "GET").upper()
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
-        r = await c.request(method, url, headers=a.get("headers") or {}, json=a.get("json"), content=a.get("body"))
+    r = await net.safe_request(method, url, headers=a.get("headers") or {}, json=a.get("json"), content=a.get("body"),
+                               timeout=30)
     return ToolResult(r.status_code < 400, f"HTTP {r.status_code}\n{truncate(r.text, 10000)}",
                       {"status": r.status_code}, verified=r.status_code < 400, untrusted=True)
 
