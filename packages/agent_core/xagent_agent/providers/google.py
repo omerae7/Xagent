@@ -126,6 +126,9 @@ class GoogleProvider:
             input_uncached=max(0, prompt - cached),
             output=int(um.get("candidatesTokenCount") or 0) + int(um.get("thoughtsTokenCount") or 0),
             cache_read=cached,
+            reasoning_tokens=int(um.get("thoughtsTokenCount") or 0),
+            details={"usageMetadata": um},
+            reported=data.get("usageMetadata") is not None,
         )
         return LLMResponse(
             text="".join(texts),
@@ -134,6 +137,7 @@ class GoogleProvider:
             stop_reason=cand.get("finishReason", "STOP"),
             model=req.model,
             latency_ms=int((time.monotonic() - t0) * 1000),
+            provider_request_id=str(r.headers.get("x-request-id") or "") or None,
             raw={"kind": "google", "parts": parts},
         )
 
