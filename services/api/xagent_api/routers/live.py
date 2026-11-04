@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import io
 import json
@@ -16,6 +17,7 @@ from sqlalchemy import Integer, case, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
+from xagent_core.db import get_sessionmaker
 from xagent_core.inbox import ser_item
 from xagent_core.models import (
     AIModel,
@@ -42,30 +44,63 @@ from xagent_core.models import (
 from xagent_core.settings_store import GeneralSettings, StopLossSettings, get_setting
 from xagent_core.timeutil import get_zone, now_utc
 
-from ..deps import current_user, get_session, owner_user, ser
+from ..deps import _token_from, current_user, get_session, owner_user, resolve_user, ser
 
 router = APIRouter(prefix="/api", tags=["live"])
 
 
+SSE_QUEUE_MAX = 1000
+SSE_REAUTH_SECONDS = 60
+
+
+async def _sse_user(request: Request) -> User | None:
+    """احراز هویت در Session کوتاه و مستقل؛ هیچ اتصال دیتابیس در طول جریان طولانی SSE نگه داشته نمی‌شود."""
+    async with get_sessionmaker()() as session:
+        user = await resolve_user(session, _token_from(request))
+        if user is not None:
+            session.expunge(user)
+        return user
+
+
 @router.get("/events/stream")
-async def stream(request: Request, _: User = Depends(current_user)):
+async def stream(request: Request):
+    user = await _sse_user(request)
+    if user is None:
+        raise HTTPException(401, "ابتدا وارد شوید")
+
     async def gen():
         yield "retry: 3000\n\n"
+        # پس از هر اتصال (یا اتصال دوباره) رابط باید وضعیت را از API دوباره بخواند: Pub/Sub رویداد ازدست‌رفته را پخش نمی‌کند
+        yield f"event: resync\ndata: {json.dumps({'reason': 'connected'})}\n\n"
         sub = bus.subscribe()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=SSE_QUEUE_MAX)
+        overflow = asyncio.Event()
 
         async def pump():
             async for ev in sub:
                 try:
                     queue.put_nowait(ev)
                 except asyncio.QueueFull:
-                    pass
+                    overflow.set()  # مصرف‌کننده کند: رویداد دور ریخته شد → همگام‌سازی دوباره صریح
 
         task = asyncio.create_task(pump())
+        loop = asyncio.get_running_loop()
+        last_auth = loop.time()
         try:
             while True:
                 if await request.is_disconnected():
                     break
+                if loop.time() - last_auth > SSE_REAUTH_SECONDS:
+                    last_auth = loop.time()
+                    if await _sse_user(request) is None:  # خروج/ابطال توکن: جریان بسته می‌شود
+                        yield f"event: auth\ndata: {json.dumps({'status': 'revoked'})}\n\n"
+                        break
+                if overflow.is_set():
+                    overflow.clear()
+                    while not queue.empty():
+                        queue.get_nowait()
+                    yield f"event: resync\ndata: {json.dumps({'reason': 'overflow'})}\n\n"
+                    continue
                 try:
                     ev = await asyncio.wait_for(queue.get(), timeout=15)
                     yield f"event: {ev.get('type', 'message')}\ndata: {json.dumps(ev.get('data', {}), ensure_ascii=False, default=str)}\n\n"
@@ -73,6 +108,10 @@ async def stream(request: Request, _: User = Depends(current_user)):
                     yield ": ping\n\n"
         finally:
             task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            with contextlib.suppress(Exception):
+                await sub.aclose()
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

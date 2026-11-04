@@ -86,6 +86,15 @@ class ValidationFailed(Exception):
     """The answer did not establish completion; never settle it as succeeded."""
 
 
+class LeaseLost(BaseException):
+    """مالکیت اجرا (Lease) از دست رفت: Worker کهنه نباید اثر بیرونی دیگری بگذارد یا وضعیت پایانی ثبت کند.
+    BaseException است تا هیچ except Exception آن را به «failed» تبدیل و Commit نکند."""
+
+
+HEARTBEAT_SECONDS = 30
+LEASE_MS = 120_000
+
+
 class Paused(Exception):
     def __init__(self, status: str, reason: str, code: str):
         super().__init__(reason)
@@ -111,12 +120,14 @@ class RunCtx:
     step_idx: int = 0
     is_owner: bool = False
     t0: float = field(default_factory=time.monotonic)
+    lease_token: str | None = None
 
 
 class AgentRunner:
     def __init__(self, worker_id: str = "worker", telegram: Any = None):
         self.worker_id = worker_id
         self.telegram = telegram
+        self._leases: dict[uuid.UUID, str] = {}  # Run → توکن Lease همین اجرا (Fencing)
 
     # ───────────────────────── ابزارهای کمکی ─────────────────────────
 
@@ -201,7 +212,13 @@ class AgentRunner:
             },
         )
 
+    async def _assert_owner(self, rc: RunCtx) -> None:
+        """Fencing پیش از هر اثر بیرونی و هر Commit: اگر Lease دیگر مال این اجرا نیست، کار فوراً متوقف می‌شود."""
+        if rc.lease_token and not await bus.lease_owned(f"run:{rc.run.id}", rc.lease_token):
+            raise LeaseLost(f"مالکیت اجرای {rc.run.id} از دست رفت")
+
     async def _checkpoint(self, rc: RunCtx) -> None:
+        await self._assert_owner(rc)
         rc.state["elapsed"] = rc.state.get("elapsed_base", 0) + (time.monotonic() - rc.t0)
         rc.run.state = json.loads(json.dumps(rc.state, default=str))
         await rc.session.commit()
@@ -286,27 +303,56 @@ class AgentRunner:
     # ───────────────────────── نقطه ورود ─────────────────────────
 
     async def execute(self, run_id: uuid.UUID) -> str:
-        lease = await bus.acquire_lease(f"run:{run_id}", 120_000, self.worker_id)
+        # توکن یکتای همین اجرا (نه فقط شناسه Worker): Fencing بین دو تلاش یک Worker هم کار می‌کند
+        token = f"{self.worker_id}:{uuid.uuid4().hex}"
+        lease = await bus.acquire_lease(f"run:{run_id}", LEASE_MS, token)
         if lease is None:
             return "locked"
         stop_heartbeat = asyncio.Event()
+        lost = asyncio.Event()
+        main = asyncio.current_task()
 
         async def heartbeat():
+            last_ok = time.monotonic()
             while not stop_heartbeat.is_set():
                 try:
-                    await asyncio.wait_for(stop_heartbeat.wait(), timeout=30)
+                    await asyncio.wait_for(stop_heartbeat.wait(), timeout=HEARTBEAT_SECONDS)
+                    continue
                 except TimeoutError:
-                    await bus.extend_lease(f"run:{run_id}", lease, 120_000)
+                    pass
+                try:
+                    if await bus.extend_lease(f"run:{run_id}", lease, LEASE_MS):
+                        last_ok = time.monotonic()
+                        continue
+                    owned = False  # Lease منقضی یا در دست Worker دیگر
+                except Exception:  # noqa: BLE001
+                    owned = (time.monotonic() - last_ok) * 1000 < LEASE_MS * 0.75
+                if not owned:
+                    lost.set()
+                    if main is not None:
+                        main.cancel()  # توقف فوری اثرهای بعدی؛ هیچ وضعیت پایانی Commit نمی‌شود
+                    return
 
         hb = asyncio.create_task(heartbeat())
         try:
             async with get_sessionmaker()() as session:
-                run = await session.get(Run, run_id, with_for_update=True)
-                if run is None or run.status in TERMINAL or run.status == "waiting_approval" and not await self._approvals_decided(session, run):
+                try:
+                    run = await session.get(Run, run_id, with_for_update=True)
+                    if run is None or run.status in TERMINAL or run.status == "waiting_approval" and not await self._approvals_decided(session, run):
+                        await session.rollback()
+                        return run.status if run else "missing"
+                    self._leases[run_id] = lease
+                    return await self._execute(session, run)
+                except LeaseLost:
                     await session.rollback()
-                    return run.status if run else "missing"
-                return await self._execute(session, run)
+                    return "lease_lost"
+                except asyncio.CancelledError:
+                    if lost.is_set():
+                        await session.rollback()
+                        return "lease_lost"
+                    raise
         finally:
+            self._leases.pop(run_id, None)
             stop_heartbeat.set()
             await hb
             await bus.release_lease(f"run:{run_id}", lease)
@@ -323,7 +369,7 @@ class AgentRunner:
         stoploss = await get_setting(session, "stoploss", StopLossSettings)
         state = dict(run.state or {})
         rc = RunCtx(session, run, general, ai, stoploss, trusted=bool(state.get("trusted", False)), state=state,
-                    is_owner=run_is_owner(state) and run.employee_id is None)
+                    is_owner=run_is_owner(state) and run.employee_id is None, lease_token=self._leases.get(run.id))
         rc.step_idx = int(state.get("step_idx", 0))
         rc.state["elapsed_base"] = float(state.get("elapsed", 0))
         if run.started_at is None:
@@ -938,6 +984,7 @@ class AgentRunner:
             st = await self._step(rc, "tool", tool.label or name, status="running", tool_name=name,
                                   detail={"args": harness.redact(args)})
             t0 = time.monotonic()
+            await self._assert_owner(rc)  # Worker کهنه هرگز اثر بیرونی تازه‌ای نمی‌گذارد
             try:
                 result = await asyncio.wait_for(tool.handler(tctx, args), timeout=TOOL_TIMEOUT)
             except EscalateCategory as esc:
@@ -1358,6 +1405,7 @@ class AgentRunner:
 
     async def _finalize(self, rc: RunCtx, status: str, answer: str, error: str | None = None,
                         stop_reason: str | None = None) -> None:
+        await self._assert_owner(rc)  # Worker کهنه وضعیت پایانی ثبت یا پیامی ارسال نمی‌کند
         run = rc.run
         run.result = answer
         run.error = scrub(error) if error else error
@@ -1392,6 +1440,7 @@ class AgentRunner:
             await _computer.release_session(run.id)
         except Exception:  # noqa: BLE001
             pass
+        await self._assert_owner(rc)
         await self._deliver_final(rc, status, answer)
         await self._checkpoint(rc)
         await bus.publish("run.finished", {"run_id": str(run.id), "status": status,

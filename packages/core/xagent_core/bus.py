@@ -133,6 +133,14 @@ async def extend_lease(name: str, token: str, ttl_ms: int) -> bool:
     return bool(res)
 
 
+async def lease_owned(name: str, token: str) -> bool:
+    """Fencing: آیا این توکن هنوز مالک Lease است؟ خطای Redis = نامعلوم → False (پیش‌فرض امن برای اثر بیرونی)."""
+    try:
+        return await get_redis().get(f"xagent:lease:{name}") == token
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def release_lease(name: str, token: str) -> None:
     await get_redis().eval(_RELEASE_LUA, 1, f"xagent:lease:{name}", token)
 

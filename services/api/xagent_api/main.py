@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -84,20 +85,40 @@ for r in (auth, chat, live, work, memory, settings, integrations, control, host,
     app.include_router(r.router)
 
 
+HEALTH_TIMEOUT = 3.0
+
+
+async def _db_ping() -> None:
+    async with get_engine().connect() as conn:
+        await conn.execute(text("select 1"))
+
+
 @app.get("/api/health")
 async def health():
+    """زنده‌بودن API + وابستگی‌ها با سقف زمان (درخواست سلامت هرگز پشت Pool پرشده گیر نمی‌کند).
+
+    ok همان معنای قبلی (DB و Redis) را دارد؛ worker آمادگی عملکردی حلقه‌های Worker را جدا گزارش می‌کند.
+    """
     ok_db = ok_redis = False
     try:
-        async with get_engine().connect() as conn:
-            await conn.execute(text("select 1"))
+        await asyncio.wait_for(_db_ping(), timeout=HEALTH_TIMEOUT)
         ok_db = True
     except Exception:  # noqa: BLE001
         pass
+    worker: dict = {"ready": None, "detail": "unknown"}
     try:
-        ok_redis = bool(await bus.get_redis().ping())
+        r = bus.get_redis()
+        ok_redis = bool(await asyncio.wait_for(r.ping(), timeout=HEALTH_TIMEOUT))
+        raw = await asyncio.wait_for(r.get("xagent:worker:readiness"), timeout=HEALTH_TIMEOUT)
+        if raw:
+            data = json.loads(raw)
+            worker = {"ready": bool(data.get("ready")), "degraded": data.get("degraded", []),
+                      "intake": data.get("intake"), "at": data.get("at")}
+        else:
+            worker = {"ready": False, "detail": "no_recent_worker_report"}
     except Exception:  # noqa: BLE001
         pass
-    return JSONResponse({"ok": ok_db and ok_redis, "db": ok_db, "redis": ok_redis},
+    return JSONResponse({"ok": ok_db and ok_redis, "db": ok_db, "redis": ok_redis, "worker": worker},
                         status_code=200 if ok_db and ok_redis else 503)
 
 

@@ -317,6 +317,8 @@ async def reconcile_runs(stale_after_seconds: int = 180) -> int:
             try:
                 if await redis.exists(f"xagent:lease:run:{run.id}"):
                     continue
+                if run.status == "queued" and await redis.exists(f"xagent:run:intake:{run.id}"):
+                    continue  # در Worker پذیرفته شده و منتظر ظرفیت است؛ صف‌گذاری دوباره تکرار می‌سازد
             except Exception:  # noqa: BLE001
                 log.warning("Redis در دسترس نیست؛ بازیابی اجراها به بعد موکول شد")
                 return 0
