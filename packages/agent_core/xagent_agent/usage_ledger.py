@@ -19,7 +19,7 @@ from sqlalchemy import func, select, text
 
 from xagent_core import bus
 from xagent_core.db import session_scope, utcnow
-from xagent_core.models import UsageEvent
+from xagent_core.models import Run, UsageEvent
 from xagent_core.redact import scrub
 from xagent_core.settings_store import DreamSettings, GeneralSettings, StopLossSettings, get_setting
 
@@ -86,10 +86,34 @@ async def begin_attempt(model: Any, req: ChatRequest, *, purpose: str,
         if await spending(start_month) + reserve > Decimal(str(settings.monthly_cost_usd)):
             raise BudgetDenied("سقف ماهانه هزینه اجازه درخواست جدید نمی‌دهد")
         if run_id is not None:
-            used = Decimal((await s.execute(select(func.coalesce(func.sum(
-                UsageEvent.cost_usd + UsageEvent.reserved_cost_usd), 0)).where(UsageEvent.run_id == run_id))).scalar_one())
-            if used + reserve > Decimal(str(settings.max_cost_per_task_usd)):
+            run = await s.get(Run, run_id)
+            if run is None:
+                raise BudgetDenied("شناسه Run معتبر نیست؛ تماس با مدل رد شد")
+            q = select(
+                func.coalesce(func.sum(UsageEvent.cost_usd + UsageEvent.reserved_cost_usd), 0),
+                func.coalesce(func.sum(UsageEvent.tokens_in + UsageEvent.tokens_out + UsageEvent.reserved_tokens), 0),
+            ).where(UsageEvent.run_id == run_id)
+            used_cost, used_tokens = (await s.execute(q)).one()
+            limit = Decimal(str(settings.max_cost_per_task_usd))
+            if run.employee_id is not None:
+                limit = min(limit, Decimal(str(settings.employee_max_cost_usd)))
+            cap = (run.state or {}).get("max_cost")
+            if cap is not None:
+                try:
+                    limit = min(limit, Decimal(str(cap)))
+                except (ValueError, ArithmeticError):
+                    raise BudgetDenied("محدودیت هزینه Run معتبر نیست") from None
+            if Decimal(used_cost) + reserve > limit:
                 raise BudgetDenied("سقف هزینه هر تسک برای درخواست جدید کافی نیست")
+            if int(used_tokens) + predicted_input + max_output > settings.max_tokens_per_task:
+                raise BudgetDenied("سقف توکن هر تسک پیش از درخواست جدید پر می‌شود")
+            if run.parent_run_id:
+                descendants = select(Run.id).where((Run.id == run.parent_run_id) | (Run.parent_run_id == run.parent_run_id))
+                parent_cost = Decimal((await s.execute(select(func.coalesce(func.sum(
+                    UsageEvent.cost_usd + UsageEvent.reserved_cost_usd), 0)).where(
+                        UsageEvent.run_id.in_(descendants)))).scalar_one())
+                if parent_cost + reserve > Decimal(str(settings.max_cost_per_task_usd)):
+                    raise BudgetDenied("بودجه مشترک مدیر و کارمندان کافی نیست")
         if purpose == "dream":
             dream = await get_setting(s, "dream", DreamSettings)
             if not dream.enabled:
