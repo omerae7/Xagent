@@ -451,6 +451,46 @@ class MissionAction(IdMixin, Base):
     detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
+class ExternalAgentRun(IdMixin, Base):
+    """یک کار واگذارشده به اجراکننده ایجنت بیرونی (Cursor Cloud Agents) — نه یک LLM.
+
+    agent_id را خود X Agent پیش از ارسال می‌سازد (bc-<uuid>) و Cursor با همان شناسه درخواست تکراری را رد می‌کند
+    (409 agent_id_conflict)؛ بنابراین تلاش دوباره پس از قطعی/ری‌استارت Agent هزینه‌زای تکراری نمی‌سازد.
+    """
+
+    __tablename__ = "external_agent_runs"
+    created_at: Mapped[datetime] = _ts(index=True)
+    updated_at: Mapped[datetime] = _ts()
+    executor: Mapped[str] = mapped_column(String(24), default="cursor")
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), index=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
+    dedupe_key: Mapped[str] = mapped_column(String(200), unique=True)
+    agent_id: Mapped[str] = mapped_column(String(64), unique=True)
+    remote_run_id: Mapped[str | None] = mapped_column(String(64))
+    # reserved → creating → running → finished | error | cancelled | expired ؛ unknown = نتیجه ایجاد نامعلوم
+    status: Mapped[str] = mapped_column(String(16), default="reserved", index=True)
+    remote_status: Mapped[str | None] = mapped_column(String(32))
+    repo_url: Mapped[str] = mapped_column(String(300))
+    starting_ref: Mapped[str | None] = mapped_column(String(120))
+    branch: Mapped[str | None] = mapped_column(String(200))
+    pr_url: Mapped[str | None] = mapped_column(String(400))
+    agent_url: Mapped[str | None] = mapped_column(String(400))
+    title: Mapped[str] = mapped_column(String(200))
+    prompt: Mapped[str] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(80))
+    auto_create_pr: Mapped[bool] = mapped_column(Boolean, default=False)
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(String(64))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    poll_count: Mapped[int] = mapped_column(Integer, default=0)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # هزینه Cursor از API مستند قابل‌استخراج نیست: «unknown» (هرگز عدد ساختگی در دفتر مصرف)
+    cost_status: Mapped[str] = mapped_column(String(16), default="unknown")
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
 class InboxItem(IdMixin, Base):
     """میز کار و گزارش‌های ایجنت: نتایج مهم، خطاها، تأییدها و پایان مأموریت‌ها — متصل به Run واقعی."""
 

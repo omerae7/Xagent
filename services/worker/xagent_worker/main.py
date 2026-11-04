@@ -220,6 +220,13 @@ class Worker:
                 n = await tick_routines(self.telegram) + await tick_tasks(self.telegram)
                 if n:
                     log.info("%d روتین زمان‌بندی شد", n)
+                # پایش کارهای واگذارشده به Cursor Cloud Agents — فقط HTTP، بدون هیچ فراخوانی LLM
+                try:
+                    from xagent_tools.cursor_agents import poll_due
+
+                    await poll_due()
+                except Exception:  # noqa: BLE001
+                    log.exception("پایش Cursor ناموفق بود")
                 if loop.time() - last_reconcile > 60:
                     last_reconcile = loop.time()
                     await reconcile_runs()

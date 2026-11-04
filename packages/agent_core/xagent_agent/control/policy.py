@@ -14,7 +14,7 @@ from typing import Any, Literal
 Decision = Literal["allow", "approval", "forbidden"]
 
 # بخش‌هایی از تنظیمات که فقط کارفرما تغییر می‌دهد
-OWNER_ONLY_SETTINGS = {"telegram", "telegram_secret", "harness", "auth", "security", "host"}
+OWNER_ONLY_SETTINGS = {"telegram", "telegram_secret", "harness", "auth", "security", "host", "cursor", "cursor_secret"}
 # فیلدهای حساس ارائه‌دهنده (اسرار/مقصد ترافیک)
 OWNER_ONLY_PROVIDER_FIELDS = {"api_key", "api_key_enc", "base_url", "kind"}
 # فیلدهای حساس ابزار

@@ -118,6 +118,16 @@ async def build_manifest(session: AsyncSession, principal: str = "owner", employ
                 "xagent doctor / نصب xagent-hostd", tools="host")
     else:
         add("admin", "اداره سیستم و ترمینال VPS", "unsupported", "فقط در اجرای مستقیم کارفرما")
+    # ── اجراکننده ایجنت بیرونی (نه LLM): Cursor Cloud Agents ──
+    from xagent_tools.cursor_agents import readiness
+
+    cst, cwhy = await readiness(session)
+    if is_owner and cst in ("ready", "untested"):
+        add("cursor", "اجراکننده بیرونی Cursor Cloud Agents (کار کدنویسی روی مخزن مجاز، شاخه تازه، بدون Merge خودکار؛ "
+            "هزینه نامعلوم)", "ready", cwhy, tools="external")
+    elif is_owner:
+        add("cursor", "اجراکننده بیرونی Cursor Cloud Agents", "needs_setup", cwhy,
+            "تنظیمات ← Cursor Cloud Agents: کلید، مخازن مجاز و فعال‌سازی (فقط کارفرما)", tools="external")
     add("payment", "پرداخت و امور مالی", "unsupported", "طبق Harness ممنوع است")
     add("calls", "تماس تلفنی و پیامک", "unsupported", "ابزاری برای آن نصب نشده است")
     sl = await get_setting(session, "stoploss", StopLossSettings)

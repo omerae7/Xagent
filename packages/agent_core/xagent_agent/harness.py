@@ -33,6 +33,8 @@ CATEGORIES: dict[str, dict[str, Any]] = {
     "desktop_control": {"label": "کنترل دسکتاپ و مرورگر", "default": "auto", "icon": "monitor"},
     "web_irreversible": {"label": "اقدام برگشت‌ناپذیر در وب (حذف، تأیید نهایی، ثبت فرم، تغییر حساب)", "default": "ask",
                          "icon": "alert"},
+    "external_agent": {"label": "واگذاری کار هزینه‌زا به ایجنت بیرونی (Cursor Cloud Agents)", "default": "ask",
+                       "icon": "plug"},
     "memory_rule": {"label": "تغییر قوانین رفتاری و حافظه", "default": "ask", "icon": "brain"},
     "external_tool": {"label": "ابزارهای نصب‌شده خارجی (MCP/GitHub)", "default": "ask", "icon": "plug"},
     "system_update": {"label": "به‌روزرسانی هسته و سیاست‌های امنیتی", "default": "ask", "icon": "shield",

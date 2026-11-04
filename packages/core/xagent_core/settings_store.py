@@ -137,6 +137,25 @@ class ReportSettings(BaseModel):
     long_run_seconds: int = Field(120, ge=10, le=86400)
 
 
+class CursorSettings(BaseModel):
+    """اجراکننده بیرونی Cursor Cloud Agents (فقط کارفرما تغییر می‌دهد). کلید جدا و رمزشده در cursor_secret.
+
+    ایمنی پیش‌فرض: غیرفعال؛ فقط مخازن صریحاً مجاز؛ کار روی شاخه جدید (هرگز مستقیم روی شاخه مبدأ/main)؛
+    ساخت PR خودکار خاموش؛ Merge خودکار وجود ندارد؛ هیچ متغیر محیطی یا Secret ارسال نمی‌شود.
+    """
+
+    enabled: bool = False
+    base_url: str = "https://api.cursor.com"
+    allowed_repos: list[str] = Field(default_factory=list)  # https://github.com/owner/repo
+    allowed_refs: list[str] = Field(default_factory=list)  # شاخه‌های مبدأ مجاز؛ خالی = شاخه پیش‌فرض مخزن
+    auto_create_pr: bool = False
+    max_concurrent: int = Field(1, ge=1, le=10)
+    max_launches_per_day: int = Field(3, ge=0, le=100)
+    model: str = ""  # خالی = مدل پیش‌فرض Cursor
+    poll_seconds: int = Field(60, ge=15, le=3600)
+    max_runtime_hours: int = Field(6, ge=1, le=72)
+
+
 class EmbeddingSettings(BaseModel):
     provider: Literal["local_hash", "model"] = "local_hash"
 
@@ -150,6 +169,7 @@ DEFAULTS: dict[str, type[BaseModel]] = {
     "telegram": TelegramSettings,
     "host": HostSettings,
     "reports": ReportSettings,
+    "cursor": CursorSettings,
 }
 
 

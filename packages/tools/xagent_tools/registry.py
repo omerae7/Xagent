@@ -12,7 +12,7 @@ from xagent_core.text import normalize_fa
 
 from . import installer, mcp_client
 from .base import Tool, ToolContext, ToolResult, obj, s
-from .builtin import computer, core, telegram, web, work
+from .builtin import computer, core, external, telegram, web, work
 
 
 async def _tool_install(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
@@ -30,7 +30,8 @@ INSTALL_TOOL = Tool(
     label="نصب ابزار",
 )
 
-BUILTIN: list[Tool] = [*core.TOOLS, *work.TOOLS, *web.TOOLS, *computer.TOOLS, *telegram.TOOLS, INSTALL_TOOL]
+BUILTIN: list[Tool] = [*core.TOOLS, *work.TOOLS, *web.TOOLS, *computer.TOOLS, *telegram.TOOLS, *external.TOOLS,
+                       INSTALL_TOOL]
 BUILTIN_BY_NAME = {t.name: t for t in BUILTIN}
 ALWAYS_GROUPS = {"core", "memory"}
 # Read-only internet search works through HTTP, independent of Chromium/XFCE.
@@ -51,6 +52,7 @@ GROUP_LABELS = {
     "desktop": "دسکتاپ",
     "telegram": "تلگرام",
     "installed": "ابزارهای نصب‌شده",
+    "external": "اجراکننده بیرونی (Cursor Cloud Agents)",
 }
 
 
@@ -96,6 +98,12 @@ async def select_tools(session: AsyncSession, groups: list[str], query: str = ""
     wanted = set(groups) | ALWAYS_GROUPS
     if "browser" in wanted:
         wanted.add("web")
+    if "external" in wanted:
+        from .cursor_agents import readiness
+
+        # ابزار واگذاری فقط وقتی به مدل داده می‌شود که کارفرما Cursor را فعال و تنظیم کرده باشد
+        if (await readiness(session))[0] not in ("ready", "untested"):
+            wanted.discard("external")
     chosen = [t for t in BUILTIN if t.group in wanted or t.name in ALWAYS_WEB_READ_TOOLS]
     inst = await installed_tools(session)
     if inst:

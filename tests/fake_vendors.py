@@ -48,6 +48,10 @@ class Vendors:
     def bodies(self, path_part: str) -> list[dict[str, Any]]:
         return [r["body"] for r in self.requests if path_part in r["path"]]
 
+    def created(self) -> list[dict[str, Any]]:
+        """بدنه درخواست‌های POST /v1/agents (ایجاد Agent)."""
+        return [r["body"] for r in self.requests if r["method"] == "POST" and r["path"] == "/cursor/v1/agents"]
+
     def auth_of(self, path_part: str) -> set[str]:
         return {r["auth"] for r in self.requests if path_part in r["path"]}
 

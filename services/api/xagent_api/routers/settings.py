@@ -51,6 +51,10 @@ async def put(key: str, body: dict[str, Any], user: User = Depends(owner_user), 
         raise HTTPException(422, "منطقه زمانی نامعتبر است")
     if key == "ai":
         await _validate_ai(session, value)
+    if key == "cursor":
+        from .external_agents import validate_cursor
+
+        value = validate_cursor(value)
     from xagent_agent.control import changes as _changes
 
     try:
