@@ -54,7 +54,7 @@ def _boundary(tz: str, month: bool = False) -> datetime:
 
 async def begin_attempt(model: Any, req: ChatRequest, *, purpose: str,
                         run_id: uuid.UUID | None = None, input_hint: int | None = None,
-                        output_hint: int | None = None) -> uuid.UUID:
+                        output_hint: int | None = None, origin_id: str | None = None) -> uuid.UUID:
     """Atomic budget reservation and independent committed attempt.
 
     No network operation should follow if this raises.
@@ -135,7 +135,8 @@ async def begin_attempt(model: Any, req: ChatRequest, *, purpose: str,
             purpose=purpose, attempt_status="pending", success=False,
             cost_estimated=model.price_estimated, reserved_cost_usd=reserve,
             reserved_tokens=predicted_input + max_output,
-            usage_details={"preflight_input_estimate": predicted_input, "max_output": max_output},
+            usage_details={"preflight_input_estimate": predicted_input, "max_output": max_output,
+                           "provider_id": str(model.provider_id), "origin_id": origin_id},
         ))
     return attempt_id
 
