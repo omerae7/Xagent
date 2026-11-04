@@ -29,12 +29,13 @@ from xagent_agent.pipeline import AgentRunner
 from xagent_core import bus
 from xagent_core.config import get_settings
 from xagent_core.db import session_scope, utcnow
-from xagent_core.models import Conversation, Run, SystemMetric
+from xagent_core.models import Conversation, DreamReport, Run, SystemMetric
+from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_core.redact import install_log_scrubber
 from xagent_tools import installer
 
 from .inbox import process_event
-from .scheduler import after_routine_run, dream_due, tick_routines
+from .scheduler import after_routine_run, claim_scheduled_dream, tick_routines
 from .telegram import TelegramBridge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -176,7 +177,12 @@ class Worker:
                     await installer.rollback(session, uuid.UUID(payload["tool_id"]),
                                              uuid.UUID(vid) if vid else None, actor=payload.get("actor", "owner"))
                 elif cmd == "dream":
-                    await run_dream(session, force=fields.get("force") == "1")
+                    if await bus.is_stop_all():
+                        log.warning("اجرای دستی Dream رد شد: STOP_ALL")
+                        return
+                    cfg = await get_setting(session, "dream", DreamSettings)
+                    async with asyncio.timeout(cfg.max_runtime_seconds):
+                        await run_dream(session, force=fields.get("force") == "1")
         except Exception:  # noqa: BLE001
             log.exception("خطای فرمان کنترلی %s", cmd)
 
@@ -216,10 +222,25 @@ class Worker:
                     lease = await bus.acquire_lease("dream", 3_600_000)
                     if lease:
                         try:
-                            if await dream_due() and not await bus.is_stop_all():
-                                async with session_scope() as session:
-                                    rep = await run_dream(session)
-                                    log.info("رویا: %s", rep.status)
+                            report_id = await claim_scheduled_dream()
+                            if report_id:
+                                try:
+                                    async with session_scope() as cfg_session:
+                                        dream_cfg = await get_setting(cfg_session, "dream", DreamSettings)
+                                    async with asyncio.timeout(dream_cfg.max_runtime_seconds):
+                                        async with session_scope() as session:
+                                            rep = await run_dream(session, report_id=report_id)
+                                            log.info("رویا: %s", rep.status)
+                                except Exception as exc:  # noqa: BLE001
+                                    # The original claim was committed in a separate
+                                    # transaction, so failures cannot create a retry storm.
+                                    async with session_scope() as failure_session:
+                                        report = await failure_session.get(DreamReport, report_id)
+                                        if report and report.status == "running":
+                                            report.status = "failed"
+                                            report.finished_at = utcnow()
+                                            report.summary = f"Dream failed after claim: {type(exc).__name__}"
+                                    log.exception("Dream failed (slot %s)", report_id)
                         finally:
                             await bus.release_lease("dream", lease)
             except Exception:  # noqa: BLE001
