@@ -168,6 +168,8 @@ class AnthropicProvider:
             output=int(getattr(u, "output_tokens", 0) or 0),
             cache_read=int(getattr(u, "cache_read_input_tokens", 0) or 0),
             cache_write=int(getattr(u, "cache_creation_input_tokens", 0) or 0),
+            details={"cache_creation": u.cache_creation.model_dump(mode="json")
+                     if getattr(u, "cache_creation", None) is not None else {}},
         )
         stop = resp.stop_reason or "end_turn"
         if stop == "refusal":
@@ -180,6 +182,7 @@ class AnthropicProvider:
             stop_reason=stop,
             model=resp.model,
             latency_ms=int((time.monotonic() - t0) * 1000),
+            provider_request_id=str(getattr(resp, "id", "") or "") or None,
             raw={"kind": "anthropic", "content": raw_blocks},
         )
 
