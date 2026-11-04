@@ -92,6 +92,8 @@ async def _deliver(session: AsyncSession, item: InboxItem, telegram: Any) -> Non
             else:
                 delivery["telegram"] = "not_connected"
     except Exception as e:  # noqa: BLE001 — شکست اعلان نتیجه اصلی را مخدوش نمی‌کند
-        delivery["telegram"] = f"failed: {type(e).__name__}"
+        # Timeout/قطع پس از ارسال یعنی نتیجه نامعلوم است، نه قطعاً ناموفق
+        ambiguous = isinstance(e, (TimeoutError, ConnectionResetError)) or "timeout" in type(e).__name__.lower()
+        delivery["telegram"] = f"{'unknown' if ambiguous else 'failed'}: {type(e).__name__}"
         log.warning("ارسال اعلان تلگرام ناموفق: %s", type(e).__name__)
     item.delivery = delivery

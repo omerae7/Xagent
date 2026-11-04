@@ -1315,6 +1315,47 @@ class AgentRunner:
         except Exception:  # noqa: BLE001 — گزارش نباید نتیجه اصلی را خراب کند
             return
 
+    async def _deliver_final(self, rc: RunCtx, status: str, answer: str) -> None:
+        """تحویل پاسخ نهایی به کانال بیرونی (تلگرام) از همان صندوق خروجی پایدار مأموریت‌ها.
+
+        کلید یکتا final:<run>:<status> → اجرای دوباره/بازیابی هرگز پیام تکراری نمی‌فرستد؛ نتیجه نامعلوم کورکورانه
+        تکرار نمی‌شود. وضعیت تحویل جدا از وضعیت کار در run.state["delivery"] ثبت می‌شود: کار انجام‌شده به‌خاطر شکست
+        اعلان «ناموفق» نمی‌شود و ارسال‌نشدن پیام هم «تحویل‌شده» گزارش نمی‌شود.
+        """
+        from xagent_tools.builtin.telegram import _definitely_not_sent
+
+        run = rc.run
+        reply_to = rc.state.get("reply_to")
+        if not reply_to or not (answer or "").strip():
+            return
+        record: dict[str, Any] = {"channel": "telegram", "target": str(reply_to), "at": utcnow().isoformat()}
+        tg = self.telegram
+        if tg is None or not getattr(tg, "connected", False):
+            rc.state["delivery"] = {**record, "status": "not_connected"}
+            return
+        key = f"final:{run.id}:{status}"
+        verdict, aid = await missions.outbox_reserve(key, mission_id=None, routine_id=run.routine_id, run_id=run.id,
+                                                     action="final_reply", target=str(reply_to), ref=None,
+                                                     detail={"chars": len(answer)})
+        if verdict == "done":
+            rc.state["delivery"] = {**record, "status": "sent", "dedupe": True}
+            return
+        if verdict == "uncertain" or aid is None:
+            rc.state["delivery"] = {**record, "status": "uncertain",
+                                    "note": "تلاش قبلی نتیجه نامعلوم داشت؛ برای جلوگیری از پیام تکراری دوباره ارسال نشد"}
+            return
+        await missions.outbox_mark(aid, "sending")
+        try:
+            res = await tg.send(reply_to, answer)
+        except Exception as e:  # noqa: BLE001
+            definite = _definitely_not_sent(e)
+            await missions.outbox_mark(aid, "failed" if definite else "unknown", {"error": f"{type(e).__name__}: {str(e)[:200]}"})
+            rc.state["delivery"] = {**record, "status": "failed" if definite else "unknown", "error": type(e).__name__}
+            return
+        mid = (res or {}).get("message_id") if isinstance(res, dict) else None
+        await missions.outbox_mark(aid, "sent", {"message_id": mid})
+        rc.state["delivery"] = {**record, "status": "sent", "message_id": mid}
+
     async def _finalize(self, rc: RunCtx, status: str, answer: str, error: str | None = None,
                         stop_reason: str | None = None) -> None:
         run = rc.run
@@ -1351,13 +1392,8 @@ class AgentRunner:
             await _computer.release_session(run.id)
         except Exception:  # noqa: BLE001
             pass
+        await self._deliver_final(rc, status, answer)
         await self._checkpoint(rc)
-        reply_to = rc.state.get("reply_to")
-        if reply_to and self.telegram is not None and getattr(self.telegram, "connected", False):
-            try:
-                await self.telegram.send(reply_to, answer)
-            except Exception:
-                pass
         await bus.publish("run.finished", {"run_id": str(run.id), "status": status,
                                            "conversation_id": str(run.conversation_id) if run.conversation_id else None})
 
