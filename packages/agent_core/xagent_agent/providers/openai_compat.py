@@ -126,10 +126,17 @@ class OpenAICompatProvider:
         cached = int(
             (u.get("prompt_tokens_details") or {}).get("cached_tokens") or u.get("prompt_cache_hit_tokens") or 0
         )
+        output_details = u.get("completion_tokens_details") or {}
+        input_details = u.get("prompt_tokens_details") or {}
         usage = Usage(
             input_uncached=max(0, prompt - cached),
             output=int(u.get("completion_tokens") or 0),
             cache_read=cached,
+            reasoning_tokens=int(output_details.get("reasoning_tokens") or 0),
+            audio_input_tokens=int(input_details.get("audio_tokens") or 0),
+            audio_output_tokens=int(output_details.get("audio_tokens") or 0),
+            details={"prompt_tokens_details": input_details, "completion_tokens_details": output_details},
+            reported=data.get("usage") is not None,
         )
         return LLMResponse(
             text=msg.get("content") or "",
@@ -138,6 +145,7 @@ class OpenAICompatProvider:
             stop_reason=choice.get("finish_reason") or "stop",
             model=data.get("model") or req.model,
             latency_ms=int((time.monotonic() - t0) * 1000),
+            provider_request_id=str(r.headers.get("x-request-id") or data.get("id") or "") or None,
         )
 
     async def embed(self, model: str, texts: list[str], dim: int) -> list[list[float]]:
