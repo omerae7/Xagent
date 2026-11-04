@@ -6,19 +6,18 @@ existing real test services, and the provider is an isolated local mock.
 from __future__ import annotations
 
 import uuid
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select
 
-from xagent_core import bus
-from xagent_core.db import session_scope, utcnow
-from xagent_core.models import DreamReport, Episode, UsageEvent
-from xagent_core.settings_store import DreamSettings, get_setting, set_setting
 from xagent_agent.llm import call_llm
 from xagent_agent.providers.base import ChatRequest, LLMMessage
 from xagent_agent.providers.registry import load_model
 from xagent_agent.usage_ledger import begin_attempt, finish_attempt
+from xagent_core import bus
+from xagent_core.db import session_scope, utcnow
+from xagent_core.models import DreamReport, Episode, UsageEvent
+from xagent_core.settings_store import DreamSettings, get_setting, set_setting
 from xagent_worker.scheduler import claim_scheduled_dream
 
 pytestmark = pytest.mark.asyncio
@@ -110,7 +109,7 @@ async def test_dream_post_llm_error_keeps_usage_and_slot(configured_model, mock_
         await set_setting(session, "dream", prior.model_copy(update={
             "enabled": True, "hour": 0, "minute": 0, "min_events_for_llm": 3,
         }))
-        for i in range(3):
+        for _ in range(3):
             session.add(Episode(kind="routine", title=f"Dream regression {uuid.uuid4()}",
                                 summary="Meaningful verified task", tools=["file_read"],
                                 status="success", tokens_in=50, tokens_out=20))
