@@ -34,12 +34,14 @@ from xagent_core.redact import install_log_scrubber
 from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_tools import installer
 
-from .inbox import process_event
+from .inbox import process_event, reconcile_inbox
+from .inbox import record_event_failure as inbox_failure
 from .scheduler import (
     after_routine_run,
     after_task_run,
     claim_scheduled_dream,
     reconcile_runs,
+    settle_terminal_runs,
     tick_routines,
     tick_tasks,
 )
@@ -49,6 +51,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 install_log_scrubber()
 log = logging.getLogger("xagent.worker")
 CONTROL_STREAM = "xagent:control"
+CONTROL_STALE_MS = 3_600_000  # فرمان بدون ACK پس از یک ساعت «رهاشده» تلقی می‌شود
 
 
 class Worker:
@@ -61,6 +64,11 @@ class Worker:
         self.stopping = asyncio.Event()
         self.heal_now = asyncio.Event()
         self.active: set[asyncio.Task] = set()
+        self.control_sem = asyncio.Semaphore(2)
+        self.loops: dict[str, dict] = {}  # نظارت حلقه‌های ضروری: آخرین ضربان و خطا
+
+    def beat(self, name: str) -> None:
+        self.loops.setdefault(name, {})["beat"] = utcnow().isoformat()
 
     async def recover(self) -> None:
         """Runهایی که Worker قبلی رها کرده (بدون Lease زنده) فوراً دوباره در صف قرار می‌گیرند.
@@ -126,18 +134,44 @@ class Worker:
         self.active.add(t)
         t.add_done_callback(self.active.discard)
 
+    async def _handle_inbox(self, r, msg_id: str, fields: dict) -> None:  # noqa: ANN001
+        """ACK فقط پس از پردازش پایدار یا ثبت پایدار شکست نهایی (Dead-letter)؛ در غیر این صورت پیام در
+        فهرست Pending می‌ماند تا بازپس‌گیری دوره‌ای دوباره تلاش کند."""
+        try:
+            event_id = uuid.UUID(fields["event_id"])
+        except (KeyError, ValueError):
+            await r.xack(bus.INBOX_STREAM, bus.RUN_GROUP, msg_id)  # پیام بدشکل: قابل پردازش نیست
+            return
+        try:
+            await process_event(event_id, self.telegram)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.exception("خطای پردازش رویداد %s", event_id)
+            try:
+                terminal = await inbox_failure(event_id, e)
+            except Exception:  # noqa: BLE001 — حتی ثبت شکست ممکن نشد (DB): بدون ACK، دوباره تلاش می‌شود
+                log.exception("ثبت شکست رویداد %s ممکن نشد", event_id)
+                return
+            if not terminal:
+                return
+        await r.xack(bus.INBOX_STREAM, bus.RUN_GROUP, msg_id)
+
     async def consume_inbox(self) -> None:
         r = bus.get_blocking_redis()
         while not self.stopping.is_set():
             try:
+                self.beat("inbox")
+                # بازپس‌گیری رویدادهای تأییدنشده (شکست قبلی یا Worker ازکارافتاده) با فاصله ۶۰ ثانیه
+                with contextlib.suppress(Exception):
+                    claimed = await r.xautoclaim(bus.INBOX_STREAM, bus.RUN_GROUP, self.id, min_idle_time=60_000,
+                                                 start_id="0-0", count=20)
+                    for msg_id, fields in (claimed[1] if claimed else []):
+                        await self._handle_inbox(r, msg_id, fields)
                 resp = await r.xreadgroup(bus.RUN_GROUP, self.id, {bus.INBOX_STREAM: ">"}, count=20, block=5000)
                 for _stream, messages in resp or []:
                     for msg_id, fields in messages:
-                        try:
-                            await process_event(uuid.UUID(fields["event_id"]), self.telegram)
-                        except Exception:  # noqa: BLE001
-                            log.exception("خطای پردازش رویداد")
-                        await r.xack(bus.INBOX_STREAM, bus.RUN_GROUP, msg_id)
+                        await self._handle_inbox(r, msg_id, fields)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
@@ -150,18 +184,48 @@ class Worker:
             await r.xgroup_create(CONTROL_STREAM, bus.RUN_GROUP, id="$", mkstream=True)
         while not self.stopping.is_set():
             try:
+                self.beat("control")
+                # فرمانی که Worker قبلی پذیرفت ولی تمام نکرد کورکورانه دوباره اجرا نمی‌شود (نصب/به‌روزرسانی/رویا
+                # ممکن است نیمه‌کاره اثر گذاشته باشد): به کارفرما اعلام و سپس ACK می‌شود.
+                with contextlib.suppress(Exception):
+                    claimed = await r.xautoclaim(CONTROL_STREAM, bus.RUN_GROUP, self.id, min_idle_time=CONTROL_STALE_MS,
+                                                 start_id="0-0", count=5)
+                    for msg_id, fields in (claimed[1] if claimed else []):
+                        await self._control_abandoned(fields)
+                        await r.xack(CONTROL_STREAM, bus.RUN_GROUP, msg_id)
                 resp = await r.xreadgroup(bus.RUN_GROUP, self.id, {CONTROL_STREAM: ">"}, count=5, block=5000)
                 for _stream, messages in resp or []:
                     for msg_id, fields in messages:
-                        await r.xack(CONTROL_STREAM, bus.RUN_GROUP, msg_id)
-                        asyncio.create_task(self._control(fields))
+                        # ACK فقط پس از پایان فرمان (موفق یا شکست ثبت‌شده)؛ وظیفه ردگیری و هنگام توقف منتظر می‌ماند
+                        t = asyncio.create_task(self._control_job(r, msg_id, fields))
+                        self.active.add(t)
+                        t.add_done_callback(self.active.discard)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 log.exception("خطای کانال کنترلی")
                 await asyncio.sleep(2)
 
-    async def _control(self, fields: dict) -> None:
+    async def _control_job(self, r, msg_id: str, fields: dict) -> None:  # noqa: ANN001
+        async with self.control_sem:
+            ok = await self._control(fields)
+        if ok is not None:
+            await r.xack(CONTROL_STREAM, bus.RUN_GROUP, msg_id)
+
+    async def _control_abandoned(self, fields: dict) -> None:
+        from xagent_core import inbox as owner_inbox
+
+        cmd = fields.get("cmd") or "?"
+        async with session_scope() as session:
+            await owner_inbox.post(session, kind="error", severity="important",
+                                   title=f"فرمان «{cmd}» ممکن است ناتمام مانده باشد",
+                                   body="Worker پیش از پایان این فرمان متوقف شد. برای جلوگیری از اثر تکراری، "
+                                        "خودکار دوباره اجرا نشد؛ وضعیت ابزارها/رویا را بررسی و در صورت نیاز دوباره درخواست کنید.",
+                                   dedupe_key=f"control-abandoned:{fields.get('id') or hash(json.dumps(fields, sort_keys=True))}",
+                                   data={"cmd": cmd})
+
+    async def _control(self, fields: dict) -> bool | None:
+        """True موفق، False شکست ثبت‌شده؛ هر دو ACK می‌شوند (فرمان کامل شد). لغو (توقف Worker) → None، بدون ACK."""
         cmd = fields.get("cmd")
         payload = json.loads(fields.get("payload") or "{}")
         try:
@@ -183,8 +247,20 @@ class Worker:
                     cfg = await get_setting(session, "dream", DreamSettings)
                     async with asyncio.timeout(cfg.max_runtime_seconds):
                         await run_dream(session, force=fields.get("force") == "1")
-        except Exception:  # noqa: BLE001
+            return True
+        except asyncio.CancelledError:
+            return None
+        except Exception as e:  # noqa: BLE001
             log.exception("خطای فرمان کنترلی %s", cmd)
+            try:
+                from xagent_core import inbox as owner_inbox
+
+                async with session_scope() as session:
+                    await owner_inbox.post(session, kind="error", severity="important", title=f"فرمان «{cmd}» ناموفق بود",
+                                           body=f"{type(e).__name__}: {str(e)[:400]}", data={"cmd": cmd})
+            except Exception:  # noqa: BLE001
+                log.exception("ثبت شکست فرمان کنترلی ممکن نشد")
+            return False
 
     async def selfheal_loop(self) -> None:
         """خوددرمانی دوره‌ای (قطعی و بدون LLM): هر ۱۰ دقیقه یا بلافاصله پس از رخداد سلامت مدل."""
@@ -230,6 +306,9 @@ class Worker:
                 if loop.time() - last_reconcile > 60:
                     last_reconcile = loop.time()
                     await reconcile_runs()
+                    # A3: Run پایانی بدون تسویه روتین/تسک؛ A4: رویداد ثبت‌شده‌ای که به صف نرسید
+                    await settle_terminal_runs(telegram=self.telegram)
+                    await reconcile_inbox()
                 if loop.time() - last_dream_check > 60:
                     last_dream_check = loop.time()
                     lease = await bus.acquire_lease("dream", 3_600_000)

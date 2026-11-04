@@ -62,19 +62,65 @@ def remaining_budget(r: Routine, m: Mission | None) -> Decimal | None:
     return min(caps) if caps else None
 
 
+async def committed_cost(session: AsyncSession, routine_id: uuid.UUID) -> Decimal:
+    """سقف هزینه رزروشده اجراهای فعال همین روتین (هنوز در spent_usd نیامده) — برای پذیرش هم‌زمان رویدادها."""
+    rows = (await session.execute(select(Run.state).where(Run.routine_id == routine_id,
+                                                          Run.status.in_(ACTIVE)))).scalars().all()
+    total = Decimal(0)
+    for st in rows:
+        mc = (st or {}).get("max_cost")
+        if mc is not None:
+            total += Decimal(str(mc))
+    return total
+
+
+async def admission_block(session: AsyncSession, r: Routine, now) -> tuple[str, str | None] | None:  # noqa: ANN001
+    """قرارداد واحد پذیرش نوبت برای همه انواع روتین (زمان‌بندی‌شده، رویدادی، یک‌باره): (دلیل، وضعیت پایانی|None).
+
+    وضعیت پایانی غیر None یعنی روتین باید بسته شود (وقتی اجرای فعالی ندارد). None یعنی فقط این نوبت پذیرفته نمی‌شود.
+    STOP_ALL جداگانه در فراخواننده بررسی می‌شود (بدون تغییر وضعیت).
+    """
+    from .schedule import exhausted_reason
+
+    if r.status != "active" or not r.enabled or r.paused:
+        return "inactive", None
+    block = await mission_block(session, r, now)
+    if block is not None:
+        return block[1], block[0]
+    reason = exhausted_reason(r, now)
+    if reason is not None:
+        return reason, "completed"
+    if r.starts_at is not None and now < r.starts_at:
+        return "not_started", None
+    mission = await session.get(Mission, r.mission_id) if r.mission_id else None
+    if mission is not None and mission.status != "active":
+        return "grant_pending", None
+    remaining = remaining_budget(r, mission)
+    if remaining is not None and remaining - await committed_cost(session, r.id) <= 0:
+        return "budget", None
+    if r.circuit_state == "open":
+        if r.circuit_open_until is not None and r.circuit_open_until > now:
+            return "circuit_open", None
+        r.circuit_state = "half_open"  # پایان دوره خنک‌شدن: یک نوبت آزمایشی
+    return None
+
+
 async def claim_occurrence(session: AsyncSession, r: Routine, slot, trigger: str = "routine",  # noqa: ANN001
-                           extra_state: dict[str, Any] | None = None) -> uuid.UUID | None:
+                           extra_state: dict[str, Any] | None = None, key: str | None = None) -> uuid.UUID | None:
     """ساخت Run برای یک نوبت مشخص — یکتا با dedupe_key؛ نوبت تکراری None برمی‌گرداند.
 
-    هم زمان‌بند و هم «اجرای فوری» ابزار/API از همین تابع استفاده می‌کنند تا قرارداد شمارش یکی باشد.
+    زمان‌بند، «اجرای فوری» ابزار/API و رویدادها همه از همین تابع استفاده می‌کنند تا قرارداد شمارش یکی باشد.
+    key: کلید پایدار نوبت (رویداد: routine:<id>:event:<event_id>)؛ پیش‌فرض بر اساس زمان نوبت.
     """
-    key = f"routine:{r.id}:{slot.isoformat()}"
+    key = key or f"routine:{r.id}:{slot.isoformat()}"
     if (await session.execute(select(Run.id).where(Run.dedupe_key == key))).first():
         return None
     mission = await session.get(Mission, r.mission_id) if r.mission_id else None
     if mission is not None and mission.status != "active":
         return None
     remaining = remaining_budget(r, mission)
+    if remaining is not None:
+        remaining -= await committed_cost(session, r.id)
     if remaining is not None and remaining <= 0:
         return None
     per_run = [Decimal(str(r.max_cost_usd))] if r.max_cost_usd else []

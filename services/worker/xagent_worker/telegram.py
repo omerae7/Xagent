@@ -228,7 +228,7 @@ class TelegramBridge:
         return Path(path) if path else None
 
 
-async def handle_owner_command(bridge: TelegramBridge, payload: dict[str, Any]) -> bool:
+async def handle_owner_command(bridge: TelegramBridge, payload: dict[str, Any], event_id: str | None = None) -> bool:
     """پیام کارفرما در Saved Messages: تایید/رد مجوز یا ایجاد اجرای مورد اعتماد."""
     text = (payload.get("text") or "").strip()
     if not text:
@@ -254,6 +254,9 @@ async def handle_owner_command(bridge: TelegramBridge, payload: dict[str, Any]) 
                 await bus.enqueue_run(run.id, "approval")
             await bridge.notify_owner(f"{'✅ تایید' if target.status == 'approved' else '⛔ رد'} شد: {target.tool_name}")
             return True
+        key = f"owner-cmd:{event_id}" if event_id else None
+        if key and (await session.execute(select(Run.id).where(Run.dedupe_key == key))).first():
+            return True  # همین فرمان قبلاً به Run تبدیل شده است (پردازش دوباره پس از Crash)
         conv = (await session.execute(select(Conversation).where(
             Conversation.channel == "telegram", Conversation.external_ref == "owner"))).scalar_one_or_none()
         if conv is None:
@@ -264,7 +267,7 @@ async def handle_owner_command(bridge: TelegramBridge, payload: dict[str, Any]) 
         session.add(msg)
         conv.message_count += 1
         conv.updated_at = utcnow()
-        run = Run(conversation_id=conv.id, trigger="telegram", input=text,
+        run = Run(conversation_id=conv.id, trigger="telegram", input=text, dedupe_key=key,
                   state={"trusted": True, "principal": "owner", "requested_by": "telegram:saved_messages", "reply_to": "me"})
         session.add(run)
         await session.flush()

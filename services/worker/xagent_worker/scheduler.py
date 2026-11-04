@@ -120,10 +120,12 @@ async def tick_routines(telegram: Any = None) -> int:
 
 async def sweep_lifecycle(session: AsyncSession, now, telegram: Any = None) -> int:  # noqa: ANN001
     """بستن مأموریت‌هایی که نوبت دیگری ندارند و اجرای فعالی هم ندارند (پوشش Crash و تأخیر)."""
+    # روتین‌های رویدادی هم شامل‌اند: روتین منقضی/تمام‌شده حتی اگر رویداد تازه‌ای نرسد بسته می‌شود
     rows = (await session.execute(select(Routine).where(
-        Routine.status == "active", Routine.trigger_type != "event",
-        or_(Routine.next_run_at.is_(None), Routine.end_at <= now, Routine.mission_id.is_not(None)),
-    ).limit(100).with_for_update(skip_locked=True))).scalars().all()
+        Routine.status == "active",
+        or_(Routine.next_run_at.is_(None), Routine.end_at <= now, Routine.mission_id.is_not(None),
+            Routine.trigger_type == "event"),
+    ).limit(200).with_for_update(skip_locked=True))).scalars().all()
     n = 0
     for r in rows:
         block = await mission_block(session, r, now)
@@ -330,6 +332,42 @@ async def reconcile_runs(stale_after_seconds: int = 180) -> int:
     if ids:
         log.info("%d اجرای یتیم دوباره در صف قرار گرفت", len(ids))
     return len(ids)
+
+
+TERMINAL_RUN = ("succeeded", "failed", "stopped", "cancelled", "paused")
+
+
+async def settle_terminal_runs(min_age_seconds: int = 30, lookback_days: int = 14, telegram: Any = None) -> int:
+    """تسویه دوباره Runهای پایانی که تسویه روتین/تسک آن‌ها انجام نشده است (Crash پس از نهایی‌سازی).
+
+    فقط از توابع تسویه موجود و نشانگرهای routine_settled / task_settled استفاده می‌شود؛ هر دو idempotent‌اند،
+    پس شمارنده، هزینه و گزارش یک‌بار اعمال می‌شود. هیچ اقدام بیرونی Run تکرار نمی‌شود — فقط حسابداری و وضعیت.
+    """
+    from sqlalchemy import String, cast
+
+    now = utcnow()
+    async with session_scope() as session:
+        status_text = cast(Run.status, String)
+        rows = (await session.execute(select(Run.id).where(
+            Run.status.in_(TERMINAL_RUN), Run.parent_run_id.is_(None),
+            Run.created_at >= now - timedelta(days=lookback_days),
+            or_(Run.finished_at.is_(None), Run.finished_at <= now - timedelta(seconds=min_age_seconds)),
+            or_(
+                (Run.routine_id.is_not(None)) & (Run.state["routine_settled"].astext.is_distinct_from(status_text)),
+                (Run.task_id.is_not(None)) & (Run.state["task_settled"].astext.is_distinct_from(status_text)),
+            ),
+        ).order_by(Run.created_at).limit(100))).scalars().all()
+    n = 0
+    for rid in rows:
+        try:
+            await after_routine_run(rid, telegram)
+            await after_task_run(rid, telegram)
+            n += 1
+        except Exception:  # noqa: BLE001 — یک Run خراب مانع تسویه بقیه نشود؛ دور بعد دوباره تلاش می‌شود
+            log.exception("تسویه دوباره Run %s ناموفق بود", rid)
+    if n:
+        log.info("%d اجرای پایانی تسویه‌نشده تسویه شد", n)
+    return n
 
 
 # ───────────────────────── رویای شبانه ─────────────────────────
