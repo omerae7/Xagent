@@ -15,7 +15,7 @@ from xagent_core.models import AIModel, AIProvider
 from xagent_core.security import decrypt_secret
 
 from .anthropic_provider import AnthropicProvider
-from .base import ChatRequest, LLMMessage, Provider, ProviderError
+from .base import LLMMessage, Provider, ProviderError
 from .google import GoogleProvider
 from .openai_compat import DEFAULT_BASES, OpenAICompatProvider
 from .openai_responses import ResponsesProvider
