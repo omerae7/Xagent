@@ -370,9 +370,16 @@ async def test_update_dry_run_makes_no_changes(app_client, hostd):
         (hostd.marks / f).unlink(missing_ok=True)
     from xagent_api.main import app
 
+    data = (await app_client.post("/api/chat/send", json={"text": "آزمون بررسی نسخه"})).json()
+    rid = data["run"]["id"]
+    async with session_scope() as s:
+        owner_run = await s.get(Run, uuid.UUID(rid))
+        owner_run.status = "running"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post("/api/internal/host/run", headers=_internal(app_client),
-                         json={"op": "update.check", "args": {}, "reason": "بررسی نسخه", "actor": "manager"})
+                         json={"op": "update.check", "args": {}, "reason": "بررسی نسخه",
+                               "actor": "manager", "run_id": rid})
+    assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "succeeded" and "no changes" in d["output"]
     assert (hostd.marks / "dry-run").exists() and not (hostd.marks / "update-started").exists()
