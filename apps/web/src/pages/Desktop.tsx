@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Hand, Maximize2, Monitor, MousePointerClick, RefreshCw, ShieldCheck, Undo2, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Card, PageHeader } from "../components/ui";
-import { Thinking } from "../components/viz/Orb";
+import { Thinking } from "../components/viz/Silicon";
 import { get, post } from "../lib/api";
 import { useLive } from "../lib/live";
 import { toast, toastError } from "../lib/store";
@@ -97,7 +97,7 @@ export default function Desktop() {
       {shot && (
         <Card className="mt-4 p-3">
           <div className="mb-2 flex items-center justify-between text-sm"><span>آخرین اسکرین‌شات</span><Button size="sm" variant="ghost" onClick={() => setShot(null)}>بستن</Button></div>
-          <img src={shot} alt="اسکرین‌شات دسکتاپ" className="w-full rounded-xl" />
+          <img src={shot} alt="اسکرین‌شات دسکتاپ" className="w-full rounded-[5px]" />
         </Card>
       )}
     </div>

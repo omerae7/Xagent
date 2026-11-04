@@ -15,11 +15,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
 from xagent_core.models import (
+    AIModel,
     Approval,
+    BehavioralRule,
+    ConfigChange,
+    DreamReport,
+    Employee,
     Episode,
+    Experience,
+    Incident,
+    InstalledTool,
     Notification,
     Routine,
     Run,
+    SemanticFact,
+    Skill,
     SystemMetric,
     Task,
     UsageEvent,
@@ -149,6 +159,7 @@ async def dashboard(_: User = Depends(current_user), session: AsyncSession = Dep
         select(func.count(), func.coalesce(func.sum(cast(Episode.status == "success", Integer)), 0))
         .where(Episode.ts >= week, Episode.kind != "system"))).one()
 
+    control = await _control_snapshot(session)
     running = run_counts.get("running", 0)
     state = "executing" if running else ("waiting" if run_counts.get("waiting_approval") else
                                          ("thinking" if run_counts.get("queued") else "idle"))
@@ -171,7 +182,48 @@ async def dashboard(_: User = Depends(current_user), session: AsyncSession = Dep
         "success_rate_7d": (float(ep_ok) / ep_total) if ep_total else None,
         "episodes_7d": ep_total,
         "system": system_snapshot(),
+        "control": control,
         "timezone": general.timezone,
+    }
+
+
+async def _count(session: AsyncSession, stmt) -> int:
+    return int((await session.execute(stmt)).scalar_one() or 0)
+
+
+async def _control_snapshot(session: AsyncSession) -> dict:
+    """نقشه زنده اجزای ایجنت برای داشبورد: مدیر، کارمندان، مدل‌ها، ابزارها، حافظه، رویا و تغییرات (فقط داده واقعی)."""
+    c = func.count()
+    day = now_utc() - timedelta(days=1)
+    emp_total = await _count(session, select(c).select_from(Employee))
+    emp_on = await _count(session, select(c).select_from(Employee).where(Employee.enabled.is_(True)))
+    emp_busy = await _count(session, select(func.count(func.distinct(Run.employee_id))).where(
+        Run.employee_id.is_not(None), Run.status.in_(["running", "queued", "waiting_approval"])))
+    m_on = await _count(session, select(c).select_from(AIModel).where(AIModel.enabled.is_(True)))
+    m_fail = await _count(session, select(c).select_from(AIModel).where(AIModel.enabled.is_(True), AIModel.health == "failing"))
+    m_deg = await _count(session, select(c).select_from(AIModel).where(AIModel.enabled.is_(True), AIModel.health == "degraded"))
+    t_on = await _count(session, select(c).select_from(InstalledTool).where(InstalledTool.enabled.is_(True), InstalledTool.status == "ready"))
+    t_err = await _count(session, select(c).select_from(InstalledTool).where(InstalledTool.status == "error"))
+    skills = await _count(session, select(c).select_from(Skill).where(Skill.status.in_(["active", "probationary"])))
+    mem = {
+        "behavioral": await _count(session, select(c).select_from(BehavioralRule)),
+        "semantic": await _count(session, select(c).select_from(SemanticFact)),
+        "episodic": await _count(session, select(c).select_from(Episode)),
+        "experience": await _count(session, select(c).select_from(Experience)),
+    }
+    inc_open = await _count(session, select(c).select_from(Incident).where(Incident.status.in_(["open", "fixing", "escalated"])))
+    ch_day = await _count(session, select(c).select_from(ConfigChange).where(ConfigChange.created_at >= day))
+    last = (await session.execute(select(ConfigChange).order_by(ConfigChange.created_at.desc()).limit(1))).scalar_one_or_none()
+    dream = (await session.execute(select(DreamReport).order_by(DreamReport.started_at.desc()).limit(1))).scalar_one_or_none()
+    return {
+        "employees": {"total": emp_total, "enabled": emp_on, "busy": emp_busy},
+        "models": {"enabled": m_on, "failing": m_fail, "degraded": m_deg},
+        "tools": {"ready": t_on, "error": t_err, "skills": skills},
+        "memory": mem,
+        "incidents_open": inc_open,
+        "changes_24h": ch_day,
+        "last_change": ser(last, exclude={"before", "after", "verification"}) if last else None,
+        "dream": {"status": dream.status, "started_at": dream.started_at.isoformat()} if dream else None,
     }
 
 

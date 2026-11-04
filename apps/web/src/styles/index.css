@@ -8,20 +8,36 @@
 @layer base {
   html {
     font-family: Vazirmatn, Tahoma, system-ui, sans-serif;
-    font-feature-settings: "ss01";
     -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
   }
   body {
     @apply bg-bg text-ink antialiased;
     min-height: 100dvh;
     overflow-x: hidden;
+    caret-color: rgb(var(--primary));
+    accent-color: rgb(var(--primary));
   }
   ::selection {
-    background: rgb(var(--primary) / 0.35);
+    background: rgb(var(--primary) / 0.3);
+    color: rgb(var(--text));
   }
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgb(var(--border) / 0.35) transparent;
+    scrollbar-color: rgb(var(--border) / 0.3) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgb(var(--border) / 0.28);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 2px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
   }
   input,
   textarea,
@@ -29,45 +45,125 @@
   button {
     font: inherit;
   }
+  ::placeholder {
+    color: rgb(var(--muted) / 0.75);
+  }
   :focus-visible {
-    outline: 2px solid rgb(var(--primary) / 0.7);
+    outline: 2px solid rgb(var(--primary) / 0.85);
     outline-offset: 2px;
+  }
+  a {
+    text-underline-offset: 3px;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
   }
 }
 
 @layer components {
-  .glass {
-    background: rgb(var(--surface) / var(--glass-alpha));
-    border: 1px solid rgb(var(--border) / var(--border-alpha));
-    box-shadow: var(--shadow-card);
-    backdrop-filter: blur(var(--glass-blur)) saturate(140%);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  /* بلوک تراشه: لبه ۱px با پَخ گوشه‌ها؛ پس‌زمینه خودش همان لبه است و ::before سطح داخلی */
+  .die {
+    position: relative;
+    isolation: isolate;
+    background: rgb(var(--border) / calc(var(--border-alpha) + 0.05));
+    clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
   }
-  .glass-strong {
-    background: rgb(var(--surface-2) / 0.85);
-    border: 1px solid rgb(var(--border) / calc(var(--border-alpha) + 0.06));
-    backdrop-filter: blur(var(--glass-blur));
+  .die::before {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    z-index: -2;
+    background: rgb(var(--surface));
+    clip-path: polygon(0 0, calc(100% - var(--cut) + 0.4px) 0, 100% calc(var(--cut) - 0.4px), 100% 100%, calc(var(--cut) - 0.4px) 100%, 0 calc(100% - var(--cut) + 0.4px));
   }
+  /* بازتاب نور روی سیلیکون که دنبال نشانگر می‌آید (فقط دستگاه‌های دارای hover) */
+  .die::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    background:
+      radial-gradient(28rem 18rem at var(--mx, 50%) var(--my, 0%), rgb(var(--sheen) / 0.07), transparent 65%),
+      linear-gradient(105deg, transparent 20%, rgb(var(--film-2) / 0.05) 40%, rgb(var(--film-3) / 0.05) 55%, rgb(var(--film-5) / 0.04) 68%, transparent 85%);
+    background-size: 100% 100%, 220% 100%;
+    background-position: 0 0, calc(var(--mx, 50%) * 0.6) 0;
+  }
+  @media (hover: hover) {
+    .die:hover::after,
+    .die[data-sheen]::after {
+      opacity: 1;
+    }
+  }
+  .die-2::before {
+    background: rgb(var(--surface-2));
+  }
+  .die-sunk::before {
+    background: rgb(var(--bg-2) / 0.9);
+  }
+  /* لبه لایه‌نازک: بلوک «زنده» */
+  .die-live {
+    background: linear-gradient(110deg, rgb(var(--film-1)), rgb(var(--film-2)) 28%, rgb(var(--film-3)) 52%, rgb(var(--film-4)) 74%, rgb(var(--film-5)));
+    background-size: 200% 100%;
+    animation: film-drift 9s linear infinite;
+  }
+  .die-sm {
+    --cut: 7px;
+  }
+  .die-lg {
+    --cut: 18px;
+  }
+
+  /* کنترل‌ها: گوشه پَخ در مرورگرهای پشتیبان (corner-shape) و گرد کوچک در بقیه */
+  .bevel {
+    border-radius: var(--r-ctl);
+  }
+  @supports (corner-shape: bevel) {
+    .bevel {
+      corner-shape: bevel;
+      border-radius: calc(var(--r-ctl) + 1px);
+    }
+  }
+
+  /* پد تراشه: نشانگر وضعیت مربعی (جایگزین نقطه‌های گرد) */
+  .pad {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+
   .hairline {
     border-color: rgb(var(--border) / var(--border-alpha));
   }
-  .text-gradient {
-    background: linear-gradient(90deg, rgb(var(--cyan)), rgb(var(--primary)) 45%, rgb(var(--accent)));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+  .etch {
+    background-image: linear-gradient(90deg, rgb(var(--border) / 0.22) 50%, transparent 0);
+    background-size: 6px 1px;
+    background-repeat: repeat-x;
+    background-position: 0 100%;
   }
-  .btn-glow {
-    box-shadow: 0 0 0 1px rgb(var(--primary) / 0.45), 0 6px 26px -6px rgb(var(--primary) / 0.7),
-      inset 0 1px 0 rgb(255 255 255 / 0.25);
+  .film-bar {
+    background: linear-gradient(90deg, rgb(var(--film-1)), rgb(var(--film-2)), rgb(var(--film-3)), rgb(var(--film-4)), rgb(var(--film-5)));
   }
   .skeleton {
-    background: linear-gradient(90deg, rgb(var(--border) / 0.08), rgb(var(--border) / 0.2), rgb(var(--border) / 0.08));
+    background: linear-gradient(90deg, rgb(var(--border) / 0.07), rgb(var(--border) / 0.16), rgb(var(--border) / 0.07));
     background-size: 200% 100%;
-    @apply animate-shimmer rounded-lg;
+    border-radius: 3px;
+    @apply animate-shimmer;
   }
   .num {
     font-variant-numeric: tabular-nums;
+  }
+  .mono {
+    font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    letter-spacing: -0.01em;
   }
   .ltr {
     direction: ltr;
@@ -75,17 +171,39 @@
   }
 }
 
-/* پس‌زمینه زنده: شبکه نقطه‌ای + درخشش‌های رنگی */
+/* زیرلایه: سیلیکون + شبکه لیتوگرافی + علامت‌های تراز + نور میکروسکوپ */
 .app-bg {
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(60rem 40rem at 85% -10%, rgb(var(--glow-1) / var(--glow-strength)), transparent 60%),
-    radial-gradient(50rem 36rem at 0% 110%, rgb(var(--glow-2) / var(--glow-strength)), transparent 60%),
-    radial-gradient(circle at 1px 1px, rgb(var(--grid-dot) / var(--grid-alpha)) 1px, transparent 0) 0 0 / 22px 22px,
-    linear-gradient(180deg, rgb(var(--bg-2)), rgb(var(--bg)));
+    radial-gradient(80rem 52rem at 100% -18%, rgb(var(--lamp) / var(--lamp-alpha)), transparent 68%),
+    linear-gradient(118deg, transparent 38%, rgb(var(--film-2) / 0.035) 47%, rgb(var(--film-3) / 0.035) 53%, rgb(var(--film-5) / 0.025) 58%, transparent 66%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Cpath d='M0 6V0h6M186 0h6v6M192 186v6h-6M6 192H0v-6' fill='none' stroke='%239aa3d0' stroke-opacity='.35'/%3E%3C/svg%3E") 0 0 / 192px 192px,
+    linear-gradient(rgb(var(--litho) / var(--litho-alpha)) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, rgb(var(--litho) / var(--litho-alpha)) 1px, transparent 1px) 0 0 / 48px 48px,
+    rgb(var(--bg));
+}
+
+@keyframes film-drift {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes pad-breathe {
+  0%,
+  100% {
+    opacity: var(--lo, 0.14);
+  }
+  50% {
+    opacity: var(--hi, 0.9);
+  }
+}
+@keyframes trace-flow {
+  to {
+    stroke-dashoffset: -64;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -98,11 +216,6 @@
   }
 }
 
-@keyframes spin-slow {
-  to {
-    transform: rotate(360deg);
-  }
-}
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -115,18 +228,19 @@
 .prose-chat code {
   direction: ltr;
   unicode-bidi: isolate;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.85em;
-  background: rgb(var(--border) / 0.14);
-  border-radius: 6px;
+  background: rgb(var(--border) / 0.12);
+  border-radius: 3px;
   padding: 0.1rem 0.35rem;
 }
 .prose-chat pre {
   direction: ltr;
   text-align: left;
   overflow-x: auto;
-  background: rgb(var(--bg) / 0.7);
+  background: rgb(var(--bg) / 0.8);
   border: 1px solid rgb(var(--border) / 0.15);
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 0.75rem;
   margin: 0.5rem 0;
   font-size: 0.8rem;
@@ -136,7 +250,7 @@
   padding: 0;
 }
 .prose-chat ul {
-  list-style: disc;
+  list-style: square;
   padding-inline-start: 1.25rem;
 }
 .prose-chat ol {

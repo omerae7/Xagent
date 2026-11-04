@@ -50,7 +50,7 @@ export default function Usage() {
           { l: "میانگین زمان اجرا", v: avgSec ? `${faNum(avgSec, 1)} ث` : "—", s: "کارهای موفق", i: <Timer className="h-4 w-4" />, c: "text-cyan" },
           { l: "صرفه‌جویی کش", v: `${faNum(cacheRate)}٪`, s: `${compact(totals.cache)} توکن از کش`, i: <Layers className="h-4 w-4" />, c: "text-accent" },
         ].map((x, i) => (
-          <motion.div key={x.l} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} className="glass rounded-card p-4">
+          <motion.div key={x.l} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} className="die p-4">
             <div className="flex items-center justify-between text-xs text-muted">{x.l}<span className={x.c}>{x.i}</span></div>
             {isLoading ? <Skeleton className="mt-2 h-7" /> : <div className="num mt-1.5 text-2xl font-bold">{x.v}</div>}
             <div className="mt-0.5 truncate text-[11px] text-muted">{x.s}</div>
@@ -75,7 +75,7 @@ export default function Usage() {
             <div className="w-full space-y-1.5">
               {(data?.by_purpose || []).map((p: any, i: number) => (
                 <div key={p.purpose} className="flex items-center justify-between text-xs">
-                  <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />{PURPOSE[p.purpose] || p.purpose}</span>
+                  <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-[2px]" style={{ background: COLORS[i % COLORS.length] }} />{PURPOSE[p.purpose] || p.purpose}</span>
                   <span className="num text-muted">{compact(p.tokens)} · {usd(p.cost)}</span>
                 </div>
               ))}

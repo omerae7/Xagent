@@ -1,4 +1,4 @@
-/** نمودارهای سبک SVG (بدون کتابخانه سنگین): ناحیه‌ای، خطی کوچک، گیج دایره‌ای، دونات و نوار پیشرفت. */
+/** نمودارهای سبک SVG (بدون کتابخانه سنگین) در زبان «سیلیکون زنده»: ناحیه‌ای، خطی کوچک، سنج پدی، نوار ترکیبی و نوار پیشرفت. */
 
 import { motion } from "framer-motion";
 import { useId, useMemo, useState } from "react";
@@ -67,20 +67,28 @@ export function AreaChart({
   const max = useMemo(() => forcedMax ?? Math.max(1, ...data.flatMap((d) => series.map((s) => Number(d[s.key]) || 0))) * 1.12, [data, series, forcedMax]);
   const x = (i: number) => pad.l + (data.length <= 1 ? (W - pad.l - pad.r) / 2 : (i / (data.length - 1)) * (W - pad.l - pad.r));
   const y = (v: number) => pad.t + (1 - v / max) * (H - pad.t - pad.b);
+  const pick = (e: React.PointerEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const rel = ((e.clientX - r.left) / r.width) * W;
+    let best = 0;
+    for (let i = 1; i < data.length; i++) if (Math.abs(x(i) - rel) < Math.abs(x(best) - rel)) best = i;
+    setHover(best);
+  };
   if (!data.length) return <div className="grid h-full place-items-center py-10 text-sm text-muted">داده‌ای برای نمایش نیست</div>;
   return (
-    <div className="relative w-full">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full overflow-visible" style={{ height }} preserveAspectRatio="none" onMouseLeave={() => setHover(null)}>
+    <div className="relative w-full touch-pan-y" onPointerLeave={(e) => e.pointerType === "mouse" && setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full overflow-visible" style={{ height }} preserveAspectRatio="none"
+        onPointerMove={pick} onPointerDown={pick}>
         <defs>
           {series.map((s) => (
             <linearGradient key={s.key} id={`g-${id}-${s.key}`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor={s.color} stopOpacity=".38" />
+              <stop offset="0%" stopColor={s.color} stopOpacity=".24" />
               <stop offset="100%" stopColor={s.color} stopOpacity="0" />
             </linearGradient>
           ))}
         </defs>
         {[0.25, 0.5, 0.75].map((f) => (
-          <line key={f} x1={pad.l} x2={W - pad.r} y1={pad.t + f * (H - pad.t - pad.b)} y2={pad.t + f * (H - pad.t - pad.b)} stroke="rgb(var(--border) / .12)" strokeDasharray="3 5" />
+          <line key={f} x1={pad.l} x2={W - pad.r} y1={pad.t + f * (H - pad.t - pad.b)} y2={pad.t + f * (H - pad.t - pad.b)} stroke="rgb(var(--border) / .14)" strokeDasharray="2 6" vectorEffect="non-scaling-stroke" />
         ))}
         {series.map((s, si) => {
           const pts = data.map((d, i) => [x(i), y(Number(d[s.key]) || 0)] as [number, number]);
@@ -89,17 +97,18 @@ export function AreaChart({
           return (
             <g key={s.key}>
               <motion.path d={area} fill={`url(#g-${id}-${s.key})`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8, delay: si * 0.1 }} />
-              <motion.path d={line} fill="none" stroke={s.color} strokeWidth="2.2" strokeLinecap="round" vectorEffect="non-scaling-stroke"
-                initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.1, ease: "easeOut", delay: si * 0.1 }}
-                style={{ filter: `drop-shadow(0 0 6px ${s.color})` }} />
+              <motion.path d={line} fill="none" stroke={s.color} strokeWidth="1.8" strokeLinecap="square" vectorEffect="non-scaling-stroke"
+                initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1], delay: si * 0.08 }} />
             </g>
           );
         })}
-        {data.map((_, i) => (
-          <rect key={i} x={x(i) - (W / Math.max(data.length, 1)) / 2} y={0} width={W / Math.max(data.length, 1)} height={H} fill="transparent" onMouseEnter={() => setHover(i)} onTouchStart={() => setHover(i)} />
-        ))}
         {hover != null && (
-          <line x1={x(hover)} x2={x(hover)} y1={pad.t} y2={H - pad.b} stroke="rgb(var(--primary) / .45)" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
+          <g>
+            <line x1={x(hover)} x2={x(hover)} y1={pad.t} y2={H - pad.b} stroke="rgb(var(--primary) / .5)" vectorEffect="non-scaling-stroke" />
+            {series.map((s) => (
+              <rect key={s.key} x={x(hover) - 3.5} y={y(Number(data[hover][s.key]) || 0) - 3.5} width="7" height="7" fill="rgb(var(--surface))" stroke={s.color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+            ))}
+          </g>
         )}
       </svg>
       {xLabel && (
@@ -112,12 +121,13 @@ export function AreaChart({
         </div>
       )}
       {hover != null && (
-        <div className="glass-strong pointer-events-none absolute top-1 z-10 min-w-[140px] rounded-xl px-3 py-2 text-xs shadow-xl"
-          style={{ left: `${Math.min(80, Math.max(0, (x(hover) / W) * 100 - 10))}%` }}>
+        // عرض ثابت و clamp: Tooltip هیچ‌وقت از لبه نمودار (به‌ویژه در موبایل) بیرون نمی‌زند
+        <div className="die die-sm die-2 pointer-events-none absolute top-1 z-10 w-[148px] px-3 py-2 text-xs shadow-lift"
+          style={{ left: `clamp(0px, calc(${(x(hover) / W) * 100}% - 74px), calc(100% - 148px))` }}>
           {xLabel && <div className="mb-1 text-muted">{xLabel(data[hover], hover)}</div>}
           {series.map((s) => (
             <div key={s.key} className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: s.color }} />{s.label}</span>
+              <span className="flex min-w-0 items-center gap-1.5"><span className="pad" style={{ color: s.color }} /><span className="truncate">{s.label}</span></span>
               <span className="num font-semibold">{format(Number(data[hover][s.key]) || 0)}</span>
             </div>
           ))}
@@ -147,55 +157,40 @@ export function Sparkline({ values, color = "rgb(var(--primary))", height = 36, 
   );
 }
 
-export function Gauge({ value, label, sub, size = 108, color }: { value: number; label: string; sub?: string; size?: number; color?: string }) {
+/** سنج پدی: ۱۰ پد مربعی مثل بانک حافظه؛ بدون حلقه دایره‌ای */
+export function Gauge({ value, label, sub, color }: { value: number; label: string; sub?: string; size?: number; color?: string }) {
   const v = Math.max(0, Math.min(100, value || 0));
-  const c = color || (v > 85 ? "rgb(var(--danger))" : v > 65 ? "rgb(var(--warning))" : "rgb(var(--cyan))");
-  const r = 42;
-  const circ = 2 * Math.PI * r;
-  const arc = circ * 0.75;
+  const c = v > 85 ? "rgb(var(--danger))" : v > 65 ? "rgb(var(--warning))" : color || "rgb(var(--cyan))";
+  const lit = Math.round(v / 10);
   return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="relative" style={{ width: size, height: size }}>
-        <svg viewBox="0 0 100 100" className="h-full w-full -rotate-[225deg]">
-          <circle cx="50" cy="50" r={r} fill="none" stroke="rgb(var(--border) / .15)" strokeWidth="7" strokeDasharray={`${arc} ${circ}`} strokeLinecap="round" />
-          <motion.circle cx="50" cy="50" r={r} fill="none" stroke={c} strokeWidth="7" strokeLinecap="round"
-            strokeDasharray={`${arc} ${circ}`} initial={{ strokeDashoffset: arc }} animate={{ strokeDashoffset: arc * (1 - v / 100) }}
-            transition={{ type: "spring", stiffness: 60, damping: 16 }} style={{ filter: `drop-shadow(0 0 5px ${c})` }} />
-        </svg>
-        <div className="absolute inset-0 grid place-items-center">
-          <div className="text-center">
-            <div className="num text-xl font-bold">{faNum(v)}<span className="text-xs text-muted">٪</span></div>
-          </div>
-        </div>
+    <div className="min-w-0" role="meter" aria-valuenow={Math.round(v)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+      <div className="flex items-baseline justify-between gap-1">
+        <span className="truncate text-xs font-medium">{label}</span>
+        <span className="num text-lg font-bold leading-6">{faNum(v)}<span className="text-[11px] font-medium text-muted">٪</span></span>
       </div>
-      <div className="text-center">
-        <div className="text-xs font-medium">{label}</div>
-        {sub && <div className="num text-[10px] text-muted">{sub}</div>}
+      <div className="mt-1.5 grid grid-cols-10 gap-[3px]" dir="ltr">
+        {Array.from({ length: 10 }, (_, i) => (
+          <motion.span key={i} className="h-3 rounded-[1px]" initial={false}
+            animate={{ backgroundColor: i < lit ? c : "rgb(var(--border) / .14)" }} transition={{ duration: 0.25, delay: i * 0.02 }} />
+        ))}
       </div>
+      {sub && <div className="num mt-1 truncate text-[10px] text-muted">{sub}</div>}
     </div>
   );
 }
 
-export function Donut({ items, size = 140, center }: { items: { label: string; value: number; color: string }[]; size?: number; center?: React.ReactNode }) {
-  const total = items.reduce((a, b) => a + (b.value || 0), 0) || 1;
-  const r = 40;
-  const circ = 2 * Math.PI * r;
-  let acc = 0;
+/** نوار ترکیبی سهم‌ها (جایگزین دونات): بخش‌ها با فاصله یک‌پیکسلی مثل بلوک‌های تراشه */
+export function Donut({ items, center }: { items: { label: string; value: number; color: string }[]; size?: number; center?: React.ReactNode }) {
+  const total = items.reduce((a, b) => a + (b.value || 0), 0);
   return (
-    <div className="relative" style={{ width: size, height: size }}>
-      <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-        <circle cx="50" cy="50" r={r} fill="none" stroke="rgb(var(--border) / .12)" strokeWidth="12" />
-        {items.map((it, i) => {
-          const len = (it.value / total) * circ;
-          const el = (
-            <motion.circle key={i} cx="50" cy="50" r={r} fill="none" stroke={it.color} strokeWidth="12" strokeDasharray={`${Math.max(0, len - 1.5)} ${circ}`}
-              strokeDashoffset={-acc} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.08 }} />
-          );
-          acc += len;
-          return el;
-        })}
-      </svg>
-      {center && <div className="absolute inset-0 grid place-items-center text-center">{center}</div>}
+    <div className="w-full">
+      {center && <div className="mb-3 text-center">{center}</div>}
+      <div className="flex h-4 w-full gap-px overflow-hidden rounded-[2px] bg-line/10" dir="ltr">
+        {total > 0 && items.filter((it) => it.value > 0).map((it, i) => (
+          <motion.span key={it.label + i} title={it.label} style={{ background: it.color }} initial={{ flexGrow: 0 }} animate={{ flexGrow: it.value / total }}
+            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: i * 0.04 }} className="h-full min-w-[3px] basis-0" />
+        ))}
+      </div>
     </div>
   );
 }
@@ -204,9 +199,8 @@ export function Meter({ value, max, tone = "primary", className, thresholds = tr
   const p = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   const color = thresholds && p > 90 ? "bg-danger" : thresholds && p > 70 ? "bg-warning" : `bg-${tone}`;
   return (
-    <div className={cn("h-2 w-full overflow-hidden rounded-full bg-line/15", className)}>
-      <motion.div className={cn("h-full rounded-full", color)} initial={{ width: 0 }} animate={{ width: `${p}%` }} transition={{ type: "spring", stiffness: 70, damping: 18 }}
-        style={{ boxShadow: "0 0 12px currentColor" }} />
+    <div className={cn("h-1.5 w-full overflow-hidden rounded-[1px] bg-line/15", className)} role="progressbar" aria-valuenow={Math.round(p)} aria-valuemin={0} aria-valuemax={100}>
+      <motion.div className={cn("h-full", color)} initial={{ width: 0 }} animate={{ width: `${p}%` }} transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }} />
     </div>
   );
 }

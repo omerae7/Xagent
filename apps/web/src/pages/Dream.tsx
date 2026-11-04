@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { Lightbulb, Moon, Play, Power, Sparkles, Undo2, Wand2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, PageHeader, Skeleton } from "../components/ui";
-import { Orb } from "../components/viz/Orb";
+import { ChipMark } from "../components/viz/Silicon";
 import { get, post } from "../lib/api";
 import { bytes, compact, faInt, fmtDate, usd } from "../lib/format";
 import { useLive } from "../lib/live";
@@ -35,7 +35,7 @@ export default function Dream() {
             <motion.div key={r.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
               <Card className="p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">{r.status === "running" ? <Orb state="thinking" size={28} /> : <Moon className="h-5 w-5 text-accent" />}<span className="font-semibold">{fmtDate(r.started_at)}</span><Badge tone={ST[r.status]?.tone}>{ST[r.status]?.l}</Badge></div>
+                  <div className="flex items-center gap-2">{r.status === "running" ? <ChipMark state="thinking" size={26} /> : <Moon className="h-5 w-5 text-accent" />}<span className="font-semibold">{fmtDate(r.started_at)}</span><Badge tone={ST[r.status]?.tone}>{ST[r.status]?.l}</Badge></div>
                   <div className="num flex gap-3 text-[11px] text-muted"><span>{faInt(r.events_reviewed)} رویداد</span>{r.llm_used && <span>{compact(r.tokens)} توکن · {usd(r.cost_usd)}</span>}{r.cleanup?.files_removed > 0 && <span>پاکسازی {bytes(r.cleanup.bytes_freed)}</span>}</div>
                 </div>
                 <p className="mt-2 whitespace-pre-line text-sm leading-7 text-muted">{r.summary}</p>
@@ -55,7 +55,7 @@ export default function Dream() {
             {skills.isLoading && <Skeleton className="h-20" />}
             {(skills.data?.items || []).length === 0 && !skills.isLoading && <p className="py-6 text-center text-sm text-muted"><Lightbulb className="mx-auto mb-2 h-6 w-6" />هنوز مهارتی تقطیر نشده است.</p>}
             {(skills.data?.items || []).map((s: any) => (
-              <div key={s.id} className="rounded-xl border hairline p-3">
+              <div key={s.id} className="rounded-[5px] border hairline p-3">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-3.5 w-3.5 text-accent" />{s.name}</span>
                   <Badge tone={s.status === "active" ? "success" : s.status === "probationary" ? "warning" : "neutral"}>{s.status === "active" ? "فعال" : s.status === "probationary" ? "آزمایشی" : "غیرفعال"}</Badge>

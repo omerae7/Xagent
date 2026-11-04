@@ -105,7 +105,7 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
       <div className="mb-5 flex items-center gap-2 text-xs">
         {["شرکت", "کلید API", "مدل", "تست"].map((s, i) => (
           <div key={s} className="flex items-center gap-2">
-            <span className={cn("grid h-6 w-6 place-items-center rounded-full", step > i ? "bg-primary text-white" : "bg-line/15 text-muted")}>{faInt(i + 1)}</span>
+            <span className={cn("grid h-6 w-6 place-items-center rounded-[2px]", step > i ? "bg-primary text-white" : "bg-line/15 text-muted")}>{faInt(i + 1)}</span>
             <span className={step > i ? "" : "text-muted"}>{s}</span>
             {i < 3 && <span className="h-px w-6 bg-line/30" />}
           </div>
@@ -115,8 +115,8 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {Object.entries(catalog?.providers || {}).map(([k, p]: any) => (
             <button key={k} onClick={() => { setKind(k); setBase(p.base_url || ""); setModel(p.models?.[0]?.name || ""); setStep(2); }}
-              className="glass flex flex-col items-center gap-2 rounded-2xl p-4 transition hover:shadow-glow">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/12 text-lg font-bold text-primary">{KIND_ICON[k] || "•"}</span>
+              className="die flex flex-col items-center gap-2 rounded-[6px] p-4 transition">
+              <span className="grid h-10 w-10 place-items-center rounded-[5px] bg-primary/12 text-lg font-bold text-primary">{KIND_ICON[k] || "•"}</span>
               <span className="text-sm">{p.label}</span>
             </button>
           ))}
@@ -137,7 +137,7 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
           {(preset?.models || []).length > 0 && (
             <div className="grid gap-2 sm:grid-cols-2">
               {preset.models.map((m: any) => (
-                <button key={m.name} onClick={() => setModel(m.name)} className={cn("rounded-xl border p-3 text-start transition", model === m.name ? "border-primary/60 bg-primary/10" : "hairline hover:bg-line/5")}>
+                <button key={m.name} onClick={() => setModel(m.name)} className={cn("rounded-[5px] border p-3 text-start transition", model === m.name ? "border-primary/60 bg-primary/10" : "hairline hover:bg-line/5")}>
                   <div className="text-sm font-medium">{m.label}</div>
                   <div className="ltr text-end font-mono text-[11px] text-muted">{m.name}</div>
                   <div className="mt-1 flex flex-wrap gap-1">{m.caps.map((c: string) => <Badge key={c}>{c}</Badge>)}</div>
@@ -149,7 +149,7 @@ function AddProvider({ catalog, onClose }: { catalog: any; onClose: () => void }
         </div>
       )}
       {step === 4 && result && (
-        <div className={cn("flex items-start gap-3 rounded-2xl p-4", result.ok ? "bg-success/10" : "bg-danger/10")}>
+        <div className={cn("flex items-start gap-3 rounded-[6px] p-4", result.ok ? "bg-success/10" : "bg-danger/10")}>
           {result.ok ? <CheckCircle2 className="h-6 w-6 text-success" /> : <XCircle className="h-6 w-6 text-danger" />}
           <div><p className="font-medium">{result.ok ? "اتصال موفق بود" : "اتصال ناموفق بود"}</p><p className="mt-1 text-sm text-muted">{result.message} · {faInt(result.latency_ms)} میلی‌ثانیه</p></div>
         </div>
@@ -185,7 +185,7 @@ function DiscoverModels({ provider, refresh }: { provider: any; refresh: () => v
       <p className="text-xs text-muted mb-3">این فهرست از API شرکت خوانده می‌شود. قیمت، ظرفیت و قابلیت ابزار/تصویر برای مدل‌های ناشناخته باید جداگانه بررسی و تنظیم شود.</p>
       <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="جستجوی نام مدل" />
       <div className="mt-3 max-h-80 space-y-2 overflow-y-auto">
-        {filtered.map((m) => <div key={m.id} className="flex items-center justify-between gap-2 rounded-lg border hairline p-2">
+        {filtered.map((m) => <div key={m.id} className="flex items-center justify-between gap-2 rounded-[4px] border hairline p-2">
           <div className="min-w-0"><div className="text-sm">{m.label}</div><div className="text-[11px] ltr text-end">{m.id}</div></div>
           <Button size="sm" disabled={existing.has(m.id) || adding === m.id} loading={adding === m.id}
             onClick={async () => {
@@ -204,9 +204,15 @@ function DiscoverModels({ provider, refresh }: { provider: any; refresh: () => v
   </>;
 }
 
+const HEALTH: Record<string, [string, any]> = { ok: ["سالم", "success"], degraded: ["کاهش کیفیت", "warning"], failing: ["از کار افتاده", "danger"], unknown: ["آزمون‌نشده", "neutral"] };
+const SRC_FA: Record<string, string> = { probe: "آزمون‌شده", manual: "دستی", provider: "از API", heuristic: "تخمینی", catalog: "کاتالوگ" };
+const PRICE_SRC_FA: Record<string, string> = { provider_api: "قیمت از API ارائه‌دهنده", manual: "قیمت دستی", catalog_unverified: "قیمت کاتالوگ (تأییدنشده)", unknown: "قیمت نامشخص" };
+const CAP_FA: Record<string, string> = { chat: "گفتگو", tools: "ابزار", vision: "بینایی" };
+
 function ModelRow({ m }: { m: any }) {
   const qc = useQueryClient();
   const [testing, setTesting] = useState(false);
+  const [probing, setProbing] = useState(false);
   const [edit, setEdit] = useState(false);
   const [f, setF] = useState<any>(m);
   const refresh = () => { qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); };
@@ -214,19 +220,47 @@ function ModelRow({ m }: { m: any }) {
     setTesting(true);
     try { const r = await post(`/api/settings/ai/models/${m.id}/test`); toast(r.message, r.ok ? "success" : "error", 7000); refresh(); } catch (e) { toastError(e); } finally { setTesting(false); }
   };
+  const probe = async () => {
+    setProbing(true);
+    try {
+      const r = await post(`/api/control/models/${m.id}/probe`);
+      const res = Object.entries(r.results || {}).map(([k, v]: any) => `${CAP_FA[k] || k}: ${v?.ok ? "✓" : "✗"}`).join(" · ");
+      toast(`${r.model}: ${res || (r.error ?? "")}`, r.ok ? "success" : "error", 9000);
+      refresh();
+    } catch (e) { toastError(e); } finally { setProbing(false); }
+  };
+  const meta = m.capability_meta || {};
   return (
-    <div className="rounded-xl border hairline bg-bg2/40 p-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="die die-sm die-sunk p-3">
+      <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">{m.display_name || m.model_name}</div>
-          <div className="ltr text-end font-mono text-[11px] text-muted">{m.model_name}</div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate text-sm font-medium">{m.display_name || m.model_name}</span>
+            <Badge tone={HEALTH[m.health]?.[1] || "neutral"} dot>{HEALTH[m.health]?.[0] || "آزمون‌نشده"}</Badge>
+          </div>
+          <div className="ltr mono mt-0.5 break-all text-end text-[11px] text-muted">{m.model_name}</div>
         </div>
-        <div className="flex flex-wrap gap-1">{CAPS.filter(([c]) => m.capabilities?.[c]).map(([c, l]) => <Badge key={c} tone="cyan">{l}</Badge>)}</div>
-        <Button size="sm" variant="soft" loading={testing} onClick={test}>تست اتصال</Button>
-        <Button size="sm" variant="ghost" onClick={() => setEdit(true)}>ویرایش</Button>
         <Switch checked={m.enabled} onChange={async (v) => { await patch(`/api/settings/ai/models/${m.id}`, { enabled: v }); refresh(); }} label="فعال" />
       </div>
-      <div className="num mt-1.5 text-[10px] text-muted">قیمت هر میلیون توکن: ورودی ${m.price_in} · خروجی ${m.price_out} · کش ${m.price_cache_read}</div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {CAPS.filter(([c]) => m.capabilities?.[c]).map(([c, l]) => (
+          <Badge key={c} tone={meta[c]?.source === "probe" ? "success" : "cyan"}>
+            {l}<span className="opacity-70">· {SRC_FA[meta[c]?.source] || "دستی"}</span>
+          </Badge>
+        ))}
+        {!CAPS.some(([c]) => m.capabilities?.[c]) && <span className="text-[11px] text-muted">قابلیتی ثبت نشده؛ «آزمون قابلیت‌ها» را بزنید.</span>}
+      </div>
+      {m.last_error && m.health !== "ok" && <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-danger">{m.last_error_class ? `[${m.last_error_class}] ` : ""}{m.last_error}</p>}
+      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t hairline pt-2.5">
+        <div className="num text-[10px] leading-4 text-muted">
+          ${m.price_in} / ${m.price_out} در هر میلیون توکن · <span className={m.pricing_source === "provider_api" || m.pricing_source === "manual" ? "" : "text-warning"}>{PRICE_SRC_FA[m.pricing_source] || "منبع قیمت نامشخص"}</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" variant="soft" loading={testing} onClick={test}>تست اتصال</Button>
+          <Button size="sm" variant="outline" loading={probing} onClick={probe}>آزمون قابلیت‌ها</Button>
+          <Button size="sm" variant="ghost" onClick={() => setEdit(true)}>ویرایش</Button>
+        </div>
+      </div>
       {edit && (
         <Modal open onClose={() => setEdit(false)} title="ویرایش مدل" footer={<>
           <Button variant="danger" onClick={async () => { if (!confirm("مدل حذف شود؟")) return; await del(`/api/settings/ai/models/${m.id}`); refresh(); setEdit(false); }}>حذف</Button>
@@ -258,7 +292,7 @@ function ModelSlots({ title, icon, ids, flags, models, onChange, hint }: { title
       <div className="space-y-2">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-center gap-2">
-            <span className="num grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-line/10 text-xs">{faInt(i + 1)}</span>
+            <span className="num grid h-7 w-7 shrink-0 place-items-center rounded-[4px] bg-line/10 text-xs">{faInt(i + 1)}</span>
             <Select value={ids[i] || ""} onChange={(e) => { const n = [...ids]; n[i] = e.target.value; const f = [...flags]; if (f[i] === undefined) f[i] = true; onChange(n.filter((x, j) => x || j < n.length), f); }}>
               <option value="">{i === 0 ? "انتخاب مدل اصلی…" : "Fallback (اختیاری)"}</option>
               {models.map((m) => <option key={m.id} value={m.id}>{m.label} — {m.provider}</option>)}
@@ -271,8 +305,50 @@ function ModelSlots({ title, icon, ids, flags, models, onChange, hint }: { title
   );
 }
 
-function AI() {
+function ProviderCard({ p, models }: { p: any; models: any[] }) {
   const qc = useQueryClient();
+  const [syncing, setSyncing] = useState(false);
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); };
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      const r = await post(`/api/control/providers/${p.id}/sync`);
+      toast(`${r.provider}: ${faInt(r.found)} مدل در حساب · ${faInt(r.created)} جدید (غیرفعال تا آزمون) · ${faInt(r.updated)} به‌روز`, "success", 8000);
+      refresh();
+    } catch (e) { toastError(e); } finally { setSyncing(false); }
+  };
+  return (
+    <div className="die die-2">
+      <div className="flex items-start gap-3 p-3.5">
+        <span className="bevel grid h-9 w-9 shrink-0 place-items-center bg-primary/10 font-bold text-primary ring-1 ring-inset ring-primary/20">{KIND_ICON[p.kind] || <Cloud className="h-4 w-4" />}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate font-medium">{p.name}</span>
+            {p.last_test_ok != null && <Badge tone={p.last_test_ok ? "success" : "danger"} dot>{p.last_test_ok ? "اتصال موفق" : "اتصال ناموفق"}</Badge>}
+            <Badge>{faInt(models.length)} مدل</Badge>
+          </div>
+          <div className="ltr mono mt-0.5 truncate text-end text-[11px] text-muted">{p.api_key_masked || "بدون کلید"}{p.base_url ? ` · ${p.base_url}` : ""}</div>
+        </div>
+        <Switch checked={p.enabled} onChange={async (x) => { await patch(`/api/settings/ai/providers/${p.id}`, { enabled: x }); refresh(); }} label="فعال" />
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 border-y hairline px-3.5 py-2.5">
+        <Button size="sm" variant="soft" loading={syncing} onClick={sync}>همگام‌سازی مدل‌ها از API</Button>
+        <DiscoverModels provider={{ ...p, models }} refresh={refresh} />
+        <Button size="sm" variant="ghost" icon={<Plus className="h-3.5 w-3.5" />} onClick={async () => { const name = prompt("شناسه دقیق مدل (Model ID) از مستندات ارائه‌دهنده:"); if (name) { try { await post("/api/settings/ai/models", { provider_id: p.id, model_name: name }); refresh(); } catch (e) { toastError(e); } } }}>ثبت دستی مدل</Button>
+        <span className="ms-auto flex gap-1">
+          <Button size="icon" variant="ghost" aria-label="تغییر کلید API" onClick={async () => { const k = prompt("کلید API جدید:"); if (k) { await patch(`/api/settings/ai/providers/${p.id}`, { api_key: k }); refresh(); toast("کلید به‌روزرسانی شد", "success"); } }}><KeyRound className="h-4 w-4" /></Button>
+          <Button size="icon" variant="ghost" aria-label="حذف ارائه‌دهنده" onClick={async () => { if (!confirm("ارائه‌دهنده و مدل‌هایش حذف شوند؟")) return; await del(`/api/settings/ai/providers/${p.id}`); refresh(); }}><Trash2 className="h-4 w-4" /></Button>
+        </span>
+      </div>
+      <div className="space-y-2 p-3.5">
+        {models.map((m: any) => <ModelRow key={m.id} m={m} />)}
+        {!models.length && <p className="text-center text-xs text-muted">هنوز مدلی از این ارائه‌دهنده ثبت نشده؛ «همگام‌سازی مدل‌ها» فهرست واقعی حساب شما را می‌آورد.</p>}
+      </div>
+    </div>
+  );
+}
+
+function AI() {
   const { v, setV, save, saving } = useSection<any>("ai");
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: () => get("/api/settings/ai/catalog") });
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => get("/api/settings/ai/providers") });
@@ -301,27 +377,7 @@ function AI() {
           {providers.isLoading && <Skeleton className="h-24" />}
           {(providers.data?.providers || []).length === 0 && !providers.isLoading && <p className="py-6 text-center text-sm text-muted">هنوز مدلی تعریف نشده است. با دکمه «افزودن مدل» شروع کنید.</p>}
           {(providers.data?.providers || []).map((p: any) => (
-            <div key={p.id} className="rounded-2xl border hairline p-3.5">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary/12 font-bold text-primary">{KIND_ICON[p.kind] || "•"}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">{p.name}</div>
-                  <div className="ltr text-end text-[11px] text-muted">{p.api_key_masked || "بدون کلید"} {p.base_url ? `· ${p.base_url}` : ""}</div>
-                </div>
-                {p.last_test_ok != null && <Badge tone={p.last_test_ok ? "success" : "danger"}>{p.last_test_ok ? "آخرین تست موفق" : "آخرین تست ناموفق"}</Badge>}
-                <Switch checked={p.enabled} onChange={async (x) => { await patch(`/api/settings/ai/providers/${p.id}`, { enabled: x }); qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); }} label="فعال" />
-                <Button size="sm" variant="ghost" onClick={async () => { const k = prompt("کلید API جدید:"); if (k) { await patch(`/api/settings/ai/providers/${p.id}`, { api_key: k }); qc.invalidateQueries({ queryKey: ["providers"] }); toast("کلید به‌روزرسانی شد", "success"); } }}><KeyRound className="h-4 w-4" /></Button>
-                <Button size="sm" variant="ghost" onClick={async () => { if (!confirm("ارائه‌دهنده و مدل‌هایش حذف شوند؟")) return; await del(`/api/settings/ai/providers/${p.id}`); qc.invalidateQueries({ queryKey: ["providers"] }); }}><Trash2 className="h-4 w-4" /></Button>
-              </div>
-              <div className="space-y-2">
-                {(providers.data?.models || []).filter((m: any) => m.provider_id === p.id).map((m: any) => <ModelRow key={m.id} m={m} />)}
-                <div className="flex flex-wrap items-center gap-2">
-                  <DiscoverModels provider={{ ...p, models: (providers.data?.models || []).filter((m: any) => m.provider_id === p.id) }}
-                    refresh={() => { qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); }} />
-                  <Button size="sm" variant="ghost" icon={<Plus className="h-3.5 w-3.5" />} onClick={async () => { const name = prompt("نام مدل:"); if (name) { try { await post("/api/settings/ai/models", { provider_id: p.id, model_name: name }); qc.invalidateQueries({ queryKey: ["providers"] }); qc.invalidateQueries({ queryKey: ["models-available"] }); } catch (e) { toastError(e); } } }}>مدل دیگر از همین ارائه‌دهنده</Button>
-                </div>
-              </div>
-            </div>
+            <ProviderCard key={p.id} p={p} models={(providers.data?.models || []).filter((m: any) => m.provider_id === p.id)} />
           ))}
         </div>
       </Card>
@@ -421,7 +477,7 @@ function Harness() {
   const { data, isLoading, error } = useQuery({ queryKey: ["harness"], queryFn: () => get("/api/settings/harness") });
   return (
     <div className="space-y-3">
-      <div className="flex items-start gap-2 rounded-2xl border border-primary/25 bg-primary/8 px-4 py-3 text-sm"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />این قوانین به‌صورت قطعی در Backend اجرا می‌شوند و مستقل از تصمیم مدل هوش مصنوعی هستند. تغییر هسته سیستم و پرداخت همیشه نیازمند تایید صریح شماست.</div>
+      <div className="flex items-start gap-2 rounded-[6px] border border-primary/25 bg-primary/8 px-4 py-3 text-sm"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />این قوانین به‌صورت قطعی در Backend اجرا می‌شوند و مستقل از تصمیم مدل هوش مصنوعی هستند. تغییر هسته سیستم و پرداخت همیشه نیازمند تایید صریح شماست.</div>
       {error && <ErrorBox error={error} />}
       {isLoading && <Skeleton className="h-40" />}
       {(data?.items || []).map((r: any) => <HarnessRow key={r.id} r={r} />)}
@@ -519,7 +575,7 @@ function Telegram() {
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#229ED9]/15 text-[#229ED9]"><MessageCircle className="h-5 w-5" /></span>
+            <span className="grid h-11 w-11 place-items-center rounded-[6px] bg-[#229ED9]/15 text-[#229ED9]"><MessageCircle className="h-5 w-5" /></span>
             <div>
               <div className="font-semibold">تلگرام شخصی (MTProto / Telethon)</div>
               <div className="text-xs text-muted">{live.connected ? `متصل به ${live.me?.name || ""} ${live.me?.username ? "@" + live.me.username : ""}` : live.error || "متصل نیست"}</div>
@@ -558,7 +614,7 @@ function Telegram() {
             <Input value={(sec.v.allowlist || []).join("، ")} onChange={(e) => sec.setV({ ...sec.v, allowlist: e.target.value.split(/[،,]/).map((x) => x.trim()).filter(Boolean) })} className="ltr" />
           </Field>
           <Field label="گفتگوی فرمان کارفرما"><Input value={sec.v.owner_chat || "me"} onChange={(e) => sec.setV({ ...sec.v, owner_chat: e.target.value })} className="ltr" /></Field>
-          <label className="flex items-center justify-between rounded-xl bg-line/5 px-3 py-2.5 text-sm">اتصال خودکار پیام‌ها به CRM<Switch checked={sec.v.auto_link_crm} onChange={(x) => sec.setV({ ...sec.v, auto_link_crm: x })} /></label>
+          <label className="flex items-center justify-between rounded-[5px] bg-line/5 px-3 py-2.5 text-sm">اتصال خودکار پیام‌ها به CRM<Switch checked={sec.v.auto_link_crm} onChange={(x) => sec.setV({ ...sec.v, auto_link_crm: x })} /></label>
         </div>
         <SaveBar saving={sec.saving} onSave={() => sec.save()} />
       </Card>
@@ -617,7 +673,7 @@ function System() {
           actions={<Button variant="primary" loading={busy || st.state === "running" || st.state === "requested"} onClick={run} icon={<RefreshCw className="h-4 w-4" />}>به‌روزرسانی</Button>} />
         <div className="space-y-3 p-5">
           <div className="flex flex-wrap items-center gap-2 text-sm">وضعیت: <Badge tone={st.state === "failed" ? "danger" : st.state === "done" ? "success" : st.state === "running" ? "primary" : "neutral"} dot>{LABEL[st.state] || st.state}</Badge>{st.at && <span className="text-xs text-muted">{fmtDate(st.at)}</span>}</div>
-          {data?.log && <pre className="ltr max-h-72 overflow-auto rounded-xl bg-bg/70 p-3 text-[11px] leading-5 text-muted">{data.log}</pre>}
+          {data?.log && <pre className="ltr max-h-72 overflow-auto rounded-[5px] bg-bg/70 p-3 text-[11px] leading-5 text-muted">{data.log}</pre>}
           <p className="text-xs text-muted">به‌روزرسانی توسط سرویس امن میزبان (systemd) اجرا می‌شود؛ پیش از آن از دیتابیس نسخه پشتیبان گرفته می‌شود و در صورت شکست، نسخه قبلی حفظ می‌شود.</p>
         </div>
       </Card>

@@ -57,7 +57,7 @@ function RoutineForm({ routine, onClose }: { routine?: any; onClose: () => void 
         {f.trigger_type === "cron" && (
           <Field label="عبارت cron (به وقت منطقه زمانی تنظیمات)" className="sm:col-span-2" hint="دقیقه ساعت روز‌ماه ماه روز‌هفته — روز هفته: ۰=یکشنبه … ۶=شنبه">
             <Input value={f.cron_expr} onChange={(e) => set("cron_expr", e.target.value)} className="ltr" />
-            <div className="mt-2 flex flex-wrap gap-1.5">{PRESETS.map((p) => <button key={p.c} type="button" onClick={() => set("cron_expr", p.c)} className={cn("rounded-lg px-2.5 py-1 text-[11px] ring-1", f.cron_expr === p.c ? "bg-primary/15 text-primary ring-primary/30" : "text-muted ring-line/20 hover:text-ink")}>{p.l}</button>)}</div>
+            <div className="mt-2 flex flex-wrap gap-1.5">{PRESETS.map((p) => <button key={p.c} type="button" onClick={() => set("cron_expr", p.c)} className={cn("rounded-[4px] px-2.5 py-1 text-[11px] ring-1", f.cron_expr === p.c ? "bg-primary/15 text-primary ring-primary/30" : "text-muted ring-line/20 hover:text-ink")}>{p.l}</button>)}</div>
           </Field>
         )}
         {f.trigger_type === "interval" && <Field label="فاصله (دقیقه)"><Input type="number" min={1} value={Math.round(f.interval_seconds / 60)} onChange={(e) => set("interval_seconds", Number(e.target.value) * 60)} /></Field>}
@@ -70,7 +70,7 @@ function RoutineForm({ routine, onClose }: { routine?: any; onClose: () => void 
         )}
         <Field label="سقف گام (اختیاری)"><Input type="number" value={f.max_steps || ""} onChange={(e) => set("max_steps", e.target.value)} /></Field>
         <Field label="سقف هزینه هر اجرا (دلار، اختیاری)"><Input type="number" step="0.01" value={f.max_cost_usd || ""} onChange={(e) => set("max_cost_usd", e.target.value)} /></Field>
-        <div className="flex items-center justify-between rounded-xl bg-line/5 px-3 py-2.5 sm:col-span-2">
+        <div className="flex items-center justify-between rounded-[5px] bg-line/5 px-3 py-2.5 sm:col-span-2">
           <div><div className="text-sm">زمان‌حساس</div><div className="text-[11px] text-muted">در صورت خطاهای پیاپی، هشدار فوری و دوره خنک‌شدن کوتاه‌تر</div></div>
           <Switch checked={!!f.time_sensitive} onChange={(v) => set("time_sensitive", v)} />
         </div>
@@ -124,7 +124,7 @@ export default function Routines() {
                   {r.circuit_state === "half_open" && <Badge tone="warning">نیمه‌باز (آزمایشی)</Badge>}
                   {r.created_by === "agent" && <Badge tone="accent">ساخته ایجنت</Badge>}
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-line/5 p-2.5 text-[11px]">
+                <div className="mt-3 grid grid-cols-2 gap-2 rounded-[5px] bg-line/5 p-2.5 text-[11px]">
                   <div><div className="text-muted">اجرای بعدی</div><div className="num flex items-center gap-1"><Clock className="h-3 w-3" />{r.next_run_at ? fmtDate(r.next_run_at) : "—"}</div></div>
                   <div><div className="text-muted">آخرین اجرا</div><div className="num flex items-center gap-1"><Activity className="h-3 w-3" />{r.last_run_at ? relTime(r.last_run_at) : "—"} {r.last_status && <span className={r.last_status === "success" ? "text-success" : "text-danger"}>({r.last_status === "success" ? "موفق" : "ناموفق"})</span>}</div></div>
                   <div><div className="text-muted">تعداد اجرا</div><div className="num">{faInt(r.run_count)}</div></div>

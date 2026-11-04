@@ -27,7 +27,7 @@ function Versions({ tool, onClose }: { tool: any; onClose: () => void }) {
     <Modal open onClose={onClose} title={`نسخه‌های ${tool.name}`}>
       <div className="space-y-2">
         {(data?.items || []).map((v: any) => (
-          <div key={v.id} className={cn("flex items-center justify-between gap-3 rounded-xl border hairline px-3 py-2.5", v.id === tool.active_version_id && "border-primary/40 bg-primary/8")}>
+          <div key={v.id} className={cn("flex items-center justify-between gap-3 rounded-[5px] border hairline px-3 py-2.5", v.id === tool.active_version_id && "border-primary/40 bg-primary/8")}>
             <div className="min-w-0">
               <div className="ltr text-end font-mono text-sm">{v.version}</div>
               <div className="text-[11px] text-muted">{fmtDate(v.created_at)} · تست: {v.test_status === "passed" ? "✅ موفق" : v.test_status === "failed" ? "❌ ناموفق" : "—"}</div>
@@ -101,7 +101,7 @@ export default function Tools() {
                       </div>
                     </div>
                     {t.description && <p className="mt-2 text-sm text-muted">{t.description}</p>}
-                    {t.last_error && <p className="mt-2 rounded-lg bg-danger/10 px-2.5 py-1.5 text-xs text-danger">{t.last_error}</p>}
+                    {t.last_error && <p className="mt-2 rounded-[4px] bg-danger/10 px-2.5 py-1.5 text-xs text-danger">{t.last_error}</p>}
                     <div className="mt-3 flex flex-wrap gap-1">{(t.tool_names || []).map((n: string) => <code key={n} className="rounded-md bg-line/10 px-1.5 py-0.5 text-[10px]">{n}</code>)}</div>
                     <div className="mt-3 text-[11px] text-muted">مجوز Harness: {CAT[t.harness_category] || t.harness_category} · به‌روزرسانی {relTime(t.updated_at)}</div>
                     <div className="mt-3 flex flex-wrap gap-1.5">

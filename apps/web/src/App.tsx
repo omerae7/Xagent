@@ -3,13 +3,14 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
 import { Shell } from "./components/layout/Shell";
 import { Toaster } from "./components/ui";
-import { Orb } from "./components/viz/Orb";
+import { PadArray } from "./components/viz/Silicon";
 import { get, post } from "./lib/api";
 import { setLocale } from "./lib/format";
 import { connectLive, disconnectLive } from "./lib/live";
 import Login from "./pages/Login";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Control = lazy(() => import("./pages/Control"));
 const Chat = lazy(() => import("./pages/Chat"));
 const Tasks = lazy(() => import("./pages/Tasks"));
 const Routines = lazy(() => import("./pages/Routines"));
@@ -24,7 +25,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 function Splash() {
   return (
     <div className="grid min-h-[60vh] place-items-center">
-      <Orb state="thinking" size={120} />
+      <PadArray state="thinking" size={112} n={6} />
     </div>
   );
 }
@@ -54,7 +55,7 @@ export default function App() {
     get("/api/settings").then((s) => setLocale(s.settings.general.timezone, s.settings.general.calendar)).catch(() => undefined);
   }, [authed]);
 
-  if (authed === null) return <div className="grid min-h-dvh place-items-center"><div className="app-bg" /><Orb state="thinking" size={140} /></div>;
+  if (authed === null) return <div className="grid min-h-dvh place-items-center"><div className="app-bg" /><PadArray state="thinking" size={128} n={7} label="در حال بارگذاری X Agent" /></div>;
   if (!authed) return <><Login onLogin={() => { qc.clear(); setAuthed(true); }} /><Toaster /></>;
 
   const logout = async () => {
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="/dream" element={<Dream />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/control" element={<Control />} />
           <Route path="*" element={<Dashboard />} />
         </Routes>
       </Suspense>

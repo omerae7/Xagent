@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApprovalCard, Composer, MessageBubble, StepList, VoiceMode } from "../components/chat";
 import { Badge, Button, cn, Drawer, Empty, ErrorBox, Input, Select, Skeleton } from "../components/ui";
-import { Orb, Thinking } from "../components/viz/Orb";
+import { ChipMark, PadArray, Thinking } from "../components/viz/Silicon";
 import { del, get, patch, post } from "../lib/api";
 import { compact, relTime, usd } from "../lib/format";
 import { useLive } from "../lib/live";
@@ -35,7 +35,7 @@ function ConversationList({ activeId, onPick }: { activeId?: string; onPick: () 
         {!isLoading && items.length === 0 && <p className="px-3 py-8 text-center text-xs text-muted">گفتگویی یافت نشد</p>}
         {items.map((c) => (
           <button key={c.id} onClick={() => { nav(`/chat/${c.id}`); onPick(); }}
-            className={cn("group relative w-full rounded-xl px-3 py-2.5 text-start transition", activeId === c.id ? "bg-primary/12 ring-1 ring-primary/25" : "hover:bg-line/8")}>
+            className={cn("group relative w-full rounded-[5px] px-3 py-2.5 text-start transition", activeId === c.id ? "bg-primary/12 ring-1 ring-primary/25" : "hover:bg-line/8")}>
             <div className="flex items-center gap-2">
               {c.pinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
               <span className="truncate text-sm">{c.title}</span>
@@ -168,10 +168,10 @@ export default function Chat() {
 
   return (
     <div className="grid h-[calc(100dvh-11.75rem)] gap-4 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[290px_1fr]">
-      <aside className="glass hidden overflow-hidden rounded-card lg:block"><ConversationList activeId={id} onPick={() => undefined} /></aside>
+      <aside className="die hidden overflow-hidden lg:block"><ConversationList activeId={id} onPick={() => undefined} /></aside>
       <Drawer open={listOpen} onClose={() => setListOpen(false)} title="گفتگوها"><ConversationList activeId={id} onPick={() => setListOpen(false)} /></Drawer>
 
-      <section className="glass relative flex min-h-0 flex-col overflow-hidden rounded-card">
+      <section className="die relative flex min-h-0 flex-col overflow-hidden">
         {/* سربرگ: انتخاب مدل */}
         <div className="flex items-center gap-2 border-b hairline px-3 py-2.5 sm:px-4">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setListOpen(true)} aria-label="فهرست گفتگوها"><PanelRightOpen className="h-5 w-5" /></Button>
@@ -206,15 +206,15 @@ export default function Chat() {
         {/* پیام‌ها */}
         <div className="flex-1 space-y-4 overflow-y-auto px-3 py-5 sm:px-6">
           {!id && (
-            <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
-              <Orb state="idle" size={180} className="animate-float" />
+            <div className="flex min-h-full flex-col items-center gap-5 py-2 text-center [&>*:first-child]:mt-auto [&>*:last-child]:mb-auto">
+              <PadArray state="idle" size={typeof window !== "undefined" && window.innerWidth < 640 ? 96 : 132} n={8} />
               <div>
                 <h2 className="text-xl font-bold">چه کاری برایتان انجام دهم؟</h2>
                 <p className="mt-1 text-sm text-muted">پیام، فایل، عکس یا صدا بفرستید. کارهای حساس قبل از اجرا از شما اجازه می‌گیرند.</p>
               </div>
               <div className="grid w-full max-w-xl gap-2 sm:grid-cols-2">
                 {["امروز چه تسک‌هایی دارم؟", "هر روز ساعت ۹ صبح گزارش تسک‌ها را برایم بفرست", "قیمت امروز دلار را از وب پیدا کن", "یک تسک برای پیگیری قرارداد با علی بساز"].map((s) => (
-                  <button key={s} onClick={() => send(s).catch(toastError)} className="glass rounded-2xl px-4 py-3 text-start text-sm transition hover:shadow-glow">{s}</button>
+                  <button key={s} onClick={() => send(s).catch(toastError)} className="die die-sm px-4 py-3 text-start text-sm transition-colors hover:text-primary">{s}</button>
                 ))}
               </div>
             </div>
@@ -227,8 +227,8 @@ export default function Chat() {
           <AnimatePresence>
             {busy && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex gap-2.5">
-                <div className="mt-1 shrink-0"><Orb state={activeRun.status === "waiting_approval" ? "waiting" : "thinking"} size={30} /></div>
-                <div className="glass min-w-0 max-w-[86%] flex-1 rounded-2xl rounded-es-md px-4 py-3 sm:max-w-[78%]">
+                <div className="mt-1 shrink-0"><ChipMark state={activeRun.status === "waiting_approval" ? "waiting" : "thinking"} size={30} /></div>
+                <div className="die min-w-0 max-w-[86%] flex-1 rounded-[6px] rounded-es-md px-4 py-3 sm:max-w-[78%]">
                   <Thinking variant={thinkingVariant} label={activeRun.status === "waiting_approval" ? "منتظر اجازه شما…" : activeRun.status === "queued" ? "در صف اجرا…" : "در حال فکر و اجرا…"} />
                   {steps.length > 0 && <div className="mt-3"><StepList steps={steps} live={activeRun.status === "running"} /></div>}
                   <div className="num mt-2 text-[10px] text-muted">{compact(activeRun.tokens_in + activeRun.tokens_out)} توکن · {usd(activeRun.cost_usd)}</div>
@@ -238,7 +238,7 @@ export default function Chat() {
           </AnimatePresence>
           {approvals.map((a) => <ApprovalCard key={a.id} a={a} onDone={() => qc.invalidateQueries({ queryKey: ["messages", id] })} />)}
           {activeRun?.status === "paused" && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/8 px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/30 bg-warning/8 px-4 py-3 text-sm">
               <span>⏸ اجرا متوقف شده است ({activeRun.stop_reason}). وضعیت ذخیره شده و قابل ادامه است.</span>
               <div className="flex gap-2">
                 <Button size="sm" variant="soft" icon={<Play className="h-3.5 w-3.5" />} onClick={() => resume()}>ادامه</Button>

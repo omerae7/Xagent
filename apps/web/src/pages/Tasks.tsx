@@ -72,7 +72,7 @@ function TaskRow({ t, onEdit }: { t: any; onEdit: () => void }) {
     qc.invalidateQueries({ queryKey: ["tasks"] });
   };
   return (
-    <motion.div layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 transition hover:bg-line/6">
+    <motion.div layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-3 rounded-[6px] px-3 py-2.5 transition hover:bg-line/6">
       <button onClick={toggle} aria-label="تغییر وضعیت" className={cn("grid h-5 w-5 shrink-0 place-items-center rounded-md border-2 transition", t.status === "done" ? "border-success bg-success text-white" : "border-line/40 hover:border-primary")}>
         {t.status === "done" && <svg viewBox="0 0 12 12" className="h-3 w-3"><path d="M2 6l3 3 5-6" stroke="currentColor" strokeWidth="2" fill="none" /></svg>}
       </button>
@@ -104,7 +104,7 @@ function Kanban({ items, onEdit }: { items: any[]; onEdit: (t: any) => void }) {
         return (
           <div key={col.v} onDragOver={(e) => { e.preventDefault(); setOver(col.v); }} onDragLeave={() => setOver(null)}
             onDrop={(e) => { setOver(null); move(e.dataTransfer.getData("id"), col.v); }}
-            className={cn("glass min-h-[300px] w-[80vw] shrink-0 snap-start rounded-card p-3 transition sm:w-[320px] lg:w-auto", over === col.v && "shadow-glow ring-1 ring-primary/40")}>
+            className={cn("die min-h-[300px] w-[80vw] shrink-0 snap-start p-3 transition sm:w-[320px] lg:w-auto", over === col.v && " ring-1 ring-primary/40")}>
             <div className="mb-3 flex items-center justify-between px-1">
               <Badge tone={col.tone as any} dot>{col.l}</Badge>
               <span className="num text-xs text-muted">{faInt(list.length)}</span>
@@ -112,7 +112,7 @@ function Kanban({ items, onEdit }: { items: any[]; onEdit: (t: any) => void }) {
             <div className="space-y-2">
               {list.map((t) => (
                 <motion.div layout key={t.id} draggable onDragStart={(e: any) => e.dataTransfer.setData("id", t.id)} onClick={() => onEdit(t)}
-                  className="cursor-grab rounded-2xl border hairline bg-bg2/60 p-3 transition hover:border-primary/40 active:cursor-grabbing">
+                  className="cursor-grab rounded-[6px] border hairline bg-bg2/60 p-3 transition hover:border-primary/40 active:cursor-grabbing">
                   <div className="text-sm">{t.title}</div>
                   <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
                     <span>{t.assignee_name || ASSIGNEE[t.assignee_type]}</span>
@@ -147,7 +147,7 @@ function Calendar({ items, onEdit }: { items: any[]; onEdit: (t: any) => void })
           const dayTasks = c.date ? items.filter((t) => t.due_at && sameDay(new Date(t.due_at), c.date!)) : [];
           const isToday = c.date && sameDay(c.date, today);
           return (
-            <div key={i} className={cn("min-h-[64px] rounded-xl p-1 sm:min-h-[92px] sm:p-1.5", c.date ? "bg-line/5" : "", isToday && "ring-1 ring-primary/60 bg-primary/8")}>
+            <div key={i} className={cn("min-h-[64px] rounded-[5px] p-1 sm:min-h-[92px] sm:p-1.5", c.date ? "bg-line/5" : "", isToday && "ring-1 ring-primary/60 bg-primary/8")}>
               {c.jd && <div className={cn("num mb-1 text-[11px]", isToday ? "font-bold text-primary" : "text-muted")}>{toFaDigits(c.jd)}</div>}
               <div className="space-y-1">
                 {dayTasks.slice(0, 3).map((t) => (

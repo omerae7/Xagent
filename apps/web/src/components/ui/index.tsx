@@ -1,8 +1,8 @@
-/** کامپوننت‌های پایه رابط کاربری — همه از توکن‌های طراحی تغذیه می‌شوند. */
+/** کامپوننت‌های پایه رابط — زبان «سیلیکون زنده»: بلوک‌های پَخ‌دار، پدهای مربعی، مسیرهای سیگنال. */
 
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, CheckCircle2, Info, Loader2, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Info, Loader2, X, XCircle } from "lucide-react";
 import {
   forwardRef,
   type ButtonHTMLAttributes,
@@ -17,23 +17,18 @@ import { dismissToast, useToasts } from "../../lib/store";
 
 export const cn = clsx;
 
-// ── کارت شیشه‌ای ──
+// ── بلوک تراشه (کارت) ──
 export function Card({
   className,
   children,
   glow,
   as = "div",
+  tone = 1,
   ...rest
-}: { className?: string; children: ReactNode; glow?: boolean; as?: "div" | "section" } & Record<string, any>) {
-  const C: any = motion[as];
+}: { className?: string; children: ReactNode; glow?: boolean; as?: "div" | "section"; tone?: 1 | 2 } & Record<string, any>) {
+  const C: any = as;
   return (
-    <C
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.2, 0.7, 0.3, 1] }}
-      className={cn("glass rounded-card", glow && "shadow-glow", className)}
-      {...rest}
-    >
+    <C className={cn("die", glow && "die-live", tone === 2 && "die-2", className)} {...rest}>
       {children}
     </C>
   );
@@ -43,13 +38,9 @@ export function CardHeader({ title, icon, actions, sub }: { title: ReactNode; ic
   return (
     <div className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-5">
       <div className="flex min-w-0 items-center gap-2.5">
-        {icon && (
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/12 text-primary ring-1 ring-primary/20">
-            {icon}
-          </span>
-        )}
+        {icon && <span className="bevel grid h-8 w-8 shrink-0 place-items-center bg-primary/10 text-primary ring-1 ring-inset ring-primary/20">{icon}</span>}
         <div className="min-w-0">
-          <h3 className="truncate text-[15px] font-semibold">{title}</h3>
+          <h3 className="truncate text-[15px] font-semibold leading-6">{title}</h3>
           {sub && <p className="truncate text-xs text-muted">{sub}</p>}
         </div>
       </div>
@@ -73,18 +64,18 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button(
     <button
       ref={ref}
       disabled={disabled || loading}
+      aria-busy={loading || undefined}
       className={cn(
-        "relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-xl font-medium transition-all duration-200 active:scale-[.97] disabled:pointer-events-none disabled:opacity-50",
+        "bevel relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:translate-y-px disabled:pointer-events-none disabled:opacity-45",
         size === "sm" && "h-8 px-3 text-xs",
         size === "md" && "h-10 px-4 text-sm",
         size === "lg" && "h-12 px-6 text-[15px]",
         size === "icon" && "h-9 w-9",
-        variant === "primary" &&
-          "btn-glow bg-gradient-to-l from-primary to-[rgb(var(--primary)/.85)] text-white hover:brightness-110",
-        variant === "soft" && "bg-primary/10 text-primary ring-1 ring-primary/20 hover:bg-primary/16",
+        variant === "primary" && "bg-primary text-onprimary shadow-[inset_0_1px_0_rgb(255_255_255/.28),0_1px_0_rgb(0_0_0/.2)] hover:bg-primary/90",
+        variant === "soft" && "bg-primary/10 text-primary ring-1 ring-inset ring-primary/22 hover:bg-primary/16",
         variant === "ghost" && "text-muted hover:bg-line/10 hover:text-ink",
-        variant === "outline" && "hairline border bg-surface/40 hover:bg-surface/70",
-        variant === "danger" && "bg-danger/12 text-danger ring-1 ring-danger/25 hover:bg-danger/20",
+        variant === "outline" && "bg-surface/60 text-ink ring-1 ring-inset ring-line/20 hover:bg-surface2 hover:ring-line/30",
+        variant === "danger" && "bg-danger/10 text-danger ring-1 ring-inset ring-danger/25 hover:bg-danger/18",
         className,
       )}
       {...rest}
@@ -98,18 +89,18 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button(
 // ── برچسب ──
 const TONES = {
   neutral: "bg-line/10 text-muted ring-line/20",
-  primary: "bg-primary/12 text-primary ring-primary/25",
-  success: "bg-success/12 text-success ring-success/25",
-  warning: "bg-warning/12 text-warning ring-warning/25",
-  danger: "bg-danger/12 text-danger ring-danger/25",
-  accent: "bg-accent/12 text-accent ring-accent/25",
-  cyan: "bg-cyan/12 text-cyan ring-cyan/25",
+  primary: "bg-primary/10 text-primary ring-primary/25",
+  success: "bg-success/10 text-success ring-success/25",
+  warning: "bg-warning/10 text-warning ring-warning/30",
+  danger: "bg-danger/10 text-danger ring-danger/25",
+  accent: "bg-accent/10 text-accent ring-accent/25",
+  cyan: "bg-cyan/10 text-cyan ring-cyan/25",
 };
 export type Tone = keyof typeof TONES;
 export function Badge({ tone = "neutral", children, dot, className }: { tone?: Tone; children: ReactNode; dot?: boolean; className?: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium ring-1", TONES[tone], className)}>
-      {dot && <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+    <span className={cn("inline-flex items-center gap-1.5 rounded-[3px] px-2 py-0.5 text-[11px] font-medium leading-5 ring-1 ring-inset", TONES[tone], className)}>
+      {dot && <span className="pad" />}
       {children}
     </span>
   );
@@ -117,7 +108,7 @@ export function Badge({ tone = "neutral", children, dot, className }: { tone?: T
 
 // ── فرم ──
 const fieldBase =
-  "w-full rounded-xl border hairline bg-bg2/60 px-3.5 text-sm text-ink placeholder:text-muted/70 outline-none transition focus:border-primary/60 focus:ring-4 focus:ring-primary/10";
+  "bevel w-full border hairline bg-surface2/70 px-3.5 text-sm text-ink outline-none transition-[border-color,box-shadow] duration-150 focus:border-primary/60 focus:shadow-[0_0_0_3px_rgb(var(--primary)/.14)] disabled:opacity-55 aria-[invalid=true]:border-danger/60";
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...p }, ref) {
   return <input ref={ref} className={cn(fieldBase, "h-10", className)} {...p} />;
 });
@@ -129,9 +120,12 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 });
 export function Select({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select className={cn(fieldBase, "h-10 appearance-none bg-[length:12px] pe-3 ps-8", className)} {...p}>
-      {children}
-    </select>
+    <div className="relative">
+      <select className={cn(fieldBase, "h-10 appearance-none ps-3 pe-8", className)} {...p}>
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute end-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+    </div>
   );
 }
 export function Field({ label, hint, children, className }: { label: ReactNode; hint?: ReactNode; children: ReactNode; className?: string }) {
@@ -139,11 +133,12 @@ export function Field({ label, hint, children, className }: { label: ReactNode; 
     <label className={cn("block space-y-1.5", className)}>
       <span className="text-xs font-medium text-muted">{label}</span>
       {children}
-      {hint && <span className="block text-[11px] leading-5 text-muted/80">{hint}</span>}
+      {hint && <span className="block text-[11px] leading-5 text-muted/90">{hint}</span>}
     </label>
   );
 }
 
+/** کلید کشویی سخت‌افزاری (مستطیلی) */
 export function Switch({ checked, onChange, disabled, label }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
   return (
     <button
@@ -154,14 +149,17 @@ export function Switch({ checked, onChange, disabled, label }: { checked: boolea
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 disabled:opacity-50",
-        checked ? "bg-primary shadow-[0_0_14px_rgb(var(--primary)/.6)]" : "bg-line/30",
+        "relative h-6 w-11 shrink-0 rounded-[5px] ring-1 ring-inset transition-colors duration-200 disabled:opacity-45",
+        checked ? "bg-primary ring-primary" : "bg-line/15 ring-line/25",
       )}
     >
       <motion.span
         layout
-        transition={{ type: "spring", stiffness: 600, damping: 32 }}
-        className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow", checked ? "start-[22px]" : "start-0.5")}
+        transition={{ type: "spring", stiffness: 700, damping: 40 }}
+        className={cn(
+          "absolute top-[3px] h-[18px] w-[18px] rounded-[3px] shadow-[0_1px_2px_rgb(0_0_0/.35)]",
+          checked ? "start-[23px] bg-onprimary" : "start-[3px] bg-ink/70",
+        )}
       />
     </button>
   );
@@ -179,23 +177,25 @@ export function Segmented<T extends string>({
   size?: "sm" | "md";
 }) {
   return (
-    <div className="inline-flex flex-wrap gap-1 rounded-xl border hairline bg-bg2/50 p-1">
+    <div className="bevel inline-flex flex-wrap gap-0.5 bg-bg2/70 p-0.5 ring-1 ring-inset ring-line/15" role="radiogroup">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
+          role="radio"
+          aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            "relative rounded-lg px-3 font-medium transition-colors",
+            "relative rounded-[5px] px-3 font-medium transition-colors duration-150",
             size === "sm" ? "h-7 text-[11px]" : "h-8 text-xs",
-            value === o.value ? "text-white" : "text-muted hover:text-ink",
+            value === o.value ? (o.tone ? "text-white" : "text-ink") : "text-muted hover:text-ink",
           )}
         >
           {value === o.value && (
             <motion.span
               layoutId={`seg-${options.map((x) => x.value).join("-")}`}
-              className={cn("absolute inset-0 rounded-lg", o.tone || "bg-primary")}
-              transition={{ type: "spring", stiffness: 500, damping: 36 }}
+              className={cn("absolute inset-0 rounded-[5px]", o.tone || "bg-surface2 ring-1 ring-inset ring-line/25")}
+              transition={{ type: "spring", stiffness: 600, damping: 42 }}
             />
           )}
           <span className="relative">{o.label}</span>
@@ -205,25 +205,28 @@ export function Segmented<T extends string>({
   );
 }
 
+/** زبانه‌ها: زبانه فعال با «مسیر سیگنال» زیرین مشخص می‌شود */
 export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (v: T) => void; tabs: { value: T; label: ReactNode; icon?: ReactNode }[] }) {
   return (
-    <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
+    <div className="no-scrollbar -mx-1 flex gap-0.5 overflow-x-auto border-b hairline px-1" role="tablist">
       {tabs.map((t) => (
         <button
           key={t.value}
+          role="tab"
+          aria-selected={value === t.value}
           onClick={() => onChange(t.value)}
           className={cn(
-            "relative flex h-9 shrink-0 items-center gap-2 rounded-xl px-3.5 text-sm transition-colors",
+            "relative flex h-10 shrink-0 items-center gap-2 px-3.5 text-sm transition-colors duration-150",
             value === t.value ? "text-ink" : "text-muted hover:text-ink",
           )}
         >
-          {value === t.value && (
-            <motion.span layoutId={`tabs-${tabs[0].value}`} className="glass absolute inset-0 rounded-xl" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
-          )}
           <span className="relative flex items-center gap-2">
             {t.icon}
             {t.label}
           </span>
+          {value === t.value && (
+            <motion.span layoutId={`tabs-${tabs[0].value}`} className="film-bar absolute inset-x-2 -bottom-px h-[2px]" transition={{ type: "spring", stiffness: 600, damping: 44 }} />
+          )}
         </button>
       ))}
     </div>
@@ -256,18 +259,15 @@ export function Modal({
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+          <div className="absolute inset-0 bg-black/55" onClick={onClose} />
           <motion.div
             role="dialog"
             aria-modal
-            initial={{ y: 40, opacity: 0, scale: 0.98 }}
-            animate={{ y: 0, opacity: 1, scale: 1 }}
-            exit={{ y: 30, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 380, damping: 34 }}
-            className={cn(
-              "glass-strong relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl shadow-2xl sm:rounded-3xl",
-              wide ? "sm:max-w-3xl" : "sm:max-w-lg",
-            )}
+            initial={{ y: 24, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 16, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className={cn("die die-lg die-2 relative flex max-h-[92dvh] w-full flex-col", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}
           >
             <div className="flex items-center justify-between border-b hairline px-5 py-4">
               <h2 className="text-base font-semibold">{title}</h2>
@@ -290,13 +290,13 @@ export function Drawer({ open, onClose, title, children }: { open: boolean; onCl
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={onClose} />
+          <div className="absolute inset-0 bg-black/55" onClick={onClose} />
           <motion.aside
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 340, damping: 36 }}
-            className="glass-strong absolute inset-y-0 right-0 flex w-full max-w-xl flex-col"
+            transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+            className="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col border-s hairline bg-surface"
           >
             <div className="flex items-center justify-between border-b hairline px-5 py-4">
               <h2 className="text-base font-semibold">{title}</h2>
@@ -325,7 +325,7 @@ export function Skeleton({ className }: { className?: string }) {
 export function Empty({ icon, title, text, action }: { icon?: ReactNode; title: string; text?: string; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-      {icon && <div className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20">{icon}</div>}
+      {icon && <div className="die die-sm grid h-14 w-14 place-items-center text-primary">{icon}</div>}
       <div className="space-y-1">
         <p className="font-medium">{title}</p>
         {text && <p className="max-w-sm text-sm leading-6 text-muted">{text}</p>}
@@ -337,7 +337,7 @@ export function Empty({ icon, title, text, action }: { icon?: ReactNode; title: 
 
 export function ErrorBox({ error, retry }: { error: unknown; retry?: () => void }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl border border-danger/25 bg-danger/8 px-4 py-3 text-sm text-danger">
+    <div role="alert" className="bevel flex items-center justify-between gap-3 border border-danger/30 bg-danger/8 px-4 py-3 text-sm text-danger">
       <span className="flex items-center gap-2">
         <XCircle className="h-4 w-4 shrink-0" />
         {error instanceof Error ? error.message : String(error)}
@@ -366,10 +366,12 @@ export function Toaster() {
           <motion.div
             key={t.id}
             layout
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, x: -30 }}
-            className="glass-strong pointer-events-auto flex max-w-md items-start gap-2.5 rounded-2xl px-4 py-3 text-sm shadow-xl"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, x: -24 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            role="status"
+            className="die die-sm die-2 pointer-events-auto flex max-w-md items-start gap-2.5 px-4 py-3 text-sm shadow-lift"
           >
             <span className="mt-0.5">{icons[t.kind]}</span>
             <span className="flex-1 leading-6">{t.text}</span>
@@ -388,9 +390,9 @@ export function PageHeader({ title, sub, icon, actions }: { title: string; sub?:
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div className="flex items-center gap-3">
-        {icon && <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-primary/25 to-accent/20 text-primary ring-1 ring-primary/25">{icon}</span>}
+        {icon && <span className="die die-sm grid h-11 w-11 place-items-center text-primary">{icon}</span>}
         <div>
-          <h1 className="text-xl font-bold sm:text-2xl">{title}</h1>
+          <h1 className="text-xl font-bold leading-8 sm:text-[22px]">{title}</h1>
           {sub && <p className="mt-0.5 text-sm text-muted">{sub}</p>}
         </div>
       </div>
@@ -401,15 +403,14 @@ export function PageHeader({ title, sub, icon, actions }: { title: string; sub?:
 
 export function Stat({ label, value, sub, icon, tone = "primary" }: { label: string; value: ReactNode; sub?: ReactNode; icon?: ReactNode; tone?: Tone }) {
   return (
-    <Card className="relative overflow-hidden p-4">
-      <div className={cn("absolute -end-6 -top-6 h-24 w-24 rounded-full opacity-25 blur-2xl", `bg-${tone}`)} />
-      <div className="relative flex items-start justify-between gap-2">
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-xs text-muted">{label}</p>
+          <p className="flex items-center gap-1.5 text-xs text-muted"><span className={cn("pad", `text-${tone}`)} />{label}</p>
           <p className="num mt-1.5 truncate text-2xl font-bold">{value}</p>
           {sub && <p className="mt-1 truncate text-xs text-muted">{sub}</p>}
         </div>
-        {icon && <span className={cn("grid h-9 w-9 place-items-center rounded-xl ring-1", TONES[tone])}>{icon}</span>}
+        {icon && <span className={cn("bevel grid h-9 w-9 place-items-center ring-1 ring-inset", TONES[tone])}>{icon}</span>}
       </div>
     </Card>
   );
