@@ -24,6 +24,8 @@ def upgrade() -> None:
     op.add_column("usage_events", sa.Column("reserved_tokens", sa.Integer(), nullable=False, server_default="0"))
     op.add_column("usage_events", sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True))
     op.create_unique_constraint("uq_usage_events_request_id", "usage_events", ["request_id"])
+    # Historical rows predate the ledger and cannot be certified as complete.
+    op.execute("UPDATE usage_events SET attempt_status = 'legacy' WHERE request_id IS NULL")
     op.add_column("dream_reports", sa.Column("slot_key", sa.String(40), nullable=True))
     op.add_column("dream_reports", sa.Column("trigger", sa.String(16), nullable=False, server_default="scheduled"))
     op.create_unique_constraint("uq_dream_reports_slot_key", "dream_reports", ["slot_key"])
