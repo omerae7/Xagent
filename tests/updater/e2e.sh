@@ -121,6 +121,7 @@ DOWN="ALTER TABLE e2e_probe DROP COLUMN extra;DROP TABLE e2e_tmp" \
 grep -q 'status_code=200 if ok_db and ok_redis else 503' "$WORK/services/api/xagent_api/main.py" || fail "۲. الگوی health برای خراب‌کردن یافت نشد"
 sed -i 's/status_code=200 if ok_db and ok_redis else 503/status_code=503/' "$WORK/services/api/xagent_api/main.py"
 git -C "$WORK" add -A; git -C "$WORK" commit -qm "e2e: broken health"; publish
+: > "$T/data/control/update.log"  # تا علامت مرحله ساخت از اجرای قبلی خوانده نشود
 ( XAGENT_HEALTH_TRIES=12 xa update --ref main --yes >"$W/s2.log" ) & UPD=$!
 wait_log "ساخت ایمیج" 600 && q "INSERT INTO e2e_probe VALUES (3,'written-during-update')" >/dev/null
 wait $UPD && fail "۲. نسخه ناسالم نباید تثبیت شود"
@@ -149,6 +150,7 @@ DOWN="DROP TABLE e2e_tmp" mkmig e2e1 "CREATE TABLE e2e_tmp(id int)" "UPDATE e2e_
 git -C "$WORK" add -A; git -C "$WORK" commit -qm "e2e: good migration"; publish
 GOOD="$(git -C "$WORK" rev-parse HEAD)"
 echo "# local edit" >> "$T/app/README.md"; echo "operator" > "$T/app/operator-notes.txt"
+: > "$T/data/control/update.log"
 ( xa update --ref main --yes >"$W/s4.log" ) & UPD=$!
 wait_log "ساخت ایمیج" 600
 CONC="$( (echo n | "$XAGENT_BIN/xagent" rollback 2>&1) | sed 's/\x1b\[[0-9;]*m//g' || true)"
