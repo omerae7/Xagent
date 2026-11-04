@@ -30,7 +30,7 @@ export default function Dream() {
         <div className="space-y-3">
           {reports.error && <ErrorBox error={reports.error} />}
           {reports.isLoading && <Skeleton className="h-40" />}
-          {!reports.isLoading && (reports.data?.items || []).length === 0 && <Card><Empty icon={<Moon className="h-6 w-6" />} title="هنوز رویایی اجرا نشده" text="رویا هر شب در ساعت تنظیم‌شده (به وقت ایران) اجرا می‌شود." /></Card>}
+          {!reports.isLoading && (reports.data?.items || []).length === 0 && <Card><Empty icon={<Moon className="h-6 w-6" />} title="هنوز رویایی اجرا نشده" text="اجرای خودکار رویا پیش‌فرض غیرفعال است. برای اجرای دستی یا شبانه، ابتدا آن را از تنظیمات فعال کنید." /></Card>}
           {(reports.data?.items || []).map((r: any, i: number) => (
             <motion.div key={r.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
               <Card className="p-4">
