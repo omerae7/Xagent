@@ -262,6 +262,13 @@ class UsageEvent(IdMixin, Base):
     error: Mapped[str | None] = mapped_column(Text)
     # هزینه با قیمت محافظه‌کارانه (مدل بدون قیمت معتبر) برآورد شده است
     cost_estimated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    attempt_status: Mapped[str] = mapped_column(String(24), default="confirmed", server_default="confirmed")
+    request_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    provider_request_id: Mapped[str | None] = mapped_column(String(160))
+    usage_details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    reserved_cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=0, server_default="0")
+    reserved_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SystemMetric(Base):
@@ -550,6 +557,8 @@ class DreamReport(IdMixin, Base):
     started_at: Mapped[datetime] = _ts(index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), default="running")  # running|done|skipped|failed
+    slot_key: Mapped[str | None] = mapped_column(String(40), unique=True)
+    trigger: Mapped[str] = mapped_column(String(16), default="scheduled", server_default="scheduled")
     checkpoint_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checkpoint_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     events_reviewed: Mapped[int] = mapped_column(Integer, default=0)
