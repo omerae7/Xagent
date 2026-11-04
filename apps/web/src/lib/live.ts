@@ -31,7 +31,22 @@ const EVENT_TYPES = [
   "telegram.status",
   "settings.changed",
   "event.processed",
+  "inbox.created",
+  "employee.status",
+  "model.health",
+  "model.fallback",
+  // سرور: پس از اتصال/اتصال دوباره و سرریز صف، داده‌ها باید از API دوباره خوانده شوند (Pub/Sub بازپخش ندارد)
+  "resync",
+  // سرور: توکن باطل شد (خروج/تغییر رمز) — جریان بسته می‌شود
+  "auth",
 ];
+const resyncListeners = new Set<(reason: string) => void>();
+
+/** ثبت همگام‌سازی دوباره کامل (مثلاً invalidate همه کوئری‌ها) هنگام اتصال دوباره یا ازدست‌رفتن رویداد */
+export function onResync(fn: (reason: string) => void) {
+  resyncListeners.add(fn);
+  return () => resyncListeners.delete(fn);
+}
 
 function setStatus(s: typeof status) {
   status = s;
@@ -51,6 +66,12 @@ export function connectLive() {
         data = JSON.parse((e as MessageEvent).data);
       } catch {
         /* نادیده */
+      }
+      if (t === "resync") resyncListeners.forEach((fn) => fn(String(data?.reason || "")));
+      if (t === "auth" && data?.status === "revoked") {
+        disconnectLive();
+        resyncListeners.forEach((fn) => fn("auth"));
+        return;
       }
       handlers.forEach((h) => h(data, t));
     });

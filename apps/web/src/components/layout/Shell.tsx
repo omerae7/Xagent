@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { post } from "../../lib/api";
+import { get, post } from "../../lib/api";
 import { compact, faNum, relTime, usd } from "../../lib/format";
 import { useLive, useLiveStatus } from "../../lib/live";
 import { toast, toastError, useTheme } from "../../lib/store";
@@ -255,6 +255,10 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
   };
 
   const badges = { "/desk": d?.inbox?.unread || 0, "/chat": d?.approvals_pending || 0 };
+  // وضعیت واقعی سرویس‌ها (نه وضعیت ساختگی): API/دیتابیس/Redis و آمادگی حلقه‌های Worker
+  const health = useQuery({ queryKey: ["health"], queryFn: () => get("/api/health"), refetchInterval: 30_000, retry: 0 });
+  const backendDown = health.isError || (health.data && health.data.ok === false);
+  const workerDegraded = !backendDown && health.data?.worker?.ready === false;
 
   return (
     <div className="min-h-dvh">
@@ -321,6 +325,20 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
         </header>
 
         <main className="mx-auto max-w-[1480px] px-3 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 sm:px-5 lg:pb-10">
+          {(backendDown || workerDegraded) && (
+            <div role="status" className={cn("mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl px-4 py-3 text-[13.5px] leading-6 ring-1 ring-inset",
+              backendDown ? "bg-danger/10 text-danger ring-danger/25" : "bg-warning/10 text-warning ring-warning/25")}>
+              <span className="font-semibold">{backendDown ? "سرور در دسترس نیست" : "بخشی از پردازش پس‌زمینه از کار افتاده است"}</span>
+              <span className="text-ink/80">
+                {backendDown
+                  ? "داده‌های این صفحه ممکن است قدیمی باشند؛ تا برقراری اتصال، کار تازه ثبت یا اجرا نمی‌شود."
+                  : `حلقه‌های ناسالم: ${(health.data?.worker?.degraded || []).map((x: any) => x.loop).join("، ") || "نامشخص"} — روتین‌ها و صف ممکن است با تأخیر اجرا شوند.`}
+              </span>
+              <button type="button" onClick={() => { health.refetch(); qc.invalidateQueries(); }} className="ms-auto rounded-full px-3 py-1 text-[12.5px] font-medium ring-1 ring-inset ring-current/30 hover:bg-current/10">
+                بررسی دوباره
+              </button>
+            </div>
+          )}
           <AnimatePresence mode="wait">
             <motion.div key={loc.pathname.split("/")[1]} initial={{ opacity: 0, y: 6, filter: "blur(4px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}>
               {children}

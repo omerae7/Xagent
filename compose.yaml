@@ -170,9 +170,11 @@ services:
     volumes:
       - ${XAGENT_HOME:-/opt/xagent}/caddy/data:/data
       - ${XAGENT_HOME:-/opt/xagent}/caddy/config:/config
+    # فایل‌های ایستای پنل به سلامت API وابسته نیستند: اگر API موقتاً ناسالم باشد، پنل بالا می‌آید و وضعیت
+    # «سرور در دسترس نیست» را نشان می‌دهد (Caddy برای /api پاسخ 502 می‌دهد) به‌جای اینکه هیچ صفحه‌ای باز نشود.
     depends_on:
       api:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8088/"]
       interval: 20s

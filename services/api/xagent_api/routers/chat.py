@@ -286,7 +286,19 @@ async def get_run(rid: str, _: User = Depends(current_user), session: AsyncSessi
         raise HTTPException(404, "اجرا یافت نشد")
     steps = (await session.execute(select(RunStep).where(RunStep.run_id == r.id).order_by(RunStep.idx))).scalars()
     approvals = (await session.execute(select(Approval).where(Approval.run_id == r.id))).scalars()
-    return {"run": ser(r), "steps": [ser(s) for s in steps], "approvals": [ser(a) for a in approvals]}
+    st = r.state or {}
+    validation = st.get("validation") or {}
+    # خلاصه واقعیت اجرایی از State سمت سرور (نه برداشت از متن مدل): شواهد ابزار، اعتبارسنجی، تحویل اعلان
+    outcome = {
+        "validation": {"passed": validation.get("passed"), "issues": (validation.get("issues") or [])[:10]},
+        "evidence": [{k: e.get(k) for k in ("tool", "ok", "verified", "requires_verification", "summary")}
+                     for e in (st.get("evidence") or [])[-40:] if isinstance(e, dict)],
+        "delivery": st.get("delivery"),
+        "context_fit": st.get("context_fit"),
+        "settled": {"routine": st.get("routine_settled"), "task": st.get("task_settled")},
+    }
+    return {"run": ser(r), "steps": [ser(s) for s in steps], "approvals": [ser_approval(a) for a in approvals],
+            "outcome": outcome}
 
 
 @router.post("/runs/{rid}/cancel")

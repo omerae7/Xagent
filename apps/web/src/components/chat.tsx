@@ -125,7 +125,35 @@ export function RunSteps({ runId, initialOpen = false }: { runId: string; initia
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 text-[11px] text-muted hover:text-ink">
         <ChevronDown className={cn("h-3 w-3 transition", open && "rotate-180")} /> مراحل اجرا
       </button>
-      {open && <div className="mt-2">{data ? <StepList steps={data.steps} /> : <Loader2 className="h-4 w-4 animate-spin text-muted" />}</div>}
+      {open && <div className="mt-2">{data ? <><Outcome o={data.outcome} /><StepList steps={data.steps} /></> : <Loader2 className="h-4 w-4 animate-spin text-muted" />}</div>}
+    </div>
+  );
+}
+
+const DELIVERY_FA: Record<string, [string, string]> = {
+  sent: ["تحویل شد", "text-success"], failed: ["ارسال نشد", "text-danger"], unknown: ["نتیجه ارسال نامعلوم", "text-warning"],
+  uncertain: ["نتیجه تلاش قبلی نامعلوم؛ تکرار نشد", "text-warning"], not_connected: ["کانال متصل نبود؛ ارسال نشد", "text-muted"],
+};
+
+/** واقعیت اجرایی Run از State سمت سرور: شواهد ابزار، اعتبارسنجی و تحویل اعلان — نه برداشت از متن مدل */
+function Outcome({ o }: { o?: any }) {
+  if (!o) return null;
+  const ev: any[] = o.evidence || [];
+  const ok = ev.filter((e) => e.ok && (e.verified === true || e.requires_verification === false)).length;
+  const bad = ev.filter((e) => !e.ok || e.verified === false).length;
+  const d = o.delivery?.status ? DELIVERY_FA[o.delivery.status] : null;
+  if (!ev.length && o.validation?.passed == null && !d) return null;
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-line/[.05] px-3 py-2 text-[11.5px] leading-5 ring-1 ring-inset ring-line/10">
+      <span className={o.validation?.passed === true ? "text-success" : o.validation?.passed === false ? "text-danger" : "text-muted"}>
+        {o.validation?.passed === true ? "تکمیل با شواهد تأیید شد" : o.validation?.passed === false ? "تکمیل تأیید نشد" : "اعتبارسنجی ثبت نشده"}
+      </span>
+      {ev.length > 0 && <span className="text-muted">شواهد ابزار: <span className="num">{ok}</span> موفق{bad ? <> · <span className="num text-danger">{bad}</span> ناموفق/تأییدنشده</> : null}</span>}
+      {d && <span className={d[1]}>اعلان نهایی: {d[0]}</span>}
+      {o.context_fit?.changed && <span className="text-muted">کانتکست برای جا شدن در مدل خلاصه شد</span>}
+      {o.validation?.passed === false && (o.validation.issues || []).length > 0 && (
+        <span className="basis-full text-danger/90">{o.validation.issues.slice(0, 3).join(" · ")}</span>
+      )}
     </div>
   );
 }

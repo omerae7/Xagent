@@ -112,7 +112,12 @@ health_api() {
 health_worker() {
   # Worker هر ۳۰ ثانیه ضربان قلب را در Redis می‌نویسد
   local hb; hb="$(dc_app exec -T redis redis-cli GET xagent:worker:heartbeat 2>/dev/null | tr -d '\r')"
-  [ -n "$hb" ] && [ "$hb" != "(nil)" ]
+  [ -n "$hb" ] && [ "$hb" != "(nil)" ] || return 1
+  # آمادگی عملکردی: حلقه‌های ضروری (صف، رویداد، کنترل، زمان‌بند) زنده‌اند — ضربان قلب به‌تنهایی کافی نیست.
+  # نسخه‌های قدیمی گزارش آمادگی ندارند: برای آن‌ها فقط ضربان قلب (رفتار قبلی) بررسی می‌شود.
+  local rd; rd="$(dc_app exec -T redis redis-cli GET xagent:worker:readiness 2>/dev/null | tr -d '\r')"
+  if [ -z "$rd" ] || [ "$rd" = "(nil)" ]; then return 0; fi
+  printf '%s' "$rd" | grep -q '"ready": true'
 }
 health_all() {
   local i
@@ -314,7 +319,7 @@ rollback() {
   exit 1
 }
 
-dc_app exec -T redis redis-cli DEL xagent:worker:heartbeat >/dev/null 2>&1 || true
+dc_app exec -T redis redis-cli DEL xagent:worker:heartbeat xagent:worker:readiness >/dev/null 2>&1 || true
 DEPLOYED=1
 dc_new up -d --remove-orphans || rollback "اجرای سرویس‌های جدید ناموفق بود"
 
