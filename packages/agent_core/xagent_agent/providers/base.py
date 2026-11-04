@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+from xagent_core.redact import scrub
+
 Role = Literal["system", "user", "assistant", "tool"]
 
 
@@ -108,7 +110,8 @@ class ChatRequest:
 
 class ProviderError(Exception):
     def __init__(self, message: str, retryable: bool = False, status: int | None = None):
-        super().__init__(message)
+        # پیام خطای ارائه‌دهنده ممکن است کلید یا توکن را تکرار کند؛ پیش از هر ذخیره/نمایش پاک می‌شود
+        super().__init__(scrub(message))
         self.retryable = retryable
         self.status = status
 

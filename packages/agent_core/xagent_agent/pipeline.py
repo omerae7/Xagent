@@ -26,6 +26,7 @@ from xagent_core import bus
 from xagent_core.audit import notify
 from xagent_core.db import get_sessionmaker, utcnow
 from xagent_core.models import Approval, Conversation, Message, Run, RunStep, Upload
+from xagent_core.redact import scrub
 from xagent_core.settings_store import AISettings, GeneralSettings, StopLossSettings, get_setting
 from xagent_core.text import estimate_tokens, truncate
 from xagent_core.timeutil import describe_now
@@ -919,7 +920,7 @@ class AgentRunner:
                         stop_reason: str | None = None) -> None:
         run = rc.run
         run.result = answer
-        run.error = error
+        run.error = scrub(error) if error else error
         run.finished_at = utcnow()
         rc.state["step_idx"] = rc.step_idx
         await self._step(rc, "answer", "پاسخ نهایی" if status == "succeeded" else f"پایان: {status}",

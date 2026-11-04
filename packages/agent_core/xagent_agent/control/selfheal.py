@@ -28,6 +28,7 @@ from xagent_core.models import (
     RunStep,
     UsageEvent,
 )
+from xagent_core.redact import scrub
 from xagent_core.settings_store import AISettings, get_setting
 
 from . import changes
@@ -37,6 +38,7 @@ MAX_FIXES_PER_HOUR = 6
 
 
 async def open_incident(session: AsyncSession, source: str, target: str, error_class: str, message: str) -> Incident:
+    message = scrub(message)
     inc = (await session.execute(select(Incident).where(
         Incident.source == source, Incident.target == target, Incident.error_class == error_class))).scalar_one_or_none()
     if inc is None:

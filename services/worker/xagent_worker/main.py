@@ -30,6 +30,7 @@ from xagent_core import bus
 from xagent_core.config import get_settings
 from xagent_core.db import session_scope, utcnow
 from xagent_core.models import Conversation, Run, SystemMetric
+from xagent_core.redact import install_log_scrubber
 from xagent_tools import installer
 
 from .inbox import process_event
@@ -37,6 +38,7 @@ from .scheduler import after_routine_run, dream_due, tick_routines
 from .telegram import TelegramBridge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+install_log_scrubber()
 log = logging.getLogger("xagent.worker")
 CONTROL_STREAM = "xagent:control"
 

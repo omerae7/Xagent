@@ -12,15 +12,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from xagent_core import bus
 from xagent_core.config import get_settings
 from xagent_core.db import dispose_engine, get_engine
+from xagent_core.redact import install_log_scrubber, scrub
 
 from .bootstrap import bootstrap
 from .routers import auth, chat, control, integrations, live, memory, settings, work
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+install_log_scrubber()
 log = logging.getLogger("xagent.api")
 
 
@@ -44,6 +47,13 @@ async def security_headers(request: Request, call_next):
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     return resp
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(_: Request, exc: StarletteHTTPException):
+    """هیچ پیام خطایی بدون پاک‌سازی اسرار از API خارج نمی‌شود."""
+    detail = scrub(exc.detail) if isinstance(exc.detail, str) else exc.detail
+    return JSONResponse({"detail": detail}, status_code=exc.status_code, headers=getattr(exc, "headers", None))
 
 
 @app.exception_handler(RequestValidationError)

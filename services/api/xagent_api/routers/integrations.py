@@ -20,6 +20,7 @@ from xagent_core.audit import audit
 from xagent_core.config import get_settings
 from xagent_core.db import get_sessionmaker
 from xagent_core.models import InstalledTool, SettingKV, ToolVersion, User
+from xagent_core.redact import scrub
 from xagent_core.security import decrypt_secret, encrypt_secret
 from xagent_core.settings_store import AISettings, TelegramSettings, get_setting, set_setting
 from xagent_tools.registry import BUILTIN, GROUP_LABELS
@@ -331,7 +332,7 @@ async def stt(file: UploadFile = File(...), _: User = Depends(current_user), ses
             return {"text": text.strip(), "model": m.label}
         except Exception as e:  # noqa: BLE001
             last = e
-    raise HTTPException(502, f"تبدیل گفتار ناموفق: {last}")
+    raise HTTPException(502, f"تبدیل گفتار ناموفق: {scrub(str(last))}")
 
 
 @router.post("/voice/tts")

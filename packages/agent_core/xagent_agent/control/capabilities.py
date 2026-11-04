@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core.db import utcnow
 from xagent_core.models import AIModel, AIProvider
+from xagent_core.redact import scrub
 from xagent_core.security import decrypt_secret
 
 from ..providers.base import ImagePart, LLMMessage, ProviderError, ToolSpec
@@ -29,7 +30,10 @@ from ..providers.registry import CATALOG, load_model
 
 
 class DiscoveryError(Exception):
-    pass
+    def __init__(self, message: str = "") -> None:
+        super().__init__(scrub(message))
+
+
 
 
 @dataclass

@@ -152,6 +152,22 @@ def mock_llm():
         return JSONResponse({"error": {"message": "Incorrect API key provided", "type": "invalid_request_error",
                                        "code": "invalid_api_key"}}, status_code=401)
 
+    # ارائه‌دهنده بدرفتار: کلید ارسالی را عیناً در پیام خطا تکرار می‌کند (آزمون نشت اسرار)
+    @app.post("/echo/v1/chat/completions")
+    async def echo_chat(request: Request):
+        from fastapi.responses import JSONResponse
+
+        key = request.headers.get("authorization", "").split(" ")[-1]
+        return JSONResponse({"error": {"message": f"Invalid credentials {key} for https://api.test/v1?key={key}",
+                                       "code": "invalid_api_key"}}, status_code=401)
+
+    @app.post("/echo/v1/audio/transcriptions")
+    async def echo_stt(request: Request):
+        from fastapi.responses import JSONResponse
+
+        key = request.headers.get("authorization", "").split(" ")[-1]
+        return JSONResponse({"error": f"upstream rejected token {key}"}, status_code=500)
+
     config = uvicorn.Config(app, host="127.0.0.1", port=llm.port, log_level="warning")
     server = uvicorn.Server(config)
     t = threading.Thread(target=server.run, daemon=True)

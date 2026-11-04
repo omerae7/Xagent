@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_core import bus
 from xagent_core.db import session_scope, utcnow
 from xagent_core.models import AIModel
+from xagent_core.redact import scrub
 
 from .errors import ErrorClass, classify
 
@@ -41,7 +42,7 @@ async def record_failure(session: AsyncSession, model_id: uuid.UUID, message: st
         if m is None:
             return ec
         m.consecutive_failures = (m.consecutive_failures or 0) + 1
-        m.last_error = message[:1000]
+        m.last_error = scrub(message)[:1000]
         m.last_error_class = ec.code
         if not ec.retryable or m.consecutive_failures >= 3:
             m.health = "failing"

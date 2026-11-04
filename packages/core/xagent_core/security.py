@@ -14,6 +14,7 @@ from argon2.exceptions import VerificationError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
 
 from .config import get_settings
+from .redact import register_secret
 
 _ph = PasswordHasher(time_cost=3, memory_cost=64 * 1024, parallelism=2)
 
@@ -48,9 +49,11 @@ def decrypt_secret(token: bytes | None) -> str | None:
     if not token:
         return None
     try:
-        return _fernet().decrypt(bytes(token)).decode()
+        plain = _fernet().decrypt(bytes(token)).decode()
     except InvalidToken:
         return None
+    register_secret(plain)  # هر کلید رمزگشایی‌شده در متن خطا/لاگ پنهان می‌شود
+    return plain
 
 
 def mask_secret(plain: str | None) -> str:
