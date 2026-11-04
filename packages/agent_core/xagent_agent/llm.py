@@ -13,10 +13,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_core import bus
-from xagent_core.models import AIModel, UsageEvent
+from xagent_core.models import AIModel
 
 from .providers.base import ChatRequest, LLMMessage, LLMResponse, ProviderError, ToolSpec
 from .providers.registry import BoundModel
+from .usage_ledger import begin_attempt, finish_attempt
 
 
 @dataclass
@@ -73,62 +74,42 @@ async def call_llm(
             json_mode=json_mode,
             effort=effort,  # type: ignore[arg-type]
         )
-        for attempt in range(3):
+        # Each attempt is committed before sending. The independent ledger outlives
+        # agent rollback; retries and fallback are separately billed/reserved.
+        for attempt in range(1 if purpose == "dream" else 3):
+            attempt_id = await begin_attempt(model, req, purpose=purpose, run_id=run_id)
             try:
                 resp = await model.provider.chat(req)
-                u = resp.usage
-                cost = model.cost(u.input_uncached, u.output, u.cache_read, u.cache_write)
-                session.add(
-                    UsageEvent(
-                        run_id=run_id,
-                        model_id=model.id,
-                        provider_kind=model.provider_kind,
-                        model_name=model.model_name,
-                        cost_estimated=model.price_estimated,
-                        purpose=purpose,
-                        tokens_in=u.input_total,
-                        tokens_out=u.output,
-                        cache_read=u.cache_read,
-                        cache_write=u.cache_write,
-                        cost_usd=cost,
-                        latency_ms=resp.latency_ms,
-                        success=True,
-                    )
-                )
-                await session.flush()
-                await bus.publish(
-                    "usage",
-                    {
-                        "run_id": str(run_id) if run_id else None,
-                        "model": model.label,
-                        "purpose": purpose,
-                        "tokens_in": u.input_total,
-                        "tokens_out": u.output,
-                        "cache_read": u.cache_read,
-                        "cost": float(cost),
-                    },
-                )
-                await health.record_success(session, model.id)
-                return CallResult(resp, model, cost)
             except ProviderError as e:
+                # Some HTTP rejections are guaranteed not to have generated tokens.
+                # Ambiguous 5xx / timeout outcomes retain their budget reservation.
+                await finish_attempt(attempt_id, error=e,
+                                     known_rejected=e.status in (400, 401, 403, 404, 422))
                 last_err = e
                 ec = await health.record_failure(session, model.id, str(e), e.status)
-                session.add(
-                    UsageEvent(
-                        run_id=run_id,
-                        model_id=model.id,
-                        provider_kind=model.provider_kind,
-                        model_name=model.model_name,
-                        purpose=purpose,
-                        success=False,
-                        error=str(e)[:1000],
-                    )
-                )
-                await session.flush()
-                if e.retryable and ec.retryable and attempt < 2:
+                if purpose != "dream" and e.retryable and ec.retryable and attempt < 2:
                     await asyncio.sleep(1.5 * (2**attempt))
                     continue
-                break  # مدل بعدی در زنجیره
+                break
+            except BaseException as e:
+                # A connection failure or cancellation may still be billable.
+                # Keep the persisted pending attempt if finalization is interrupted.
+                await finish_attempt(attempt_id, error=e, known_rejected=False)
+                raise
+            u = resp.usage
+            cost = model.cost(u.input_uncached, u.output, u.cache_read, u.cache_write)
+            # If this fails, fail closed; original pending attempt is still durable.
+            await finish_attempt(attempt_id, response=resp, cost=cost)
+            await bus.publish(
+                "usage",
+                {"run_id": str(run_id) if run_id else None,
+                 "attempt_id": str(attempt_id), "model": model.label,
+                 "purpose": purpose, "tokens_in": u.input_total,
+                 "tokens_out": u.output, "cache_read": u.cache_read,
+                 "cost": float(cost), "unverified": not u.reported},
+            )
+            await health.record_success(session, model.id)
+            return CallResult(resp, model, cost)
     raise ProviderError(f"همه مدل‌های زنجیره ناموفق بودند: {last_err}")
 
 
