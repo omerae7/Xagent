@@ -129,14 +129,14 @@ export default function Usage() {
 
       <Card className="mt-4">
         <CardHeader title="درگیری سیستم (۲۴ ساعت)" icon={<Cpu className="h-4 w-4" />} sub={`${toFaDigits(cur.cpu_count || 0)} هسته · بار ${faNum(cur.load1, 2)}`} />
-        <div className="grid gap-4 p-4 lg:grid-cols-[1fr_auto]">
+        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_220px]">
           <AreaChart data={live} height={200} max={100} format={(v) => `${faNum(v)}٪`}
             series={[{ key: "cpu", label: "CPU", color: CHART.cpu }, { key: "mem", label: "RAM", color: CHART.mem }, { key: "disk", label: "دیسک", color: CHART.disk }]}
             xLabel={(d) => fmtTime(d.ts)} />
-          <div className="grid grid-cols-3 gap-2 lg:grid-cols-1">
-            <Gauge value={cur.cpu} label="CPU" size={90} />
-            <Gauge value={cur.mem} label="RAM" size={90} color="rgb(var(--accent))" />
-            <Gauge value={cur.swap} label="Swap" size={90} color="rgb(var(--warning))" />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-1 lg:content-center">
+            <Gauge value={cur.cpu} label="CPU" />
+            <Gauge value={cur.mem} label="RAM" color="rgb(var(--accent))" />
+            <Gauge value={cur.swap} label="Swap" color="rgb(var(--warning))" />
           </div>
         </div>
       </Card>

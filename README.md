@@ -5,17 +5,18 @@
 X Agent یک ایجنت هوش مصنوعی **خودمیزبان، فارسی و آماده استقرار** است که روی VPS شما اجرا می‌شود و وقتی گوشی و کامپیوترتان خاموش است هم به کار ادامه می‌دهد. همه کدها، حافظه‌ها، فایل‌ها، کلیدها و داده‌ها روی سرور خودتان و ۱۰۰٪ تحت مالکیت شماست.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-dark.png" width="49%" alt="داشبورد تاریک" />
+  <img src="docs/screenshots/dashboard-dark.png" width="49%" alt="داشبورد: نقشه زنده تراشه ایجنت (تاریک)" />
   <img src="docs/screenshots/dashboard-light.png" width="49%" alt="داشبورد روشن" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/chat-dark.png" width="49%" alt="گفتگو با مراحل زنده و کارت اجازه" />
+  <img src="docs/screenshots/control-dark.png" width="49%" alt="مرکز کنترل مدیر: کارمندان" />
   <img src="docs/screenshots/usage-dark.png" width="49%" alt="ارزیابی و مصرف" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/mobile-dark.png" width="24%" alt="موبایل تاریک" />
-  <img src="docs/screenshots/mobile-chat-light.png" width="24%" alt="گفتگو موبایل روشن" />
+  <img src="docs/screenshots/mobile-control-dark.png" width="24%" alt="موبایل: مرکز کنترل" />
+  <img src="docs/screenshots/mobile-chat-dark.png" width="24%" alt="موبایل: گفتگو" />
 </p>
+<p align="center"><sub>تصاویر از اجرای محلی با داده آزمایشی (ارائه‌دهنده Mock، بدون کلید واقعی).</sub></p>
 
 ---
 
