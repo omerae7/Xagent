@@ -47,6 +47,8 @@ class ToolResult:
             return ExecutionOutcome.NOT_STARTED
         if not self.ok:
             return ExecutionOutcome.FAILED
+        if self.verified is not True and self.data.get("interaction_executed") is True:
+            return ExecutionOutcome.EXECUTED
         return ExecutionOutcome.VERIFIED if self.verified is True else ExecutionOutcome.OBSERVED
 
 

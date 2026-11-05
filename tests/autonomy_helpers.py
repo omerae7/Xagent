@@ -103,6 +103,8 @@ class FakePage:
         return f"کاتالوگ — صفحه {self.page_no}"
 
     async def evaluate(self, js: str, *_: Any):
+        if "const el = document.querySelector('[data-xa-id=" in js:
+            return {"label": "صفحه بعد", "tag": "a", "type": "", "href": "#next"} if _ and _[0] == 1 else None
         if "xa:snapshot" in js:  # آمادگی صفحه: سند کامل با متن و عنصر رندرشده
             body = await self.evaluate("")
             return {"ready": "complete", "title": await self.title(), "chars": len(body), "sample": body[:300],

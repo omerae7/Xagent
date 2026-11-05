@@ -79,9 +79,18 @@ def evidence_issues(state: dict, required: bool, request: str = "") -> list[str]
     observations = [i for i, e in enumerate(evidence) if e["ok"] is True and e.get("verified") is not False
                     and e.get("requires_verification") is False and e["tool"] not in DISCOVERY_TOOLS]
     for e in latest.values():
+        # A missing click target is known not to have acted. A later actual click
+        # plus a fresh page observation can recover it; a read alone cannot.
+        if e["tool"] == "browser_click" and e.get("outcome") == "NOT_STARTED":
+            clicks = [i for i, later in enumerate(evidence) if i > evidence.index(e)
+                      and later["tool"] == "browser_click" and later["ok"] is True
+                      and later.get("outcome") == "EXECUTED" and later.get("requires_verification") is False]
+            if any(any(j > i and evidence[j].get("content_observed") is True for j in observations) for i in clicks):
+                continue
         # A failed read may be recovered by an alternative observation; it remains
         # in the evidence and requires a model criterion check, never a relabel to success.
         if (e["ok"] is False and e.get("requires_verification") is False
+                and e["tool"] not in {"browser_type", "browser_click", "desktop_input"}
                 and any(i > evidence.index(e) for i in observations)):
             continue
         if e["ok"] is not True or e.get("verified") is False:
@@ -149,12 +158,15 @@ _FILE = re.compile(r"(فایل|file|سند|یادداشت)[^.؟?!،]{0,40}(بس�
                    r"(بساز|بنویس|ذخیره کن|create|write|save)[^.؟?!،]{0,30}(فایل|file)", re.I)
 _TASK = re.compile(r"(تسک|وظیفه|task|یادآور)[^.؟?!،]{0,40}(بساز|ایجاد کن|ثبت کن|اضافه کن|بگذار|create|add)|"
                    r"(بساز|ایجاد کن|ثبت کن|اضافه کن|create|add)[^.؟?!،]{0,30}(تسک|وظیفه|task)", re.I)
+_TYPE = re.compile(r"تایپ[\s\u200c]+کن|\btype\b[^?؟\n]{0,120}\b(?:into|in)\b[^?؟\n]{0,80}"
+                   r"\b(?:input|field|form|textbox|composer)\b", re.I)
 _CONDITIONAL = re.compile(r"(^|\s)(اگر|در صورت|درصورتی|if|when|whenever)\s", re.I)
 _TO_OWNER = re.compile(r"به من|برای من|خودم|\bme\b", re.I)
 OBJECTIVES: list[tuple[str, re.Pattern[str], frozenset[str]]] = [
     ("file_written", _FILE, frozenset({"file_write"})),
     ("task_created", _TASK, frozenset({"task_create", "routine_create"})),
     ("message_sent", _SEND, frozenset({"telegram_send"})),
+    ("text_entered", _TYPE, frozenset({"browser_type"})),
 ]
 DIRECT_TRIGGERS = {"chat", "voice", "telegram", "delegate"}
 
@@ -185,7 +197,8 @@ def objective_report(run: Any, state: dict) -> dict:
     for obj in required:
         allowed = set(tools[obj]) | ({"notify_owner"} if obj == "message_sent" and to_owner else set())
         rel = [e for e in evidence if e.get("tool") in allowed]
-        if any(e.get("ok") is True and (e.get("verified") is True or e.get("tool") == "notify_owner") for e in rel):
+        if any(e.get("ok") is True and (e.get("verified") is True or e.get("tool") == "notify_owner")
+               and (obj != "text_entered" or e.get("field_verified") is True) for e in rel):
             completed.append(obj)
         elif any(e.get("outcome") == "UNKNOWN_EFFECT" or
                  e.get("ok") is False and e.get("verified") is None and e.get("requires_verification") for e in rel):
@@ -194,7 +207,8 @@ def objective_report(run: Any, state: dict) -> dict:
             missing.append(obj)
     status = ("completed" if not missing and not unknown else
               "unknown" if unknown and not missing else "partial" if completed else "not_completed")
-    labels = {"message_sent": "ارسال پیام", "file_written": "ساخت/نوشتن فایل", "task_created": "ساخت تسک/روتین"}
+    labels = {"message_sent": "ارسال پیام", "file_written": "ساخت/نوشتن فایل", "task_created": "ساخت تسک/روتین",
+              "text_entered": "تایپ و بازخوانی مقدار واقعی فیلد"}
     issues = [f"هدف «{labels[o]}» با شاهد مرتبط و تأییدشده انجام نشده است" for o in missing]
     issues += [f"نتیجه بیرونی «{labels[o]}» نامعلوم است؛ بدون بررسی تکرار نشود" for o in unknown]
     return {"status": status, "required": required, "completed": completed, "missing": missing, "unknown": unknown,

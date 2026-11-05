@@ -15,6 +15,8 @@ pytestmark = [
 ENTRY = """
 import {createRoot} from 'react-dom/client';
 import {StepList,ApprovalCard} from '@web/components/chat';
+import {stepState} from '@web/components/ui/ExecutionStatus';
+(window as any).__STATES=[stepState({kind:'tool',status:'error',detail:{outcome:'NOT_STARTED',verified:false}}),stepState({kind:'tool',status:'ok',detail:{outcome:'OBSERVED'}})];
 const steps=Array.from({length:1000},(_,i)=>({id:String(i),kind:'tool',status:'ok',title:'Operation '+i,detail:{verified: i===999 ? true:undefined}}));
 steps[998].detail={outcome:'UNKNOWN_EFFECT'} as any;
 createRoot(document.getElementById('root')!).render(<><StepList steps={steps}/><ApprovalCard a={{id:'synthetic',tool_name:'telegram_send',category:'external_message',grant_options:['once','mission','standing'],grant_scope:{recipient:'synthetic'}}} /></>);
@@ -39,6 +41,7 @@ async def test_large_timeline_is_bounded_and_effect_states_are_distinct(executio
         await page.goto(execution_ui)
         await page.locator('[data-state=VERIFIED]').wait_for()
         assert await page.locator("ol > li").count() == 6
+        assert await page.evaluate("window.__STATES") == ["NOT_STARTED", "OBSERVED"]
         assert await page.locator("[data-state=EXECUTED]").count() == 4
         assert await page.locator("[data-state=VERIFIED]").count() == 1
         assert await page.locator("[data-state=UNKNOWN_EFFECT]").count() == 1

@@ -137,3 +137,75 @@ def test_canonical_unknown_effect_keeps_the_original_objective_unknown():
     run = SimpleNamespace(input="reply to Alice", trigger="chat", routine_id=None)
     result = objective_report(run, state)
     assert result["status"] == "unknown" and result["unknown"] == ["message_sent"] and result["missing"] == []
+
+
+def test_successful_read_cannot_hide_a_failed_ui_action():
+    state = {
+        "evidence": [
+            {
+                "tool": "browser_type",
+                "ok": False,
+                "verified": False,
+                "requires_verification": False,
+                "signature": "same",
+            },
+            {
+                "tool": "browser_read",
+                "ok": True,
+                "verified": True,
+                "requires_verification": False,
+                "content_observed": True,
+            },
+        ]
+    }
+    assert evidence_issues(state, True)
+    state["evidence"].append(
+        {
+            "tool": "browser_type",
+            "ok": True,
+            "verified": True,
+            "requires_verification": False,
+            "signature": "same",
+        }
+    )
+    assert not evidence_issues(state, True)
+
+
+@pytest.mark.parametrize(
+    "prompt", ["این متن را تایپ کن", "Type this text into the test form without submitting"]
+)
+def test_typing_objective_requires_verified_field_not_just_page_read(prompt):
+    run = SimpleNamespace(input=prompt, trigger="chat", routine_id=None)
+    state = {"evidence": [{"tool": "browser_read", "ok": True, "verified": True, "content_observed": True}]}
+    assert objective_report(run, state)["missing"] == ["text_entered"]
+    state["evidence"].append({"tool": "browser_type", "ok": True, "verified": True, "field_verified": True})
+    assert objective_report(run, state)["status"] == "completed"
+
+
+def test_missing_click_recovers_only_after_actual_click_and_fresh_observation():
+    failed = {
+        "tool": "browser_click",
+        "ok": False,
+        "verified": False,
+        "requires_verification": False,
+        "outcome": "NOT_STARTED",
+        "signature": "missing",
+    }
+    clicked = {
+        "tool": "browser_click",
+        "ok": True,
+        "verified": None,
+        "requires_verification": False,
+        "outcome": "EXECUTED",
+        "signature": "actual",
+    }
+    observed = {
+        "tool": "browser_read",
+        "ok": True,
+        "verified": None,
+        "requires_verification": False,
+        "content_observed": True,
+    }
+    assert evidence_issues({"evidence": [failed, observed]}, True)
+    assert evidence_issues({"evidence": [failed, observed, clicked]}, True)
+    assert not evidence_issues({"evidence": [failed, clicked, observed]}, True)

@@ -361,6 +361,10 @@ def _browser_handler(marker: str, page: FakePage, *, same_args: bool = True, rec
             ref = recover_ref if (recover_ref is not None and not any(
                 n == "browser_read" for n, _ in hist)) else 1
             return ("browser_click", {"ref": ref} if same_args else {"ref": ref, "n": len(hist)})
+        # The model double must read the final price through a tool; its access
+        # to the fixture's page_no is not execution evidence.
+        if "42" not in last:
+            return ("browser_read", {})
         return f"قیمت نهایی محصول هدف ۴۲ دلار است (صفحه {page.page_no})."
     return handler
 

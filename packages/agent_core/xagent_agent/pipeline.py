@@ -1515,6 +1515,7 @@ class AgentRunner:
             "requires_verification": verification_required, "summary": truncate(result.output, 300),
             # فقط نتیجه‌ای که محتوای صفحه را واقعاً دید (نه صرف رسیدن به URL) بررسی سایت حساب می‌شود
             "content_observed": isinstance(result.data, dict) and result.data.get("content_observed") is True,
+            "field_verified": result.data.get("field_verified") is True,
         })
 
     async def _fallback_method(self, rc: RunCtx, tool_map: dict[str, Tool], transcript: list[LLMMessage], name: str,

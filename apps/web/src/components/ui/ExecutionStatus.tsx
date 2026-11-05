@@ -1,8 +1,10 @@
 import { Check, Circle, CircleHelp, Clock3, Loader2, Pause, ShieldAlert, X } from "lucide-react";
 import { cn } from ".";
 
-export type ExecutionState = "PLANNED" | "RUNNING" | "WAITING_APPROVAL" | "EXECUTED" | "OBSERVED" | "VERIFIED" | "PARTIAL" | "UNKNOWN_EFFECT" | "FAILED" | "BLOCKED" | "CANCELLED";
+export type ExecutionState = "NOT_STARTED" | "ATTEMPTED" | "PLANNED" | "RUNNING" | "WAITING_APPROVAL" | "EXECUTED" | "OBSERVED" | "VERIFIED" | "PARTIAL" | "UNKNOWN_EFFECT" | "FAILED" | "BLOCKED" | "CANCELLED";
 const STATES = {
+  NOT_STARTED: ["اجرا آغاز نشد", Circle, "planned"],
+  ATTEMPTED: ["تلاش ثبت شد", Clock3, "running"],
   PLANNED: ["برنامه‌ریزی‌شده", Circle, "planned"],
   RUNNING: ["در حال اجرا", Loader2, "running"],
   WAITING_APPROVAL: ["منتظر اجازه", ShieldAlert, "approval"],
@@ -20,6 +22,8 @@ const STATES = {
 export function stepState(step: any): ExecutionState {
   const detail = step.detail || {};
   if (detail.outcome === "UNKNOWN_EFFECT" || detail.outcome_uncertain) return "UNKNOWN_EFFECT";
+  if (detail.outcome === "NOT_STARTED") return "NOT_STARTED";
+  if (detail.outcome === "OBSERVED") return "OBSERVED";
   if (detail.outcome === "FAILED" || detail.verified === false) return "FAILED";
   if (detail.outcome === "PARTIAL") return "PARTIAL";
   if (step.status === "running") return "RUNNING";

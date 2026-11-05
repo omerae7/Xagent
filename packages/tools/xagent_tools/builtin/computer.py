@@ -775,8 +775,9 @@ async def browser_click(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
         page = await _page(ctx)
         target = _target(a)
         info = await _describe(page, a)
-        if info is None and not a.get("ref"):
-            return ToolResult(False, f"عنصر هدف «{a.get('selector') or a.get('text')}» در صفحه یافت نشد.", {"url": page.url})
+        if info is None:
+            return ToolResult(False, f"خطای ابزار: عنصر هدف «{a.get('ref') or a.get('selector') or a.get('text')}» در صفحه یافت نشد.",
+                              {"url": page.url, "attempted": False}, verified=False)
         _enforce_effect(ctx, page, info)  # پیش از کلیک، سمت سرور، بر اساس عنصر واقعی
         if a.get("ref"):
             await page.click(target, timeout=15000)
@@ -784,7 +785,8 @@ async def browser_click(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
             await _locator(page, a).first.click(timeout=15000)  # همان عنصری که طبقه‌بندی شد
         await page.wait_for_timeout(1000)
         els = await _elements(page)
-    return ToolResult(True, f"کلیک انجام شد. نشانی فعلی: {page.url}\n--- عناصر ---\n{els}", untrusted=True)
+    return ToolResult(True, f"کلیک انجام شد. نشانی فعلی: {page.url}\n--- عناصر ---\n{els}",
+                      {"interaction_executed": True}, untrusted=True)
 
 
 async def browser_type(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
