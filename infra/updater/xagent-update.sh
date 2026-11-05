@@ -276,6 +276,31 @@ OLD_PREVIOUS_TAG="$(envget XAGENT_PREVIOUS_IMAGE_TAG)"
 envset XAGENT_IMAGE_TAG "$NEW_SHORT"
 envset XAGENT_PREVIOUS_IMAGE_TAG "$PREV_TAG"
 
+# >>> preserve_failed_release (F11)
+# پیش از هر downgrade بالقوه مخرب: کپی کامل وضعیت نسخه ناموفق (شامل جدول/ستون‌های تازه و داده‌های پذیرفته‌شده
+# پس از ارتقا) ذخیره و اعتبارسنجی می‌شود و جدول‌های تازه دارای ردیف با شمار ردیف گزارش می‌شوند. بدون این کپی
+# downgrade انجام نمی‌شود. فقط از pg_dump/psql/pg_restore داخل کانتینر Postgres (dc_app) استفاده می‌کند.
+preserve_failed_release() {
+  local out="$1" before="$2" manifest="$1.manifest.txt"
+  dc_app exec -T postgres pg_dump -U xagent -d xagent -Fc > "$out" 2>/dev/null || { rm -f "$out"; return 1; }
+  chmod 600 "$out" 2>/dev/null || true
+  dc_app exec -T postgres pg_restore --list < "$out" >/dev/null 2>&1 || { rm -f "$out"; return 1; }
+  : > "$manifest"
+  local old_tables="" t n
+  [ -f "$before" ] && old_tables="$(dc_app exec -T postgres pg_restore --list < "$before" 2>/dev/null \
+    | awk '$4=="TABLE" && $5=="public" {print $6}' | sort -u)"
+  for t in $(dc_app exec -T postgres psql -U xagent -d xagent -tAc \
+      "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY 1" 2>/dev/null); do
+    if [ -n "$old_tables" ] && ! grep -qx "$t" <<<"$old_tables"; then
+      n="$(dc_app exec -T postgres psql -U xagent -d xagent -tAc "SELECT count(*) FROM \"$t\"" 2>/dev/null | tr -d '[:space:]')"
+      echo "new_table $t rows=${n:-?}" >> "$manifest"
+    fi
+  done
+  chmod 600 "$manifest" 2>/dev/null || true
+  return 0
+}
+# <<< preserve_failed_release
+
 rollback() {
   local reason="$1"
   echo -e "${c_r}✗ $reason — بازگشت خودکار به نسخه $PREV_SHORT${c_o}"
@@ -285,13 +310,21 @@ rollback() {
   local cur_rev; cur_rev="$(alembic_rev)"
   if [ -n "$cur_rev" ] && [ "$cur_rev" != "$PREV_REV" ]; then
     dc_app stop api worker >/dev/null 2>&1
-    echo "  Migration اجرا شده بود؛ تلاش برای بازگرداندن Schema با downgrade (داده‌های جدید حفظ می‌شوند)…"
-    if dc_new run --rm --no-deps -w /app/services/api --entrypoint alembic api downgrade "$PREV_REV" >/dev/null 2>&1 \
-       && [ "$(alembic_rev)" = "$PREV_REV" ]; then
-      ok "Schema با downgrade به $PREV_REV برگشت؛ همه داده‌ها (از جمله داده‌های ثبت‌شده در حین به‌روزرسانی) حفظ شدند"
-      cur_rev="$PREV_REV"
+    local post="$BK/failed-release-$STAMP.dump"
+    if preserve_failed_release "$post" "$DB_BACKUP"; then
+      echo "  کپی کامل وضعیت نسخه ناموفق پیش از downgrade: $post"
+      [ -s "$post.manifest.txt" ] && echo "  جدول‌های تازه نسخه ناموفق (داده در کپی بالا حفظ است): $(tr '\n' ' ' < "$post.manifest.txt")"
+      echo "  Migration اجرا شده بود؛ بازگرداندن Schema با downgrade…"
+      if dc_new run --rm --no-deps -w /app/services/api --entrypoint alembic api downgrade "$PREV_REV" >/dev/null 2>&1 \
+         && [ "$(alembic_rev)" = "$PREV_REV" ]; then
+        ok "Schema با downgrade به $PREV_REV برگشت؛ داده جداول قبلی در دیتابیس ماند و جدول/ستون‌های حذف‌شده نسخه ناموفق در $post قابل بازیابی‌اند"
+        cur_rev="$PREV_REV"
+      else
+        echo "  downgrade ممکن نبود؛ بازیابی مرحله‌ای دیتابیس از پشتیبان پنجره نگهداری (دیتابیس فعلی حذف نمی‌شود)…"
+      fi
     else
-      echo "  downgrade ممکن نبود؛ بازیابی مرحله‌ای دیتابیس از پشتیبان پنجره نگهداری (دیتابیس فعلی حذف نمی‌شود)…"
+      # بدون کپی معتبر از داده‌های پس از ارتقا، downgrade مخرب انجام نمی‌شود؛ مسیر غیرمخرب (نگه‌داشتن دیتابیس فعلی با نام دیگر)
+      echo "  کپی وضعیت نسخه ناموفق ممکن نشد؛ downgrade انجام نمی‌شود و دیتابیس فعلی با نام دیگر نگه داشته می‌شود…"
     fi
   fi
   if [ -n "$cur_rev" ] && [ "$cur_rev" != "$PREV_REV" ]; then

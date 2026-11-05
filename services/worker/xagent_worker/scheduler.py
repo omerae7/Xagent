@@ -339,37 +339,78 @@ async def reconcile_runs(stale_after_seconds: int = 180) -> int:
 TERMINAL_RUN = ("succeeded", "failed", "stopped", "cancelled", "paused")
 
 
-async def settle_terminal_runs(min_age_seconds: int = 30, lookback_days: int = 14, telegram: Any = None) -> int:
+SETTLE_MAX_BACKOFF = timedelta(hours=6)
+SETTLE_ALERT_AFTER = 5
+
+
+async def settle_terminal_runs(min_age_seconds: int = 30, batch: int = 100, telegram: Any = None,
+                               max_pages: int = 10) -> int:
     """تسویه دوباره Runهای پایانی که تسویه روتین/تسک آن‌ها انجام نشده است (Crash پس از نهایی‌سازی).
 
-    فقط از توابع تسویه موجود و نشانگرهای routine_settled / task_settled استفاده می‌شود؛ هر دو idempotent‌اند،
-    پس شمارنده، هزینه و گزارش یک‌بار اعمال می‌شود. هیچ اقدام بیرونی Run تکرار نمی‌شود — فقط حسابداری و وضعیت.
+    بدون نقطه‌کور سن ایجاد (F15): هر Run پایانی تسویه‌نشده، هر قدر قدیمی، دیده می‌شود. صفحه‌بندی Keyset محدود
+    (finished_at, id) تضمین می‌کند Run خراب مانع پیشرفت بقیه نشود؛ خطا در state ثبت و با عقب‌نشینی نمایی دوباره
+    تلاش می‌شود و پس از چند شکست به کارفرما گزارش می‌شود. توابع تسویه و نشانگرهای routine_settled/task_settled
+    idempotent‌اند؛ هیچ اقدام بیرونی Run تکرار نمی‌شود — فقط حسابداری و وضعیت.
     """
-    from sqlalchemy import String, cast
+    from sqlalchemy import DateTime, String, cast, func, tuple_
 
     now = utcnow()
-    async with session_scope() as session:
-        status_text = cast(Run.status, String)
-        rows = (await session.execute(select(Run.id).where(
-            Run.status.in_(TERMINAL_RUN), Run.parent_run_id.is_(None),
-            Run.created_at >= now - timedelta(days=lookback_days),
-            or_(Run.finished_at.is_(None), Run.finished_at <= now - timedelta(seconds=min_age_seconds)),
-            or_(
-                (Run.routine_id.is_not(None)) & (Run.state["routine_settled"].astext.is_distinct_from(status_text)),
-                (Run.task_id.is_not(None)) & (Run.state["task_settled"].astext.is_distinct_from(status_text)),
-            ),
-        ).order_by(Run.created_at).limit(100))).scalars().all()
+    status_text = cast(Run.status, String)
+    when = func.coalesce(Run.finished_at, Run.created_at)
+    retry_at = cast(Run.state["settle_next_at"].astext, DateTime(timezone=True))
+    cursor: tuple | None = None
     n = 0
-    for rid in rows:
-        try:
-            await after_routine_run(rid, telegram)
-            await after_task_run(rid, telegram)
-            n += 1
-        except Exception:  # noqa: BLE001 — یک Run خراب مانع تسویه بقیه نشود؛ دور بعد دوباره تلاش می‌شود
-            log.exception("تسویه دوباره Run %s ناموفق بود", rid)
+    for _ in range(max_pages):
+        async with session_scope() as session:
+            q = select(Run.id, when).where(
+                Run.status.in_(TERMINAL_RUN), Run.parent_run_id.is_(None),
+                or_(Run.finished_at.is_(None), Run.finished_at <= now - timedelta(seconds=min_age_seconds)),
+                or_(
+                    (Run.routine_id.is_not(None)) & (Run.state["routine_settled"].astext.is_distinct_from(status_text)),
+                    (Run.task_id.is_not(None)) & (Run.state["task_settled"].astext.is_distinct_from(status_text)),
+                ),
+                or_(Run.state["settle_next_at"].astext.is_(None), retry_at <= now),
+            )
+            if cursor is not None:
+                q = q.where(tuple_(when, Run.id) > cursor)
+            rows = (await session.execute(q.order_by(when, Run.id).limit(batch))).all()
+        for rid, _at in rows:
+            try:
+                await after_routine_run(rid, telegram)
+                await after_task_run(rid, telegram)
+                n += 1
+            except Exception as e:  # noqa: BLE001 — یک Run خراب مانع تسویه بقیه نشود
+                log.exception("تسویه دوباره Run %s ناموفق بود", rid)
+                await _record_settle_error(rid, e, telegram)
+        if len(rows) < batch:
+            break
+        cursor = (rows[-1][1], rows[-1][0])
     if n:
         log.info("%d اجرای پایانی تسویه‌نشده تسویه شد", n)
     return n
+
+
+async def _record_settle_error(rid: Any, err: BaseException, telegram: Any) -> None:
+    """شمارنده خطای تسویه + زمان تلاش بعدی (عقب‌نشینی نمایی، سقف ۶ ساعت)؛ پس از چند شکست گزارش کارفرما."""
+    from xagent_core import inbox as inbox_mod
+    from xagent_core.redact import scrub
+
+    async with session_scope() as session:
+        run = await session.get(Run, rid, with_for_update=True)
+        if run is None:
+            return
+        st = dict(run.state or {})
+        k = int(st.get("settle_errors") or 0) + 1
+        delay = min(timedelta(minutes=2 ** min(k, 12)), SETTLE_MAX_BACKOFF)
+        st.update({"settle_errors": k, "settle_next_at": (utcnow() + delay).isoformat(),
+                   "settle_last_error": scrub(f"{type(err).__name__}: {err}")[:300]})
+        run.state = st
+        if k == SETTLE_ALERT_AFTER:
+            await inbox_mod.post(session, kind="error", severity="important",
+                                 title="تسویه یک اجرای پایانی پیاپی ناموفق است (نیازمند بررسی)",
+                                 body=f"اجرای {rid} پس از {k} تلاش تسویه نشد: {st['settle_last_error']}",
+                                 run_id=run.id, routine_id=run.routine_id, dedupe_key=f"settle-stuck:{rid}",
+                                 telegram=telegram)
 
 
 # ───────────────────────── رویای شبانه ─────────────────────────

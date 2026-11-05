@@ -9,6 +9,7 @@ import io
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import psutil
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -50,6 +51,7 @@ from ..deps import _token_from, current_user, get_session, owner_user, resolve_u
 router = APIRouter(prefix="/api", tags=["live"])
 
 
+SSE_PUMP_MAX_BACKOFF = 15.0
 SSE_QUEUE_MAX = 1000
 SSE_REAUTH_SECONDS = 60
 
@@ -79,20 +81,37 @@ async def stream(request: Request):
         yield "retry: 3000\n\n"
         # پس از هر اتصال (یا اتصال دوباره) رابط باید وضعیت را از API دوباره بخواند: Pub/Sub رویداد ازدست‌رفته را پخش نمی‌کند
         yield f"event: resync\ndata: {json.dumps({'reason': 'connected'})}\n\n"
-        sub = bus.subscribe()
         queue: asyncio.Queue = asyncio.Queue(maxsize=SSE_QUEUE_MAX)
         overflow = asyncio.Event()
+        pump_state: dict[str, Any] = {}
 
-        async def pump():
+        async def pump(sub, ready: asyncio.Event):
             async for ev in sub:
                 try:
                     queue.put_nowait(ev)
                 except asyncio.QueueFull:
                     overflow.set()  # مصرف‌کننده کند: رویداد دور ریخته شد → همگام‌سازی دوباره صریح
 
-        task = asyncio.create_task(pump())
+        def start_pump():
+            ready = asyncio.Event()
+            sub = bus.subscribe(ready)
+            pump_state.update(sub=sub, ready=ready, task=asyncio.create_task(pump(sub, ready)))
+
+        async def stop_pump():
+            task, sub = pump_state.get("task"), pump_state.get("sub")
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+            with contextlib.suppress(Exception):
+                await sub.aclose()
+
+        # نظارت پمپ (F16): مرگ/قطع اشتراک Redis جریان «سالم ولی بی‌رویداد» نمی‌سازد؛ به رابط «degraded» اعلام،
+        # اشتراک با عقب‌نشینی محدود دوباره برقرار و پس از آن resync «recovered» فرستاده می‌شود.
+        start_pump()
         loop = asyncio.get_running_loop()
         last_auth = loop.time()
+        degraded, backoff = False, 0.5
         try:
             while True:
                 if await request.is_disconnected():
@@ -102,23 +121,41 @@ async def stream(request: Request):
                     if await _sse_user(request) is None:  # خروج/ابطال توکن: جریان بسته می‌شود
                         yield f"event: auth\ndata: {json.dumps({'status': 'revoked'})}\n\n"
                         break
+                task = pump_state["task"]
+                if task.done():
+                    if not degraded:
+                        degraded = True
+                        yield f"event: stream\ndata: {json.dumps({'status': 'degraded'})}\n\n"
+                    await stop_pump()
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, SSE_PUMP_MAX_BACKOFF)
+                    start_pump()
+                    continue
+                if degraded and pump_state["ready"].is_set():
+                    degraded, backoff = False, 0.5
+                    while not queue.empty():
+                        queue.get_nowait()
+                    yield f"event: resync\ndata: {json.dumps({'reason': 'recovered'})}\n\n"
+                    continue
                 if overflow.is_set():
                     overflow.clear()
                     while not queue.empty():
                         queue.get_nowait()
                     yield f"event: resync\ndata: {json.dumps({'reason': 'overflow'})}\n\n"
                     continue
-                try:
-                    ev = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield sse_frame(ev)
-                except TimeoutError:
-                    yield ": ping\n\n"
+                getter = asyncio.ensure_future(queue.get())
+                done, _ = await asyncio.wait({getter, task}, timeout=15 if not degraded else 1,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if getter in done:
+                    yield sse_frame(getter.result())
+                else:
+                    getter.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await getter
+                    if not done:
+                        yield ": ping\n\n"
         finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
-            with contextlib.suppress(Exception):
-                await sub.aclose()
+            await stop_pump()
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

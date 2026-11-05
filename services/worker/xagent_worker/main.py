@@ -323,6 +323,12 @@ class Worker:
             try:
                 if self.telegram._pending:
                     await self.telegram.flush_pending()
+                try:  # اعلان‌های تلگرام فقط پس از Commit تراکنش گزارش (F14)
+                    from xagent_core import inbox as inbox_mod
+
+                    await inbox_mod.dispatch_pending(self.telegram)
+                except Exception:  # noqa: BLE001
+                    log.exception("ارسال اعلان‌های صف‌شده ناموفق بود")
                 n = await tick_routines(self.telegram) + await tick_tasks(self.telegram)
                 if n:
                     log.info("%d روتین زمان‌بندی شد", n)

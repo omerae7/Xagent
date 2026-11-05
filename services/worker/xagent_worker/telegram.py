@@ -13,6 +13,7 @@ import base64
 import json
 import logging
 import re
+import uuid
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from xagent_core import approvals, bus
+from xagent_core import inbox as inbox_mod
 from xagent_core.config import get_settings
 from xagent_core.db import session_scope, utcnow
 from xagent_core.models import Conversation, EventInbox, Message, Run, SettingKV
@@ -33,14 +35,94 @@ AGENT_PREFIX = "🤖"
 _APPROVAL_RE = re.compile(r"^(تایید|تأیید|approve|رد|deny|لغو|revoke)\s+([0-9a-f-]{6,36})$", re.IGNORECASE)
 
 
+class IngestSpool:
+    """صف بازیابی پایدار و محدود رویدادهای دریافتی تلگرام (F12) — جایگزین صف حافظه فرایند.
+
+    هر رویداد با شناسه یکتای خود (dedup) رمزشده روی دیسک می‌ماند تا پس از قطعی دیتابیس یا ری‌استارت Worker
+    دوباره ثبت شود (تکراری بی‌اثر است). سرریز بی‌صدا نیست: بازه پیام‌های ثبت‌نشده به‌عنوان «شکاف» ذخیره و پس از
+    بازگشت دیتابیس برای بررسی دستی به صندوق کارفرما گزارش می‌شود. بازپخش بالادست تلگرام تضمین نمی‌شود.
+    """
+
+    def __init__(self, folder: Path, max_items: int = 5000) -> None:
+        self.folder, self.max_items = folder, max_items
+        self.file, self.gaps_file = folder / "events.jsonl", folder / "gaps.jsonl"
+
+    def _read(self, path: Path) -> list[dict[str, Any]]:
+        from xagent_core.security import decrypt_secret
+
+        if not path.exists():
+            return []
+        out = []
+        for line in path.read_text().splitlines():
+            plain = decrypt_secret(line.encode()) if line.strip() else None
+            if plain:
+                try:
+                    out.append(json.loads(plain))
+                except ValueError:
+                    continue
+        return out
+
+    def _write(self, path: Path, rows: list[dict[str, Any]]) -> None:
+        from xagent_core.security import encrypt_secret
+
+        self.folder.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("".join(encrypt_secret(json.dumps(r, ensure_ascii=False)).decode() + "\n" for r in rows))
+        tmp.chmod(0o600)
+        tmp.replace(path)
+
+    def items(self) -> list[dict[str, Any]]:
+        return self._read(self.file)
+
+    def __len__(self) -> int:
+        return len(self.items())
+
+    def add(self, payload: dict[str, Any], dedup: str) -> bool:
+        rows = self.items()
+        if any(r.get("dedup") == dedup for r in rows):
+            return True
+        if len(rows) >= self.max_items:
+            self.record_gap(payload, dedup)
+            return False
+        self._write(self.file, [*rows, {"dedup": dedup, "payload": payload, "at": utcnow().isoformat()}])
+        return True
+
+    def remove(self, done: set[str]) -> None:
+        self._write(self.file, [r for r in self.items() if r.get("dedup") not in done])
+
+    def record_gap(self, payload: dict[str, Any], dedup: str) -> None:
+        gaps = self._read(self.gaps_file)
+        chat, mid = payload.get("chat_id"), payload.get("message_id")
+        g = next((x for x in gaps if x.get("chat_id") == chat), None)
+        if g is None:
+            gaps.append({"chat_id": chat, "chat_title": payload.get("chat_title"), "first_id": mid, "last_id": mid,
+                         "count": 1, "since": utcnow().isoformat()})
+        else:
+            g["count"] += 1
+            if isinstance(mid, int):
+                g["first_id"] = min(x for x in (g.get("first_id"), mid) if isinstance(x, int))
+                g["last_id"] = max(x for x in (g.get("last_id"), mid) if isinstance(x, int))
+        self._write(self.gaps_file, gaps)
+
+    def gaps(self) -> list[dict[str, Any]]:
+        return self._read(self.gaps_file)
+
+    def clear_gaps(self) -> None:
+        self._write(self.gaps_file, [])
+
+
 class TelegramBridge:
-    def __init__(self) -> None:
+    def __init__(self, spool_dir: Path | None = None) -> None:
         self.client: Any = None
         self.connected = False
         self.me: Any = None
         self.cfg = TelegramSettings()
         self._lock = asyncio.Lock()
-        self._pending: list[tuple[dict[str, Any], str]] = []
+        self.spool = IngestSpool(spool_dir or get_settings().data_dir / "telegram-spool")
+
+    @property
+    def _pending(self) -> list[dict[str, Any]]:  # سازگاری: وجود رویداد در صف بازیابی پایدار
+        return self.spool.items()
 
     async def _publish_status(self, error: str | None = None) -> None:
         status = {"connected": self.connected, "error": error, "at": utcnow().isoformat()}
@@ -128,8 +210,8 @@ class TelegramBridge:
         except Exception as e:  # noqa: BLE001
             log.exception("خطا در پردازش پیام تلگرام: %s", e)
 
-    async def _store(self, payload: dict[str, Any], dedup: str) -> None:
-        """ثبت پایدار رویداد: تکراری (Unique) بی‌صدا رد می‌شود؛ خطای واقعی ذخیره‌سازی در صف بازیابی می‌ماند."""
+    async def _insert(self, payload: dict[str, Any], dedup: str) -> uuid.UUID | None:
+        """ثبت در EventInbox؛ None یعنی همان رویداد قبلاً ثبت شده است. خطای ذخیره‌سازی بالا می‌رود."""
         try:
             async with session_scope() as session:
                 ev = EventInbox(source="telegram", kind="message", payload=payload, dedup_key=dedup)
@@ -138,24 +220,61 @@ class TelegramBridge:
                     await session.flush()
                 except IntegrityError:  # همان پیام قبلاً ثبت شده است
                     await session.rollback()
-                    return
-                ev_id = ev.id
+                    return None
+                return ev.id
         except IntegrityError:
-            return
+            return None
+
+    async def _store(self, payload: dict[str, Any], dedup: str) -> None:
+        """ثبت پایدار رویداد: تکراری (Unique) بی‌صدا رد می‌شود؛ خطای واقعی ذخیره‌سازی در صف بازیابی پایدار می‌ماند."""
+        try:
+            ev_id = await self._insert(payload, dedup)
         except Exception as e:  # noqa: BLE001 — اتصال/ذخیره‌سازی: نباید بی‌صدا حذف شود
-            if len(self._pending) < 2000:
-                self._pending.append((payload, dedup))
-            log.error("ذخیره پیام تلگرام ناموفق؛ در صف بازیابی ماند (%d در صف): %s", len(self._pending), type(e).__name__)
-            await self._publish_status(f"ذخیره پیام‌های دریافتی موقتاً ناموفق است ({len(self._pending)} در صف بازیابی)")
+            kept = self.spool.add(payload, dedup)
+            n = len(self.spool)
+            if kept:
+                log.error("ذخیره پیام تلگرام ناموفق؛ در صف بازیابی پایدار ماند (%d در صف): %s", n, type(e).__name__)
+                await self._publish_status(f"ذخیره پیام‌های دریافتی موقتاً ناموفق است ({n} در صف بازیابی پایدار)")
+            else:
+                log.error("صف بازیابی پر است؛ پیام %s ثبت نشد و به‌عنوان شکاف (نیازمند بررسی) ثبت شد", dedup)
+                await self._publish_status("صف بازیابی پیام‌های تلگرام پر شد؛ پیام‌های تازه ثبت نشدند (شکاف ثبت شد؛ "
+                                           "نیازمند بررسی دستی گفتگوها)")
             return
-        await bus.enqueue_inbox(ev_id)
+        if ev_id is not None:
+            await bus.enqueue_inbox(ev_id)
 
     async def flush_pending(self) -> int:
-        """تلاش دوباره برای ثبت پیام‌هایی که هنگام خطای دیتابیس در صف بازیابی ماندند."""
-        items, self._pending = self._pending, []
-        for payload, dedup in items:
-            await self._store(payload, dedup)
-        return len(items) - len(self._pending)
+        """ثبت دوباره رویدادهای صف بازیابی پایدار (پس از قطعی دیتابیس یا ری‌استارت)؛ گزارش شکاف‌ها به کارفرما."""
+        rows = self.spool.items()
+        done: set[str] = set()
+        for r in rows:
+            try:
+                ev_id = await self._insert(r["payload"], r["dedup"])
+            except Exception:  # noqa: BLE001 — دیتابیس هنوز در دسترس نیست؛ در صف می‌ماند
+                break
+            done.add(r["dedup"])
+            if ev_id is not None:
+                try:
+                    await bus.enqueue_inbox(ev_id)
+                except Exception:  # noqa: BLE001 — رویداد ثبت شده؛ پایش صندوق رویداد بعداً آن را برمی‌دارد
+                    pass
+        if done:
+            self.spool.remove(done)
+        gaps = self.spool.gaps()
+        if gaps and len(done) == len(rows):
+            try:
+                async with session_scope() as session:
+                    lines = [f"• {g.get('chat_title') or g.get('chat_id')}: {g.get('count')} پیام "
+                             f"(شناسه {g.get('first_id')} تا {g.get('last_id')})" for g in gaps]
+                    await inbox_mod.post(session, kind="error", severity="important",
+                                         title="پیام‌های تلگرام در زمان قطعی ثبت نشدند (نیازمند بررسی)",
+                                         body="صف بازیابی پر شده بود؛ این پیام‌ها پردازش نشده‌اند و بازپخش خودکار "
+                                              "تلگرام تضمین نمی‌شود. لطفاً گفتگوها را بررسی کنید:\n" + "\n".join(lines),
+                                         dedupe_key=f"tg-gap:{gaps[0].get('since')}")
+                self.spool.clear_gaps()
+            except Exception:  # noqa: BLE001 — دفعه بعد دوباره گزارش می‌شود
+                pass
+        return len(done)
 
     # ── عملیات ──
     async def _entity(self, chat: str | int):
@@ -193,9 +312,12 @@ class TelegramBridge:
             m = await self.client.send_message(entity, body, reply_to=reply_to)
         return {"message_id": m.id, "chat_id": m.chat_id}
 
-    async def notify_owner(self, text: str) -> None:
-        if self.connected:
-            await self.client.send_message("me", f"{AGENT_PREFIX} {text}")
+    async def notify_owner(self, text: str) -> dict[str, Any] | None:
+        """ارسال به Saved Messages کارفرما؛ رسید (شناسه پیام) برای ثبت «ارسال شد» برگردانده می‌شود."""
+        if not self.connected:
+            return None
+        m = await self.client.send_message("me", f"{AGENT_PREFIX} {text}")
+        return {"message_id": getattr(m, "id", None)}
 
     async def recent(self, chat: str | int, limit: int = 15) -> list[dict[str, Any]]:
         entity = await self._entity(chat)

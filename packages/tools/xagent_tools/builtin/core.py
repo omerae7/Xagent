@@ -98,16 +98,18 @@ async def episodes_query(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
 
 async def notify_owner(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     n = await notify(ctx.session, a["title"], a.get("body", ""), level=a.get("level", "info"))
-    bridge = ctx.extra.get("telegram")
-    sent_tg = False
-    if bridge is not None and a.get("telegram", False):
-        try:
-            await bridge.notify_owner(f"🔔 {a['title']}\n{a.get('body', '')}")
-            sent_tg = True
-        except Exception:
-            sent_tg = False
-    return ToolResult(True, "اعلان برای کارفرما ثبت شد" + (" و در تلگرام ارسال شد" if sent_tg else ""),
-                      {"id": str(n.id)}, verified=True)
+    queued = False
+    if a.get("telegram", False):
+        from xagent_core import inbox
+
+        # قصد ارسال در همین تراکنش ثبت و پس از Commit تحویل می‌شود (رسید/نامعلوم در delivery همان گزارش)
+        item = await inbox.post(ctx.session, kind="report", severity="info", title=a["title"], body=a.get("body", ""),
+                                run_id=getattr(ctx, "run_id", None), force_telegram=True,
+                                telegram_text=f"🔔 {a['title']}\n{a.get('body', '')}",
+                                dedupe_key=f"notify:{getattr(ctx, 'run_id', '')}:{ctx.extra.get('tool_call_id', n.id)}")
+        queued = item is not None
+    return ToolResult(True, "اعلان برای کارفرما ثبت شد" + (" و برای ارسال تلگرام پس از ثبت نهایی در صف قرار گرفت"
+                                                          if queued else ""), {"id": str(n.id)}, verified=True)
 
 
 # ── فایل‌ها (محدود به فضای کاری) ──

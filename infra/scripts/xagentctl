@@ -74,7 +74,7 @@ case "${1:-status}" in
     if [ "$NEED_DB" = "1" ]; then
       [ -f "$BACKUP" ] || BACKUP="$(ls -1t "$XAGENT_HOME"/backups/db-*.dump 2>/dev/null | head -1)"
       echo "⚠ Schema دیتابیس ($CUR_REV) برای نسخه قبلی ناشناخته است."
-      echo "   ابتدا Schema با downgrade نسخه فعلی به ${PREV_REV:-نسخه قبل} برگردانده می‌شود تا همه داده‌ها (از جمله داده‌های پس از به‌روزرسانی) حفظ شوند."
+      echo "   ابتدا از وضعیت فعلی پشتیبان ایمنی گرفته و سپس Schema با downgrade به ${PREV_REV:-نسخه قبل} برگردانده می‌شود؛ جدول/ستون‌هایی که downgrade حذف می‌کند در آن پشتیبان قابل بازیابی‌اند."
       echo "   اگر downgrade ممکن نباشد: بازیابی از پشتیبان پیش از به‌روزرسانی (${BACKUP:-ناموجود}، $UPD_AT)؛ داده‌های پس از آن در xagent_after_update_* نگه داشته می‌شوند."
     fi
     if [ "${2:-}" != "--yes" ]; then read -rp "ادامه؟ [y/N] " a; [ "$a" = "y" ] || exit 1; fi
@@ -89,7 +89,7 @@ case "${1:-status}" in
       echo "پشتیبان ایمنی وضعیت فعلی: $SAFETY"
       if [ -n "$PREV_REV" ] && dc run --rm --no-deps -w /app/services/api --entrypoint alembic api downgrade "$PREV_REV" >/dev/null 2>&1 \
          && [ "$(dc exec -T postgres psql -U xagent -d xagent -tAc 'SELECT version_num FROM alembic_version' | tr -d '[:space:]')" = "$PREV_REV" ]; then
-        echo "✓ Schema با downgrade به $PREV_REV برگشت؛ همه داده‌ها حفظ شدند."
+        echo "✓ Schema با downgrade به $PREV_REV برگشت؛ داده جداول قبلی در دیتابیس ماند و جدول/ستون‌های حذف‌شده نسخه جدید در $SAFETY قابل بازیابی‌اند."
         NEED_DB=0
       else
         [ -f "$BACKUP" ] || { echo "✗ downgrade ممکن نبود و پشتیبان پیش از به‌روزرسانی یافت نشد؛ نسخه فعلی دوباره اجرا می‌شود."; dc start api worker; exit 1; }

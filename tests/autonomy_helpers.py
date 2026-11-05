@@ -42,8 +42,9 @@ class FakeTelegram:
             raise TimeoutError("پیام ارسال شد ولی پاسخ سرور نرسید (شبیه‌سازی)")
         return {"message_id": self._mid, "chat_id": chat}
 
-    async def notify_owner(self, text: str) -> None:
+    async def notify_owner(self, text: str) -> dict:
         self.owner_notes.append(text)
+        return {"message_id": 10_000 + len(self.owner_notes)}  # رسید مانند پل واقعی
 
     async def recent(self, chat, limit: int = 15) -> list[dict]:
         return list(self.history.get(str(chat).lstrip("@").lower(), []))[-limit:]

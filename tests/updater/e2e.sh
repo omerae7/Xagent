@@ -171,6 +171,8 @@ dc ps --format '{{.Service}} {{.Image}}' | grep -q "api xagent/backend:${BASE:0:
 pass "۲. سلامت خراب ← Rollback خودکار ایمیج و Schema"
 check '[ "$(q "SELECT note FROM e2e_probe WHERE id=3")" = "written-during-update" ]' \
   "۲ب (اصلاح ۶). داده‌ای که هم‌زمان با آپدیت نوشته شد پس از Rollback از بین نرفت"
+check 'f=$(ls -t "$T"/backups/failed-release-*.dump 2>/dev/null | head -1) && [ -n "$f" ] && [ -f "$f.manifest.txt" ] && dc exec -T postgres pg_restore --list < "$f" >/dev/null' \
+  "۲ج (F11). پیش از downgrade خودکار، کپی کامل و معتبر وضعیت نسخه ناموفق (با فهرست جدول‌های تازه) ذخیره شد"
 
 # ── ۳. پنل وب خراب (اصلاح ۹) ──
 git -C "$WORK" checkout -q -B e2e-broken-web "$BASE"

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -87,9 +88,12 @@ async def publish(event_type: str, data: dict[str, Any]) -> None:
         pass
 
 
-async def subscribe() -> AsyncIterator[dict[str, Any]]:
+async def subscribe(ready: asyncio.Event | None = None) -> AsyncIterator[dict[str, Any]]:
+    """ready: پس از اشتراک موفق تنظیم می‌شود (تشخیص بازیابی پمپ SSE پس از قطع Redis)."""
     pubsub = get_blocking_redis().pubsub()
     await pubsub.subscribe(EVENTS_CHANNEL)
+    if ready is not None:
+        ready.set()
     try:
         async for msg in pubsub.listen():
             if msg.get("type") == "message":

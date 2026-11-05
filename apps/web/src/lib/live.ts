@@ -39,6 +39,8 @@ const EVENT_TYPES = [
   "resync",
   // سرور: توکن باطل شد (خروج/تغییر رمز) — جریان بسته می‌شود
   "auth",
+  // سرور: پمپ رویداد (Redis) قطع شد و در حال اتصال دوباره است؛ پس از بازیابی resync «recovered» می‌رسد
+  "stream",
 ];
 const resyncListeners = new Set<(reason: string) => void>();
 
@@ -67,7 +69,11 @@ export function connectLive() {
       } catch {
         /* نادیده */
       }
-      if (t === "resync") resyncListeners.forEach((fn) => fn(String(data?.reason || "")));
+      if (t === "stream" && data?.status === "degraded") setStatus("connecting");
+      if (t === "resync") {
+        if (data?.reason === "recovered") setStatus("open");
+        resyncListeners.forEach((fn) => fn(String(data?.reason || "")));
+      }
       if (t === "auth" && data?.status === "revoked") {
         disconnectLive();
         resyncListeners.forEach((fn) => fn("auth"));

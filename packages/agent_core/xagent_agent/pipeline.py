@@ -1581,15 +1581,10 @@ class AgentRunner:
                          title=f"منتظر اجازه شما: {tool.label or tool.name}", body=ap.reason or "",
                          run_id=rc.run.id, routine_id=rc.run.routine_id, conversation_id=rc.run.conversation_id,
                          link=f"/chat/{rc.run.conversation_id}" if rc.run.conversation_id else "/",
-                         dedupe_key=f"approval:{ap.id}", data={"approval_id": str(ap.id), "category": category})
-        if self.telegram is not None and getattr(self.telegram, "connected", False):
-            try:
-                await self.telegram.notify_owner(
-                    f"🔐 X Agent برای «{tool.label or tool.name}» اجازه می‌خواهد.\n{ap.reason}\n"
-                    f"پاسخ: «تایید {str(ap.id)[:8]}» یا «رد {str(ap.id)[:8]}»"
-                )
-            except Exception:
-                pass
+                         dedupe_key=f"approval:{ap.id}", data={"approval_id": str(ap.id), "category": category},
+                         force_telegram=True,  # قصد اعلان در همین تراکنش؛ ارسال پس از Commit (بدون اعلان روی تراکنش برگشتی)
+                         telegram_text=f"🔐 X Agent برای «{tool.label or tool.name}» اجازه می‌خواهد.\n{ap.reason}\n"
+                                       f"پاسخ: «تایید {str(ap.id)[:8]}» یا «رد {str(ap.id)[:8]}»")
         raise Paused("waiting_approval", "منتظر تصمیم کارفرما", "approval")
 
     @staticmethod
