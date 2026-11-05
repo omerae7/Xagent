@@ -25,7 +25,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from xagent_core import bus, inbox
+from xagent_core import approvals, bus, inbox
 from xagent_core.audit import notify
 from xagent_core.db import get_sessionmaker, utcnow
 from xagent_core.models import Approval, Conversation, Message, Mission, Routine, Run, RunStep, Upload
@@ -70,7 +70,7 @@ TOOL_TIMEOUT = 300
 MISSION_ASK = "mission_scope"
 MISSION_ASK_LABEL = "اقدام خارج از محدوده مجوز مأموریت"
 # اعتبار تأیید کارفرما پس از تصمیم؛ تأیید کهنه هرگز اجرا را مجاز نمی‌کند
-APPROVAL_TTL = timedelta(hours=24)
+APPROVAL_TTL = approvals.APPROVED_TTL
 FALLBACK_FROM = {"http_request", "web_fetch"}
 TERMINAL = {"succeeded", "failed", "stopped", "cancelled"}
 
@@ -501,6 +501,15 @@ class AgentRunner:
                     is_owner=run_is_owner(state) and run.employee_id is None, lease_token=self._leases.get(run.id))
         rc.step_idx = int(state.get("step_idx", 0))
         rc.state["elapsed_base"] = float(state.get("elapsed", 0))
+        block = await self._lineage_block(rc)
+        if block is not None and block[0] in ("cancelled", "stopped"):
+            # اجرای صف‌شده روتین/تسک/والد لغوشده یا کارمند غیرفعال هرگز شروع نمی‌شود (بدون مدل و بدون اثر)
+            run.status, run.stop_reason, run.finished_at = "cancelled", block[2], utcnow()
+            run.error = block[1]
+            await session.commit()
+            await bus.publish("run.status", {"run_id": str(run.id), "status": run.status,
+                                             "conversation_id": str(run.conversation_id) if run.conversation_id else None})
+            return run.status
         if run.started_at is None:
             run.started_at = utcnow()
         run.lease_owner = self.worker_id
@@ -920,7 +929,7 @@ class AgentRunner:
         if not mid:
             return None
         try:
-            return await rc.session.get(Mission, uuid.UUID(str(mid)))
+            return await self._fresh(rc, Mission, uuid.UUID(str(mid)))  # لغو در نشست دیگر فوراً دیده می‌شود
         except ValueError:
             return None
 
@@ -1137,6 +1146,12 @@ class AgentRunner:
                 approved[cid] = cats
             tctx.extra["approved"] = set(cats)
             tctx.extra["tool_call_id"] = cid
+            denial = await self._authorize_effect(rc, cid, tool, args, cats)  # مرجع تازه، درست پیش از هر اثر
+            if denial is not None:
+                await self._step(rc, "approval", f"اجازه در لحظه اجرا معتبر نیست: {tool.label or name}",
+                                 status="blocked", tool_name=name, detail={"reason": denial})
+                self._deny_call(rc, cid, name, args, transcript, loop, denial)
+                continue
             st = await self._step(rc, "tool", tool.label or name, status="running", tool_name=name,
                                   detail={"args": display_args(name, args)})
             t0 = time.monotonic()
@@ -1211,6 +1226,93 @@ class AgentRunner:
                     reason="خطای تکراری", diagnosis=self._diagnose(result.output))))
 
     @staticmethod
+    async def _fresh(rc: RunCtx, model: type, pk: Any) -> Any:
+        """خواندن تازه از پایگاه داده (نه نقشه هویت نشست با expire_on_commit=False)."""
+        res = await rc.session.execute(select(model).where(model.id == pk).execution_options(populate_existing=True))
+        return res.scalar_one_or_none()
+
+    async def _lineage_block(self, rc: RunCtx) -> tuple[str, str, str] | None:
+        """(وضعیت، دلیل، کد) اگر این اجرا، والدهای آن، روتین/تسک یا کارمند مالکش دیگر اجازه ادامه ندهند."""
+        run = rc.run
+        fresh = await self._fresh(rc, Run, run.id)
+        if await bus.is_run_cancelled(run.id) or (fresh is not None and fresh.status == "cancelled"):
+            return "stopped", "اجرا توسط کارفرما متوقف شد.", "cancelled"
+        pid, depth = run.parent_run_id, 0
+        while pid is not None and depth < 8:
+            parent = await self._fresh(rc, Run, pid)
+            if await bus.is_run_cancelled(pid) or (parent is not None and parent.status in ("cancelled", "stopped")):
+                return "stopped", "مأموریت والد توسط کارفرما متوقف شد؛ کار کارمند هم متوقف شد.", "parent_cancelled"
+            pid, depth = (parent.parent_run_id if parent is not None else None), depth + 1
+        if run.routine_id is not None:
+            rt = await self._fresh(rc, Routine, run.routine_id)
+            if rt is None or not rt.enabled or rt.status in ("cancelled", "disabled", "expired", "completed", "failed"):
+                return "cancelled", "روتین این اجرا لغو/غیرفعال شده است.", "routine_cancelled"
+            if rt.paused or rt.status == "paused":
+                return "paused", "روتین این اجرا متوقف (Pause) شده است.", "routine_paused"
+        if run.task_id is not None:
+            from xagent_core.models import Task
+
+            task = await self._fresh(rc, Task, run.task_id)
+            if task is None or task.status == "cancelled":
+                return "cancelled", "تسک این اجرا لغو شده است.", "task_cancelled"
+        if run.employee_id is not None:
+            from xagent_core.models import Employee
+
+            emp = await self._fresh(rc, Employee, run.employee_id)
+            if emp is None or not emp.enabled:
+                return "stopped", "کارمند این اجرا غیرفعال یا حذف شده است.", "employee_disabled"
+        return None
+
+    async def _authorize_effect(self, rc: RunCtx, cid: str, tool: Tool, args: dict, cats: list[str]) -> str | None:
+        """مجوز در لحظه اثر از مرجع تازه: Lease، توقف سراسری، لغو (اجرا/والد/روتین/تسک)، کارمند، مأموریت،
+        سیاست فعلی Harness و تأییدهای همین فراخوانی (وضعیت، انقضا، لغو، اتصال به همین عملیات).
+
+        توقف/لغو → Paused (هیچ اثر بعدی در همین Batch)؛ ردّ مجوز → کد دلیل برای _deny_call؛ None یعنی مجاز.
+        """
+        await self._assert_owner(rc)
+        if await bus.is_stop_all():
+            raise Paused("paused", "توقف اضطراری سراسری (STOP_ALL) فعال است.", "stop_all")
+        block = await self._lineage_block(rc)
+        if block is not None:
+            raise Paused(*block)
+        mission_allows = False
+        if rc.state.get("mission_id"):
+            verdict, _why = await missions.check_call(rc.session, await self._mission(rc), tool.name, args, rc.state)
+            if verdict not in ("allow", "ask"):
+                return "mission"  # لغو/انقضا/خروج از محدوده در نشست دیگر
+            mission_allows = verdict == "allow"
+        rules = await harness.load_rules(rc.session, fresh=True)
+        category = tool.category_for(args)
+        needed = sorted({*(c for c in cats if c != MISSION_ASK), *([category] if category else [])})
+        rows = (await rc.session.execute(
+            select(Approval).where(Approval.run_id == rc.run.id, Approval.tool_call_id == cid)
+            .execution_options(populate_existing=True))).scalars().all()
+        by_cat = {a.category: a for a in rows}
+        order = [*([MISSION_ASK] if MISSION_ASK in cats else []), *needed]  # تأیید صریح مأموریت دسته را هم پوشش می‌دهد
+        for c in order:
+            ap = by_cat.get(c)
+            if ap is not None:
+                if ap.status == "revoked":
+                    return "revoked"
+                if ap.status != "approved":
+                    return "deny"
+                if ap.decided_at is not None and utcnow() - ap.decided_at > APPROVAL_TTL:
+                    return "expired"
+                bound = ((ap.args or {}).get("__binding") or {}).get("sig")
+                if bound and bound not in (self._binding(rc, tool, c, args),
+                                           self._binding(rc, tool, c, args, legacy=True)):
+                    return "mismatch"
+            if c == MISSION_ASK:
+                mission_allows = mission_allows or ap is not None  # اعتبار آن همین بالا سنجیده شد
+                continue
+            d = harness.evaluate(rules.get(c), c, tool.action, args)
+            if d.action == "deny":
+                return "policy"
+            if d.action == "ask" and ap is None and not mission_allows:
+                return "policy"  # تصمیم قبلی «خودکار» بود؛ سیاست فعلی تأیید صریح می‌خواهد
+        return None
+
+    @staticmethod
     def _sealed(name: str, args: dict) -> dict:
         """آرگومان حساس در pending_calls (Checkpoint) فقط رمزشده ذخیره می‌شود؛ هنگام اجرا open_secrets."""
         keys = SENSITIVE_ARGS.get(name, ())
@@ -1244,7 +1346,10 @@ class AgentRunner:
                    loop: LoopController, decision: str) -> None:
         """ردّ اجرای ابزار با شاهد «رد شد» (نه موفق) و پیام صادقانه به مدل."""
         text = {"mismatch": "تأیید کارفرما برای همین عملیات با این پارامترها نیست؛ عملیات تغییرکرده اجرا نشد.",
-                "expired": "تأیید کارفرما منقضی شده است؛ عملیات اجرا نشد و تأیید تازه لازم است."}.get(
+                "expired": "تأیید کارفرما منقضی شده است؛ عملیات اجرا نشد و تأیید تازه لازم است.",
+                "revoked": "کارفرما تأیید این عملیات را لغو کرد؛ عملیات اجرا نشد.",
+                "policy": "سیاست Harness پس از تصمیم قبلی سخت‌تر شده است؛ عملیات بدون تأیید تازه اجرا نشد.",
+                "mission": "مجوز مأموریت لغو/منقضی شده است؛ عملیات اجرا نشد."}.get(
             decision, "این عملیات طبق Harness/مجوز ممنوع است یا کارفرما اجازه نداد.")
         self._record_evidence(rc, cid, name, args, ToolResult(False, text))
         transcript.append(LLMMessage("tool", f"⛔ {text} راه دیگری پیشنهاد کن یا به کارفرما گزارش بده.",

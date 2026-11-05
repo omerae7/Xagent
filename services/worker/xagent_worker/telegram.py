@@ -20,17 +20,17 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from xagent_core import bus
+from xagent_core import approvals, bus
 from xagent_core.config import get_settings
 from xagent_core.db import session_scope, utcnow
-from xagent_core.models import Approval, Conversation, EventInbox, Message, Run, SettingKV
+from xagent_core.models import Conversation, EventInbox, Message, Run, SettingKV
 from xagent_core.security import decrypt_secret
 from xagent_core.settings_store import TelegramSettings, get_setting
 from xagent_core.timeutil import jalali_str
 
 log = logging.getLogger("xagent.telegram")
 AGENT_PREFIX = "🤖"
-_APPROVAL_RE = re.compile(r"^(تایید|تأیید|approve|رد|deny)\s+([0-9a-f]{6,36})$", re.IGNORECASE)
+_APPROVAL_RE = re.compile(r"^(تایید|تأیید|approve|رد|deny|لغو|revoke)\s+([0-9a-f-]{6,36})$", re.IGNORECASE)
 
 
 class TelegramBridge:
@@ -237,22 +237,21 @@ async def handle_owner_command(bridge: TelegramBridge, payload: dict[str, Any], 
     async with session_scope() as session:
         if m:
             verb, prefix = m.group(1).lower(), m.group(2).lower()
-            rows = (await session.execute(select(Approval).where(Approval.status == "pending"))).scalars().all()
-            target = next((a for a in rows if str(a.id).startswith(prefix)), None)
+            target, err = await approvals.find_by_prefix(session, prefix)
             if target is None:
-                await bridge.notify_owner("درخواست مجوزی با این شناسه پیدا نشد.")
+                await bridge.notify_owner(err or "درخواست مجوزی با این شناسه پیدا نشد.")
                 return True
-            target.status = "approved" if verb in ("تایید", "تأیید", "approve") else "denied"
-            target.decided_at = utcnow()
-            target.decided_by = "telegram"
-            run = await session.get(Run, target.run_id)
-            pending_left = [a for a in rows if a.run_id == target.run_id and a.id != target.id]
-            if run is not None and run.status == "waiting_approval" and not pending_left:
-                run.status = "queued"
+            decision = ("approve" if verb in ("تایید", "تأیید", "approve") else
+                        "revoke" if verb in ("لغو", "revoke") else "deny")
+            d = await approvals.decide(session, target, decision, "telegram", channel="telegram")
             await session.commit()
-            if run is not None and not pending_left:
-                await bus.enqueue_run(run.id, "approval")
-            await bridge.notify_owner(f"{'✅ تایید' if target.status == 'approved' else '⛔ رد'} شد: {target.tool_name}")
+            if not d.ok:
+                await bridge.notify_owner(f"⚠️ {d.message}")
+                return True
+            if d.requeue is not None:
+                await bus.enqueue_run(d.requeue, "approval")
+            label = {"approved": "✅ تایید", "denied": "⛔ رد", "revoked": "↩️ لغو تأیید"}.get(target.status, target.status)
+            await bridge.notify_owner(f"{label} شد: {target.tool_name}")
             return True
         key = f"owner-cmd:{event_id}" if event_id else None
         if key and (await session.execute(select(Run.id).where(Run.dedupe_key == key))).first():

@@ -156,6 +156,14 @@ class CursorSettings(BaseModel):
     max_runtime_hours: int = Field(6, ge=1, le=72)
 
 
+class BrowserSharingSettings(BaseModel):
+    """اشتراک صریح و محدود هویت مرورگر کارفرما با کارمند: {employee_id: [hostname, ...]} (فقط کارفرما تغییر می‌دهد).
+
+    پیش‌فرض: هیچ اشتراکی — هر کارمند کوکی/LocalStorage/نشست جدا دارد و نشست ورود کارفرما را نمی‌بیند."""
+
+    shares: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class EmbeddingSettings(BaseModel):
     provider: Literal["local_hash", "model"] = "local_hash"
 
@@ -170,6 +178,7 @@ DEFAULTS: dict[str, type[BaseModel]] = {
     "host": HostSettings,
     "reports": ReportSettings,
     "cursor": CursorSettings,
+    "browser_sharing": BrowserSharingSettings,
 }
 
 

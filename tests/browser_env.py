@@ -79,3 +79,6 @@ async def reset_computer(computer) -> None:  # noqa: ANN001
     if computer._pw is not None:
         await computer._pw.stop()
     computer._browser = computer._pw = None
+    if hasattr(computer, "_default_ctx"):
+        computer._default_ctx.clear()
+        computer._identities.clear()

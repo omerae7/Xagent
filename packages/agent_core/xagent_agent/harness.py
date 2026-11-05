@@ -60,8 +60,12 @@ class Decision:
     rule_text: str = ""
 
 
-async def load_rules(session: AsyncSession) -> dict[str, HarnessRule]:
-    rows = (await session.execute(select(HarnessRule))).scalars().all()
+async def load_rules(session: AsyncSession, fresh: bool = False) -> dict[str, HarnessRule]:
+    """fresh=True: سیاست فعلی پایگاه داده (نه نسخه کهنه نقشه هویت نشست) — برای تصمیم در لحظه اثر."""
+    stmt = select(HarnessRule)
+    if fresh:
+        stmt = stmt.execution_options(populate_existing=True)
+    rows = (await session.execute(stmt)).scalars().all()
     return {r.category: r for r in rows}
 
 

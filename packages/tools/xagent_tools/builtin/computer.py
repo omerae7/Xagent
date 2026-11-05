@@ -44,7 +44,8 @@ _LABEL_FN = r"""(el) => {
 
 
 def _with_helpers(js: str) -> str:
-    return js.replace("__XA_SENSITIVE__", f"({_SENSITIVE_FN})").replace("__XA_LABEL__", f"({_LABEL_FN})")
+    return (js.replace("__XA_INFO__", "__XA_INFO_FN__").replace("__XA_SENSITIVE__", f"({_SENSITIVE_FN})")
+            .replace("__XA_LABEL__", f"({_LABEL_FN})"))
 
 
 _MARK_JS = """
@@ -170,7 +171,67 @@ def _owner_of(page) -> str | None:  # noqa: ANN001
     return None
 
 
-async def _context():
+# ── هویت مرورگر جدا برای هر کارمند (F05): کوکی، LocalStorage، SessionStorage و نشست ورود جدا ──
+# کارفرما (و اجرای بدون کارمند) همان Context پایدار پروفایل Chrome را دارد؛ نشست‌های موجود دست نمی‌خورند.
+_identities: dict[str, Any] = {}
+_default_ctx: list[Any] = []  # [browser, Context پایدار کارفرما (پروفایل Chrome)] برای اتصال فعلی
+
+
+def _identity_path(emp: str):  # noqa: ANN202
+    import hashlib
+
+    d = get_settings().data_dir / "browser-identities"
+    return d / f"{hashlib.sha256(emp.encode()).hexdigest()[:24]}.state"
+
+
+def _load_identity(emp: str) -> dict | None:
+    import json as _json
+
+    from xagent_core.security import decrypt_secret
+
+    path = _identity_path(emp)
+    try:
+        plain = decrypt_secret(path.read_bytes()) if path.exists() else None
+        return _json.loads(plain) if plain else None
+    except (OSError, ValueError):
+        return None  # حالت خراب/ناخوانا → هویت تازه (ورود دوباره لازم)، نه هویت دیگری
+
+
+async def _save_identity(emp: str) -> None:
+    """ذخیره رمزشده وضعیت هویت کارمند تا پس از ری‌استارت فرایند هم جدا و بازیابی‌پذیر بماند."""
+    import json as _json
+
+    from xagent_core.security import encrypt_secret
+
+    bctx = _identities.get(emp)
+    if not emp or bctx is None:
+        return
+    try:
+        state = await bctx.storage_state()
+        path = _identity_path(emp)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(encrypt_secret(_json.dumps(state)))
+        tmp.chmod(0o600)
+        tmp.replace(path)
+    except Exception:  # noqa: BLE001 — ذخیره ناموفق هرگز اثر کاربر را متوقف نمی‌کند
+        pass
+
+
+async def _shared_hosts(ctx: ToolContext | None, emp: str) -> set[str]:
+    session = getattr(ctx, "session", None) if ctx is not None else None
+    if session is None or not emp:
+        return set()
+    try:
+        from xagent_core.settings_store import BrowserSharingSettings, get_setting
+
+        st = await get_setting(session, "browser_sharing", BrowserSharingSettings)
+        return {h.lower() for h in st.shares.get(emp, [])}
+    except Exception:  # noqa: BLE001 — خطای خواندن سیاست = بدون اشتراک (پیش‌فرض امن)
+        return set()
+
+
+async def _browser_conn():
     global _pw, _browser
     async with _lock:
         if _browser is None or not _browser.is_connected():
@@ -179,7 +240,39 @@ async def _context():
             if _pw is None:
                 _pw = await async_playwright().start()
             _browser = await _pw.chromium.connect_over_cdp(_cdp_url(), timeout=15000)
-        return _browser.contexts[0] if _browser.contexts else await _browser.new_context()
+        if not _default_ctx or _default_ctx[0] is not _browser:
+            # اتصال تازه: Contextهای اتصال قبلی معتبر نیستند (هویت‌ها از وضعیت ذخیره‌شده بازسازی می‌شوند).
+            # Context پایدار پروفایل کارفرما همان لحظه اتصال، پیش از ساخت هویت کارمندان، ثبت می‌شود؛
+            # ترتیب browser.contexts پس از ساخت Contextهای تازه تضمین‌شده نیست.
+            _identities.clear()
+            default = _browser.contexts[0] if _browser.contexts else await _browser.new_context()
+            _default_ctx[:] = [_browser, default]
+        return _browser
+
+
+async def _context(ctx: ToolContext | None = None, host: str | None = None):
+    """Context هویت این اجرا: کارفرما → Context پایدار؛ کارمند → Context جدای خودش؛ اشتراک فقط با سیاست صریح میزبان."""
+    browser = await _browser_conn()
+    emp = _employee_of(ctx)
+    if not emp or (host and host.lower() in await _shared_hosts(ctx, emp)):
+        return _default_ctx[1]
+    async with _lock:
+        bctx = _identities.get(emp)
+        if bctx is None:
+            state = _load_identity(emp)
+            bctx = await browser.new_context(storage_state=state) if state else await browser.new_context()
+            _identities[emp] = bctx
+        return bctx
+
+
+async def _all_contexts() -> list:
+    browser = await _browser_conn()
+    seen, out = set(), []
+    for c in [*_default_ctx[1:], *(browser.contexts or []), *_identities.values()]:
+        if id(c) not in seen:
+            seen.add(id(c))
+            out.append(c)
+    return out
 
 
 def _may_adopt(ctx: ToolContext | None, page) -> bool:  # noqa: ANN001
@@ -191,12 +284,19 @@ def _may_adopt(ctx: ToolContext | None, page) -> bool:  # noqa: ANN001
     return tab_emp == _employee_of(ctx)
 
 
-async def _page(ctx: ToolContext | None = None, prefer_host: str | None = None, create: bool = True):
-    """تب این اجرا. prefer_host: اگر تب آزاد و مجازی با همان سایت باز است، همان به امانت برداشته می‌شود."""
+async def _page(ctx: ToolContext | None = None, prefer_host: str | None = None, create: bool = True,
+                host: str | None = None):
+    """تب این اجرا. prefer_host: اگر تب آزاد و مجازی با همان سایت باز است، همان به امانت برداشته می‌شود.
+    host: میزبان مقصد برای انتخاب هویت (Context)؛ تب در Context اشتباه رها و تب درست ساخته می‌شود."""
     key = _session_key(ctx)
     page = _sessions.get(key)
+    if page is not None and not page.is_closed() and (host or prefer_host) and hasattr(page, "context"):
+        want = await _context(ctx, host or prefer_host)
+        if page.context is not want:
+            await release_session(key)  # هویت مقصد فرق دارد (مثلاً اشتراک کارفرما)؛ تب هویت دیگر استفاده نمی‌شود
+            page = None
     if page is None or page.is_closed():
-        bctx = await _context()
+        bctx = await _context(ctx, host or prefer_host)
         async with _lock:
             if prefer_host:
                 for cand in list(bctx.pages):
@@ -235,6 +335,9 @@ async def release_session(key: Any) -> None:
     _adopted.discard(k)
     _session_locks.pop(k, None)
     _session_used.pop(k, None)
+    emp = _page_employee.get(id(page), "") if page is not None else ""
+    if emp:
+        await _save_identity(emp)
     if page is not None and not adopted:
         _page_employee.pop(id(page), None)
         _page_errors.pop(id(page), None)
@@ -260,26 +363,42 @@ _EFFECTS: list[tuple[str, re.Pattern[str]]] = [
                                     r"پست|پاسخ بده|نظر بده", re.I)),
 ]
 _SEARCH = re.compile(r"search|query|\bq\b|جست|سرچ|find", re.I)
+# مشخصات واقعی عنصر هدف (و نزدیک‌ترین والد قابل تعامل) برای طبقه‌بندی اثر — مستقل از شیوه نشانی‌دهی
+_INFO_FN = r"""(el0) => {
+  const el = el0.closest('a,button,input,select,textarea,[role=button],[role=link],[onclick]') || el0;
+  const f = el.closest('form');
+  const attr = n => el.getAttribute(n) || '';
+  const hint = [attr('id'), attr('name'), attr('class'), attr('data-action'), attr('data-testid'), attr('aria-label'),
+                attr('title'), attr('formaction')].join(' ').slice(0, 200);
+  const submits = f ? [...f.elements].filter(b => b.matches('button,input[type=submit]'))
+    .map(b => __XA_LABEL__(b)).join(' ').slice(0, 160) : '';
+  return {label: __XA_LABEL__(el).slice(0, 120), tag: el.tagName.toLowerCase(), type: attr('type').toLowerCase(),
+          href: attr('href'), form: !!f, form_action: f ? (f.getAttribute('action') || '') : '', form_submits: submits,
+          hint, sensitive: __XA_SENSITIVE__(el)};
+}"""
 _DESCRIBE_JS = """
 (ref) => {
   const el = document.querySelector('[data-xa-id="' + ref + '"]');
   if (!el) return null;
-  const label = __XA_LABEL__(el).slice(0, 120);
-  return {label, tag: el.tagName.toLowerCase(), type: (el.getAttribute('type') || '').toLowerCase(),
-          href: el.getAttribute('href') || '', form: !!el.closest('form'), sensitive: __XA_SENSITIVE__(el)};
+  return (__XA_INFO__)(el);
 }
 """
 
 
-_DESCRIBE_JS = _with_helpers(_DESCRIBE_JS)
+_INFO_FN = _with_helpers(_INFO_FN)
+_DESCRIBE_JS = _with_helpers(_DESCRIBE_JS).replace("__XA_INFO_FN__", _INFO_FN)
+_INFO_ALL_JS = f"els => els.slice(0, 25).map({_INFO_FN})"
 _IS_SENSITIVE_JS = f"el => ({_SENSITIVE_FN})(el)"
+_SEVERITY = {"payment": 3, "web_irreversible": 2, "external_message": 1}
 
 
 def classify_effect(info: dict[str, Any] | None, *, submit: bool = False) -> str | None:
     """دسته Harness متناسب با اثر احتمالی اقدام؛ None یعنی اقدام عادی (باز کردن/خواندن/پیمایش)."""
     if not info:
         return None
-    text = " ".join(str(info.get(k) or "") for k in ("label", "href"))
+    text = " ".join(str(info.get(k) or "") for k in ("label", "href", "hint"))
+    if submit or info.get("type") == "submit":
+        text += " " + " ".join(str(info.get(k) or "") for k in ("form_action", "form_submits"))
     for category, pat in _EFFECTS:
         if pat.search(text):
             return category
@@ -290,16 +409,34 @@ def classify_effect(info: dict[str, Any] | None, *, submit: bool = False) -> str
     return None
 
 
-async def _describe(page, a: dict[str, Any]) -> dict[str, Any] | None:
+def _locator(page, a: dict[str, Any]):  # noqa: ANN001
+    """عنصری که واقعاً عمل می‌کند: selector، یا متن/نام دسترس‌پذیر (دکمه‌های آیکونی با aria-label هم)."""
+    if a.get("selector"):
+        return page.locator(a["selector"])
+    text = str(a.get("text") or "")
+    return (page.get_by_text(text).or_(page.get_by_role("button", name=text)).or_(page.get_by_role("link", name=text)))
+
+
+async def _describe_all(page, a: dict[str, Any]) -> list[dict[str, Any]]:  # noqa: ANN001
     if a.get("ref"):
         try:
             info = await page.evaluate(_DESCRIBE_JS, int(a["ref"]))
         except Exception:  # noqa: BLE001
-            return None
-        return info if isinstance(info, dict) else None
-    if a.get("text"):
-        return {"label": str(a["text"]), "tag": "", "type": "", "href": ""}
-    return {"label": str(a.get("selector") or ""), "tag": "", "type": "", "href": ""}
+            return []
+        return [info] if isinstance(info, dict) else []
+    try:
+        infos = await _locator(page, a).evaluate_all(_INFO_ALL_JS)
+    except Exception:  # noqa: BLE001 — هدف قابل تفکیک نیست؛ برچسب محافظه‌کارانه از خود رشته
+        return [{"label": str(a.get("text") or a.get("selector") or ""), "tag": "", "type": "", "href": ""}]
+    return [i for i in infos or [] if isinstance(i, dict)]
+
+
+async def _describe(page, a: dict[str, Any]) -> dict[str, Any] | None:  # noqa: ANN001
+    """شدیدترین اثر میان همه عناصر منطبق (هدف مبهم با کنترل حساس → همان دسته حساس، نه فرض بی‌خطری)."""
+    infos = await _describe_all(page, a)
+    if not infos:
+        return None
+    return max(infos, key=lambda i: _SEVERITY.get(classify_effect(i) or "", 0))
 
 
 def _enforce_effect(ctx: ToolContext, page, info: dict[str, Any] | None, *, submit: bool = False) -> None:
@@ -429,15 +566,16 @@ def _diagnostics(snap: dict[str, Any], status: int, errs: list[str], retries: in
 async def browser_tabs(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     """کشف تب‌های نشست مرورگر مجاز و مالک هر تب (پیش از باز کردن صفحه تازه)."""
     await _guard()
-    bctx = await _context()
+    mine = await _context(ctx)
     me, emp = _session_key(ctx), _employee_of(ctx)
     lines, tabs = [], []
-    for idx, pg in enumerate(bctx.pages):
+    pages = [(pg, c is mine) for c in await _all_contexts() for pg in c.pages]
+    for idx, (pg, same_identity) in enumerate(pages):
         if pg.is_closed():
             continue
         owner = _owner_of(pg)
         tab_emp = _page_employee.get(id(pg), "")
-        if tab_emp != emp and owner != me:
+        if not same_identity or (tab_emp != emp and owner != me):
             lines.append(f"[{idx}] (تب خصوصی کارمند/حساب دیگر — قابل مشاهده نیست)")
             tabs.append({"index": idx, "access": "private"})
             continue
@@ -467,7 +605,7 @@ async def browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
 async def _browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     url = a["url"] if "://" in a["url"] else "https://" + a["url"]
     want = _host(url)
-    page = await _page(ctx, prefer_host=want if a.get("reuse", True) else None)
+    page = await _page(ctx, prefer_host=want if a.get("reuse", True) else None, host=want)
     before = page.url
     reused = _host(before) == want and before.rstrip("/").startswith(url.rstrip("/"))
     status, chain, retries = 0, [], 0
@@ -581,8 +719,14 @@ async def browser_click(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     async with _op_lock(ctx):
         page = await _page(ctx)
         target = _target(a)
-        _enforce_effect(ctx, page, await _describe(page, a))  # پیش از کلیک، سمت سرور
-        await page.click(target, timeout=15000)
+        info = await _describe(page, a)
+        if info is None and not a.get("ref"):
+            return ToolResult(False, f"عنصر هدف «{a.get('selector') or a.get('text')}» در صفحه یافت نشد.", {"url": page.url})
+        _enforce_effect(ctx, page, info)  # پیش از کلیک، سمت سرور، بر اساس عنصر واقعی
+        if a.get("ref"):
+            await page.click(target, timeout=15000)
+        else:
+            await _locator(page, a).first.click(timeout=15000)  # همان عنصری که طبقه‌بندی شد
         await page.wait_for_timeout(1000)
         els = await _elements(page)
     return ToolResult(True, f"کلیک انجام شد. نشانی فعلی: {page.url}\n--- عناصر ---\n{els}", untrusted=True)
@@ -593,7 +737,7 @@ async def browser_type(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     async with _op_lock(ctx):
         page = await _page(ctx)
         target = _target(a)
-        el = page.locator(target).first
+        el = page.locator(target).first if a.get("ref") else _locator(page, a).first
         input_type = (await el.get_attribute("type") or "").lower()
         autocomplete = (await el.get_attribute("autocomplete") or "").lower()
         sensitive = bool(await el.evaluate(_IS_SENSITIVE_JS))

@@ -76,12 +76,14 @@ class MockLLM:
         tool_msgs = [m for m in msgs if m["role"] == "tool"]
         prompt_tokens = max(1, len(json.dumps(msgs, ensure_ascii=False)) // 4)
 
-        def reply(text: str | None = None, call: tuple[str, dict] | None = None) -> dict:
+        def reply(text: str | None = None, call: tuple[str, dict] | list | None = None) -> dict:
             message: dict = {"role": "assistant", "content": text}
             finish = "stop"
             if call:
-                message["tool_calls"] = [{"id": f"call_{len(self.calls)}", "type": "function",
-                                          "function": {"name": call[0], "arguments": json.dumps(call[1], ensure_ascii=False)}}]
+                batch = call if isinstance(call, list) else [call]  # فهرست = چند فراخوانی در یک پاسخ (Batch)
+                message["tool_calls"] = [{"id": f"call_{len(self.calls)}_{n}", "type": "function",
+                                          "function": {"name": c[0], "arguments": json.dumps(c[1], ensure_ascii=False)}}
+                                         for n, c in enumerate(batch)]
                 finish = "tool_calls"
             return {
                 "id": f"mock-{len(self.calls)}", "model": body.get("model"),
@@ -94,7 +96,7 @@ class MockLLM:
         for handler in list(self.handlers):
             out = handler(body)
             if out is not None:
-                return reply(None, out) if isinstance(out, tuple) else reply(out)
+                return reply(None, out) if isinstance(out, tuple | list) else reply(out)
 
         # آزمون عملی قابلیت‌ها (probe)
         if "report_status" in tools:

@@ -154,6 +154,9 @@ class FakeBrowserContext:
         self.pages.append(pg)
         return pg
 
+    async def storage_state(self) -> dict:
+        return {"cookies": [], "origins": []}
+
 
 class FakeBrowser:
     def __init__(self) -> None:
@@ -161,6 +164,11 @@ class FakeBrowser:
 
     def is_connected(self) -> bool:
         return True
+
+    async def new_context(self, **_: Any):  # هویت جدای کارمند (مانند Playwright)
+        c = FakeBrowserContext()
+        self.contexts.append(c)
+        return c
 
 
 class MultiPage:
@@ -170,6 +178,7 @@ class MultiPage:
 
     def __init__(self, ctx: FakeBrowserContext) -> None:
         self.ctx = ctx
+        self.context = ctx
         self.url = "about:blank"
         self.clicks: list[str] = []
         self.typed: list[tuple[str, str]] = []

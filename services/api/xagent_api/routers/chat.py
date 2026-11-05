@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import uuid
-from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -18,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_agent.classifier import detect_command
 from xagent_agent.commands import run_command
 from xagent_agent.pipeline import load_attachments
-from xagent_core import bus
+from xagent_core import approvals, bus
 from xagent_core.audit import audit
 from xagent_core.config import get_settings
 from xagent_core.db import utcnow
@@ -45,7 +44,6 @@ def ser_approval(a: Approval, extra: dict | None = None) -> dict:
         **(extra or {}),
     })
 MAX_UPLOAD = 50 * 1024 * 1024
-APPROVAL_PENDING_TTL = timedelta(hours=72)
 
 
 class SendIn(BaseModel):
@@ -65,7 +63,7 @@ class ConvPatch(BaseModel):
 
 
 class DecisionIn(BaseModel):
-    decision: str = Field(pattern="^(approve|deny)$")
+    decision: str = Field(pattern="^(approve|deny|revoke)$")
     note: str | None = None
 
 
@@ -307,6 +305,22 @@ async def cancel_run(rid: str, user: User = Depends(owner_user), session: AsyncS
     if r is None:
         raise HTTPException(404, "اجرا یافت نشد")
     await bus.request_run_cancel(r.id)
+    # لغو به اجراهای واگذارشده (فرزند/نوه) هم منتقل می‌شود؛ اثر پذیرفته‌شده قبلی برگشت‌پذیر فرض نمی‌شود
+    frontier, seen = [r.id], {r.id}
+    for _ in range(8):
+        kids = (await session.execute(select(Run).where(Run.parent_run_id.in_(frontier)))).scalars().all()
+        frontier = [k.id for k in kids if k.id not in seen]
+        if not frontier:
+            break
+        for k in kids:
+            if k.id in seen:
+                continue
+            seen.add(k.id)
+            await bus.request_run_cancel(k.id)
+            if k.status in ("queued", "waiting_approval", "paused"):
+                k.status, k.finished_at, k.stop_reason = "cancelled", utcnow(), "parent_cancelled"
+                await session.execute(Approval.__table__.update().where(
+                    Approval.run_id == k.id, Approval.status == "pending").values(status="expired"))
     if r.status in ("queued", "waiting_approval", "paused"):
         r.status = "cancelled"
         r.finished_at = utcnow()
@@ -374,28 +388,13 @@ async def decide(aid: str, body: DecisionIn, user: User = Depends(owner_user),
     a = await session.get(Approval, parse_uuid(aid))
     if a is None:
         raise HTTPException(404, "درخواست یافت نشد")
-    if a.status != "pending":
-        raise HTTPException(409, "قبلاً تصمیم‌گیری شده است")
-    if body.decision == "approve" and utcnow() - a.created_at > APPROVAL_PENDING_TTL:
-        # کارت اجازه قدیمی ممکن است با وضعیت فعلی همخوان نباشد؛ تأیید آن عملیاتی را مجاز نمی‌کند
-        a.status, a.decided_at, a.decided_by = "expired", utcnow(), user.username
-        await audit(session, user.username, "approval.expired", a.tool_name, {"run_id": str(a.run_id)})
-        await session.commit()
-        raise HTTPException(409, "این درخواست اجازه منقضی شده است؛ کار را دوباره درخواست کنید")
-    a.status = "approved" if body.decision == "approve" else "denied"
-    a.decided_at = utcnow()
-    a.decided_by = user.username
-    a.decision_note = body.note
-    await audit(session, user.username, f"approval.{a.status}", a.tool_name,
-                {"category": a.category, "run_id": str(a.run_id)})
-    run = await session.get(Run, a.run_id)
-    remaining = (await session.execute(select(func.count()).select_from(Approval).where(
-        Approval.run_id == a.run_id, Approval.status == "pending"))).scalar_one()
-    if run is not None and run.status == "waiting_approval" and remaining == 0:
-        run.status = "queued"
+    d = await approvals.decide(session, a, body.decision, user.username, body.note, channel="panel")
     await session.commit()
+    if not d.ok:
+        raise HTTPException(409, d.message)
+    run = await session.get(Run, a.run_id)
     await bus.publish("approval.decided", {"id": str(a.id), "run_id": str(a.run_id), "status": a.status,
                                            "conversation_id": str(run.conversation_id) if run and run.conversation_id else None})
-    if run is not None and remaining == 0:
-        await bus.enqueue_run(run.id, "approval")
+    if d.requeue is not None:
+        await bus.enqueue_run(d.requeue, "approval")
     return ser(a)
