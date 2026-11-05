@@ -20,7 +20,7 @@ import shutil
 import signal
 from typing import Any
 
-from aiohttp import web
+from aiohttp import ClientError, ClientSession, ClientTimeout, web
 
 TOKEN = os.environ.get("DESKTOP_TOKEN", "")
 RUNNER_MODE = os.environ.get("RUNNER_MODE") == "1"
@@ -63,15 +63,17 @@ async def run(cmd: str, cwd: str | None = None, timeout: int = 120, env: dict[st
 
 async def health(_: web.Request) -> web.Response:
     cdp = False
+    version = None
     try:
-        r, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", 9223), timeout=1)
-        w.close()
-        cdp = True
-    except OSError:
-        pass
-    except TimeoutError:
+        async with ClientSession(timeout=ClientTimeout(total=2)) as client:
+            async with client.get("http://127.0.0.1:9223/json/version") as response:
+                data = await response.json()
+                version = data.get("Browser")
+                cdp = response.status == 200 and isinstance(version, str) and bool(data.get("Protocol-Version"))
+    except (ClientError, OSError, TimeoutError, ValueError):
         pass
     return web.json_response({"ok": True, "display": DISPLAY, "chromium_cdp": cdp, "takeover": STATE["takeover"],
+                              "browser_cdp": cdp, "browser_version": version,
                               "git": bool(shutil.which("git")), "node": bool(shutil.which("node")),
                               "uv": bool(shutil.which("uv")), "mcp_servers": list(MCP.keys())})
 

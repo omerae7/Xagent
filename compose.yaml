@@ -194,6 +194,7 @@ services:
     environment:
       DESKTOP_TOKEN: ${DESKTOP_TOKEN}
       SCREEN_GEOMETRY: ${DESKTOP_GEOMETRY:-1600x900x24}
+      XAGENT_BROWSER: ${XAGENT_BROWSER:-auto}
       TZ: ${XAGENT_DEFAULT_TIMEZONE:-Asia/Tehran}
     volumes:
       - ${XAGENT_HOME:-/opt/xagent}/desktop-home:/home/agent
