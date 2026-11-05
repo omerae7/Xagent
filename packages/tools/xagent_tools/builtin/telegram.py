@@ -12,6 +12,18 @@ from .. import missions
 from ..base import Tool, ToolContext, ToolResult, i, obj, s
 
 
+def valid_receipt(res: Any) -> int | None:
+    """رسید معتبر ارسال تلگرام: شناسه پیام عدد مثبت. بدون رسید معتبر، «ارسال شد» ادعا نمی‌شود."""
+    mid = res.get("message_id") if isinstance(res, dict) else None
+    if isinstance(mid, bool):
+        return None
+    if isinstance(mid, int) and mid > 0:
+        return mid
+    if isinstance(mid, str) and mid.isdigit() and int(mid) > 0:
+        return int(mid)
+    return None
+
+
 def _bridge(ctx: ToolContext):
     br = ctx.extra.get("telegram")
     if br is None or not br.connected:
@@ -84,10 +96,21 @@ async def telegram_send(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
                          run_id=ctx.run_id, mission_id=mission_id, dedupe_key=f"outbox-uncertain:{key}")
         return ToolResult(False, "نتیجه ارسال نامشخص است (ممکن است ارسال شده باشد)؛ تکرار خودکار انجام نمی‌شود.",
                           {"uncertain": True})
-    ok = bool(res.get("message_id"))
-    await missions.outbox_mark(aid, "sent" if ok else "unknown", {"message_id": res.get("message_id")})
-    return ToolResult(ok, f"پیام به {a['chat']} ارسال شد (شناسه پیام {res.get('message_id')})" if ok else "ارسال ناموفق",
-                      res, verified=ok)
+    mid = valid_receipt(res)
+    if mid is None:
+        # فراخوانی برگشت ولی رسید معتبر ندارد: ممکن است ارسال شده باشد → نامعلوم، بدون تکرار کورکورانه
+        await missions.outbox_mark(aid, "unknown", {"error": "missing_or_malformed_receipt"})
+        state["mission_send_unknown"] = True
+        await inbox.post(ctx.session, kind="error", severity="important",
+                         title=f"نتیجه ارسال پیام به {a['chat']} نامشخص است",
+                         body="سرویس تلگرام رسید معتبر (شناسه پیام) برنگرداند؛ ممکن است پیام ارسال شده باشد. "
+                              "برای جلوگیری از پیام تکراری دوباره ارسال نمی‌شود.",
+                         run_id=ctx.run_id, mission_id=mission_id, dedupe_key=f"outbox-uncertain:{key}")
+        return ToolResult(False, "رسید معتبر ارسال دریافت نشد؛ نتیجه نامعلوم است و تکرار خودکار انجام نمی‌شود.",
+                          {"uncertain": True})
+    await missions.outbox_mark(aid, "sent", {"message_id": mid})
+    return ToolResult(True, f"پیام به {a['chat']} ارسال شد (شناسه پیام {mid})", {**res, "message_id": mid},
+                      verified=True)
 
 
 async def telegram_recent(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:

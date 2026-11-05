@@ -67,7 +67,7 @@ async def test_uncertain_final_delivery_is_not_resent_and_task_still_succeeds(ap
     rc.run, rc.state = run, dict(run.state)
     await runner._deliver_final(rc, run.status, "سلام دوباره")
     assert len(fake.sent) == 1, "ارسال با نتیجه نامعلوم کورکورانه تکرار شد"
-    assert rc.state["delivery"]["status"] == "uncertain"
+    assert rc.state["delivery"]["status"] == "pending_reconciliation"
 
 
 async def test_disconnected_channel_is_reported_not_claimed(app_client, configured_model, mock_llm):

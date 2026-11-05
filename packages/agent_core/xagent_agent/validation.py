@@ -136,3 +136,62 @@ def evaluation_verdict(text: str, criteria: list[str], evidence: list[dict], req
             return invalid
         indices.append(idx)
     return verdict if sorted(indices) == list(range(len(criteria))) else invalid
+
+
+# ── هدف عملیاتی هر درخواست (F07): هر معیار اجباری به شاهد مرتبط خودش نیاز دارد ──
+# (هدف، الگوی درخواست، ابزارهایی که اثرشان آن هدف را برآورده می‌کند)
+_SEND = re.compile(r"(پیام|message|متن)[^.؟?!،]{0,40}(بده|بفرست|ارسال کن|بنویس برای|send)|"
+                   r"(بفرست|ارسال کن|send)\b[^.؟?!]{0,40}(به|to)\b|(جواب|پاسخ) (بده|بفرست)|\breply to\b", re.I)
+_FILE = re.compile(r"(فایل|file|سند|یادداشت)[^.؟?!،]{0,40}(بساز|بنویس|ذخیره کن|ایجاد کن|create|write|save)|"
+                   r"(بساز|بنویس|ذخیره کن|create|write|save)[^.؟?!،]{0,30}(فایل|file)", re.I)
+_TASK = re.compile(r"(تسک|وظیفه|task|یادآور)[^.؟?!،]{0,40}(بساز|ایجاد کن|ثبت کن|اضافه کن|بگذار|create|add)|"
+                   r"(بساز|ایجاد کن|ثبت کن|اضافه کن|create|add)[^.؟?!،]{0,30}(تسک|وظیفه|task)", re.I)
+_CONDITIONAL = re.compile(r"(^|\s)(اگر|در صورت|درصورتی|if|when|whenever)\s", re.I)
+_TO_OWNER = re.compile(r"به من|برای من|خودم|\bme\b", re.I)
+OBJECTIVES: list[tuple[str, re.Pattern[str], frozenset[str]]] = [
+    ("file_written", _FILE, frozenset({"file_write"})),
+    ("task_created", _TASK, frozenset({"task_create", "routine_create"})),
+    ("message_sent", _SEND, frozenset({"telegram_send"})),
+]
+DIRECT_TRIGGERS = {"chat", "voice", "telegram", "delegate"}
+
+
+def required_objectives(run: Any, state: dict) -> list[str]:
+    """اهداف عملیاتی صریح درخواست مستقیم. درخواست شرطی/زمان‌دار و اجرای روتین/رویداد هدف قطعی تحمیل نمی‌کنند
+    (ارسال در آن‌ها به داده بستگی دارد)؛ مأموریت زمان‌دار هدفش ساخت روتین است."""
+    if getattr(run, "trigger", "chat") not in DIRECT_TRIGGERS or getattr(run, "routine_id", None):
+        return []
+    text = str(getattr(run, "input", "") or "")
+    if (state.get("route") or {}).get("intent"):
+        return ["task_created"]  # مأموریت زمان‌دار: اثر لازم ساخت روتین/تسک است، نه ارسال فوری
+    if _CONDITIONAL.search(text):
+        return []
+    return [name for name, rx, _ in OBJECTIVES if rx.search(text)]
+
+
+def objective_report(run: Any, state: dict) -> dict:
+    """گزارش هدف: فراخوانی ≠ مشاهده ≠ اثر تأییدشده ≠ تکمیل هدف. status:
+    not_required | completed | partial | not_completed | unknown (اثر بیرونی نامعلوم؛ تکرار کورکورانه نشود)."""
+    required = required_objectives(run, state)
+    if not required:
+        return {"status": "not_required", "required": [], "completed": [], "missing": [], "unknown": []}
+    evidence = [e for e in (state.get("evidence") or []) if isinstance(e, dict)]
+    tools = {name: t for name, _, t in OBJECTIVES}
+    to_owner = bool(_TO_OWNER.search(str(getattr(run, "input", "") or "")))
+    completed, missing, unknown = [], [], []
+    for obj in required:
+        allowed = set(tools[obj]) | ({"notify_owner"} if obj == "message_sent" and to_owner else set())
+        rel = [e for e in evidence if e.get("tool") in allowed]
+        if any(e.get("ok") is True and (e.get("verified") is True or e.get("tool") == "notify_owner") for e in rel):
+            completed.append(obj)
+        elif any(e.get("ok") is False and e.get("verified") is None and e.get("requires_verification") for e in rel):
+            unknown.append(obj)  # شاید انجام شده باشد؛ بدون بررسی تکرار نمی‌شود
+        else:
+            missing.append(obj)
+    status = ("completed" if not missing and not unknown else
+              "unknown" if unknown and not missing else "partial" if completed else "not_completed")
+    labels = {"message_sent": "ارسال پیام", "file_written": "ساخت/نوشتن فایل", "task_created": "ساخت تسک/روتین"}
+    issues = [f"هدف «{labels[o]}» با شاهد مرتبط و تأییدشده انجام نشده است" for o in missing]
+    issues += [f"نتیجه بیرونی «{labels[o]}» نامعلوم است؛ بدون بررسی تکرار نشود" for o in unknown]
+    return {"status": status, "required": required, "completed": completed, "missing": missing, "unknown": unknown,
+            "issues": issues}

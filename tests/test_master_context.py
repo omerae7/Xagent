@@ -72,8 +72,11 @@ def test_A8_large_tool_output_kept_retrievable(tmp_path, monkeypatch):
     rid = uuid.uuid4()
     bounded = bound_tool_output(rid, "call-1", out)
     assert len(bounded) < TOOL_OUTPUT_MAX_CHARS and "MIDDLE-SECRET-MARKER" not in bounded
-    ref = get_settings().workspace_dir / f"runs/{rid}/call-1.txt"
-    assert ref.read_text(encoding="utf-8") == out and f"runs/{rid}/call-1.txt" in bounded
+    # نام فایل از هش شناسه فراخوانی ساخته می‌شود (F10)؛ ارجاع درج‌شده در رونوشت باید همان متن کامل را بدهد
+    rel = bounded.split("متن کامل: ", 1)[1].split(" ", 1)[0]
+    assert rel.startswith(f"runs/{rid}/")
+    ref = get_settings().workspace_dir / rel
+    assert ref.read_text(encoding="utf-8") == out
 
 
 # ── F5 در Pipeline واقعی: چند خواندن فایل بزرگ با پنجره کوچک مدل — هر درخواست در بودجه می‌ماند ──

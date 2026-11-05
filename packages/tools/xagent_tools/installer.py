@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_core import bus
 from xagent_core.audit import audit, notify
 from xagent_core.models import InstalledTool, ToolVersion
-from xagent_core.redact import scrub
+from xagent_core.redact import open_secrets, scrub, seal_secrets
 from xagent_memory.revisions import record_change, snapshot
 
 from . import mcp_client
@@ -222,8 +222,11 @@ async def install(
             test_out = f"اتصال MCP موفق؛ {len(schemas)} ابزار شناسایی شد: " + "، ".join(s["name"] for s in schemas[:20])
             log.append(test_out)
 
-        tv = ToolVersion(tool_id=tool.id, version=version, ref=ref, path=path, manifest=info.get("manifest", {}),
-                         test_status=test_status, test_output=test_out)
+        # پیکربندی اجرایی کامل همین نسخه (اسرار رمزشده) برای Rollback دقیق؛ از پیکربندی نسخه دیگری ساخته نمی‌شود
+        tv = ToolVersion(tool_id=tool.id, version=version, ref=ref, path=path,
+                         manifest={**info.get("manifest", {}), "exec_config": seal_secrets(info["config"]),
+                                   "kind": info["kind"]},
+                         test_status=test_status, test_output=scrub(test_out))
         session.add(tv)
         await session.flush()
         tool.kind = info["kind"]
@@ -287,21 +290,36 @@ async def rollback(session: AsyncSession, tool_id: uuid.UUID, version_id: uuid.U
     if target is None:
         return InstallOutcome(False, "نسخه قبلی سالمی برای بازگشت وجود ندارد")
     before = snapshot("tool", tool)
-    cfg = dict(tool.config or {})
-    if cfg.get("cwd") and tool.kind != "mcp_http":
-        old_path = cfg["cwd"]
-        cfg = json.loads(json.dumps(cfg).replace(old_path, target.path))
+    stored = (target.manifest or {}).get("exec_config")
+    legacy = not isinstance(stored, dict)
+    kind = (target.manifest or {}).get("kind") or tool.kind
+    if not legacy:
+        cfg = open_secrets(stored)  # پیکربندی اجرایی دقیق همان نسخه
+    else:
+        # رکورد قدیمی بدون پیکربندی ذخیره‌شده: بازسازی تقریبی از پیکربندی فعلی؛ فقط با آزمون اتصال موفق پذیرفته می‌شود
+        cfg = dict(tool.config or {})
+        if cfg.get("cwd") and kind != "mcp_http":
+            old_path = cfg["cwd"]
+            cfg = json.loads(json.dumps(cfg).replace(old_path, target.path))
+    schemas = tool.tool_schemas
+    if kind in ("mcp_stdio", "mcp_http"):
+        try:
+            schemas = await mcp_client.list_tools(tool.name, cfg)
+        except Exception as e:  # noqa: BLE001 — آزمون اتصال ناموفق: نسخه فعلی دست‌نخورده می‌ماند، «ready» ادعا نمی‌شود
+            msg = scrub(str(e))
+            await audit(session, actor, "tool.rollback_failed", tool.name, {"version": target.version, "error": msg[:300]})
+            return InstallOutcome(False, f"Rollback به نسخه {target.version} انجام نشد: آزمون اتصال آن نسخه ناموفق بود "
+                                  f"({msg[:200]}). نسخه فعلی تغییری نکرد.", tool.id)
     tool.config = cfg
+    tool.kind = kind
+    tool.tool_schemas = schemas
     tool.active_version_id = target.id
     tool.status = "ready"
     tool.enabled = True
-    if tool.kind in ("mcp_stdio", "mcp_http"):
-        try:
-            tool.tool_schemas = await mcp_client.list_tools(tool.name, cfg)
-        except Exception as e:  # noqa: BLE001
-            tool.last_error = f"اتصال پس از Rollback ناموفق: {e}"
-    await record_change(session, "tool", tool, "update", before, f"Rollback به نسخه {target.version}", actor=actor,
+    tool.last_error = None
+    note = " (رکورد نسخه قدیمی/legacy: پیکربندی از نسخه فعلی بازسازی و با آزمون اتصال تأیید شد)" if legacy else ""
+    await record_change(session, "tool", tool, "update", before, f"Rollback به نسخه {target.version}{note}", actor=actor,
                         origin="panel")
-    await audit(session, actor, "tool.rollback", tool.name, {"version": target.version})
+    await audit(session, actor, "tool.rollback", tool.name, {"version": target.version, "legacy_config": legacy})
     await bus.publish("tool.changed", {"id": str(tool.id), "status": "ready"})
-    return InstallOutcome(True, f"ابزار «{tool.name}» به نسخه {target.version} بازگشت.", tool.id)
+    return InstallOutcome(True, f"ابزار «{tool.name}» به نسخه {target.version} بازگشت.{note}", tool.id)

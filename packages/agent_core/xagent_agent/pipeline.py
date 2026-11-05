@@ -61,6 +61,7 @@ from .validation import (
     evaluation_verdict,
     evidence_issues,
     execution_required,
+    objective_report,
     requires_verification,
 )
 
@@ -163,6 +164,7 @@ def fit_request(system: str, specs: list[ToolSpec] | None, history: list[LLMMess
     stats: dict[str, Any] = {"window": window, "budget": budget, "est_before": before, "changed": False}
     if before <= budget:
         stats["est_after"] = before
+        stats["fits"] = True
         return hist, umsg, tx, stats
 
     def compact(keep: int, chars: int) -> int:
@@ -196,20 +198,66 @@ def fit_request(system: str, specs: list[ToolSpec] | None, history: list[LLMMess
     return hist, umsg, tx, stats
 
 
+class CapacityExceeded(Exception):
+    """درخواست حتی پس از کوتاه‌سازی مجاز در ظرفیت هیچ مدل مجاز زنجیره جا نمی‌شود؛ هرگز به ارائه‌دهنده ارسال نمی‌شود."""
+
+
+def plan_submission(system: str, specs: list[ToolSpec], history: list[LLMMessage], user_msg: LLMMessage,
+                    transcript: list[LLMMessage], max_tokens: int, chain: list, keep_tools: set[str]):
+    """جا دادن درخواست پیش از ارسال (F22). ترتیب: کوتاه‌سازی مجاز (fit_request) → حذف Schema ابزارهای اختیاری
+    (ابزارهای استفاده‌شده در رونوشت برای قرارداد tool-call حفظ می‌شوند) → فقط مدل‌های مجاز زنجیره با پنجره بزرگ‌تر.
+    خروجی: (hist, user, tx, fit, specs, chain). اگر جا نشود CapacityExceeded؛ دستور سیستم/امنیت حذف نمی‌شود."""
+    def window_of(models: list) -> int:
+        return min((m.context_window for m in models if getattr(m, "context_window", None)), default=128_000)
+
+    attempts: list[dict[str, Any]] = []
+    slim = [sp for sp in specs if sp.name in keep_tools]
+    for cand_specs, cand_chain in ((specs, chain), (slim, chain)):
+        h, u, t, fit = fit_request(system, cand_specs, history, user_msg, transcript, max_tokens, window_of(cand_chain))
+        attempts.append({"tools": len(cand_specs), "window": fit["window"], "est": fit.get("est_after")})
+        if fit.get("fits", True):
+            return h, u, t, {**fit, "attempts": attempts, "dropped_tools": len(specs) - len(cand_specs)}, cand_specs, cand_chain
+    base_window = window_of(chain)
+    bigger = sorted({m.context_window for m in chain if getattr(m, "context_window", None)
+                     and m.context_window > base_window})
+    for w in bigger:
+        cand_chain = [m for m in chain if (getattr(m, "context_window", None) or 128_000) >= w]
+        for cand_specs in (specs, slim):
+            h, u, t, fit = fit_request(system, cand_specs, history, user_msg, transcript, max_tokens, w)
+            attempts.append({"tools": len(cand_specs), "window": w, "est": fit.get("est_after")})
+            if fit.get("fits", True):
+                return (h, u, t, {**fit, "attempts": attempts, "dropped_tools": len(specs) - len(cand_specs),
+                                  "model_switch": [getattr(m, "label", "") for m in cand_chain]}, cand_specs, cand_chain)
+    raise CapacityExceeded(f"درخواست در ظرفیت مدل‌های مجاز جا نمی‌شود (برآورد {attempts[-1]['est']} توکن، "
+                           f"بزرگ‌ترین پنجره {max([base_window, *bigger])}). برای جلوگیری از خطا/هزینه بی‌نتیجه ارسال نشد؛ "
+                           "درخواست را کوتاه‌تر کنید یا مدلی با پنجره بزرگ‌تر تنظیم کنید.")
+
+
 def bound_tool_output(run_id: Any, call_id: str, out: str) -> str:
     """خروجی بسیار بزرگ ابزار: ابتدا و انتها در رونوشت، متن کامل در فایل قابل بازیابی فضای کاری."""
     if len(out) <= TOOL_OUTPUT_MAX_CHARS:
         return out
     from xagent_core.config import get_settings
 
-    rel = f"runs/{run_id}/{call_id}.txt"
     ref = "(ذخیره نشد)"
     try:
-        path = get_settings().workspace_dir / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(out, encoding="utf-8")
-        ref = rel
-    except OSError:
+        ws = get_settings().workspace_dir.resolve()
+        run_dir = (ws / "runs" / str(uuid.UUID(str(run_id)))).resolve()
+        # شناسه فراخوانی را ارائه‌دهنده تعیین می‌کند: هرگز مستقیم در مسیر نمی‌آید (هش پایدار + پسوند یکتا)
+        digest = hashlib.sha256(str(call_id).encode("utf-8", "surrogatepass")).hexdigest()[:24]
+        run_dir.mkdir(parents=True, exist_ok=True)
+        for n in range(1000):
+            path = (run_dir / (f"call-{digest}.txt" if n == 0 else f"call-{digest}-{n}.txt")).resolve()
+            if not path.is_relative_to(run_dir):
+                raise OSError("artifact path escaped run directory")
+            try:
+                with path.open("x", encoding="utf-8") as fh:  # ساخت انحصاری: شناسه تکراری هرگز فایل قبلی را بازنویسی نمی‌کند
+                    fh.write(out)
+            except FileExistsError:
+                continue
+            ref = path.relative_to(ws).as_posix()
+            break
+    except (OSError, ValueError):
         pass
     return (f"{out[:8000]}\n[… {len(out) - 10000} نویسه از میانه این خروجی در رونوشت نیامد؛ متن کامل: {ref} "
             f"(با file_read قابل خواندن) …]\n{out[-2000:]}")
@@ -543,6 +591,8 @@ class AgentRunner:
                              link=f"/chat/{run.conversation_id}" if run.conversation_id else "/tasks")
             await self._checkpoint(rc)
             return run.status
+        except CapacityExceeded as e:
+            await self._finalize(rc, "failed", f"⚠️ {e}", error=str(e), stop_reason="capacity")
         except ValidationFailed as e:
             await self._finalize(rc, "failed", "⚠️ تکمیل درخواست تأیید نشد. ممکن است بخشی از عملیات انجام شده باشد؛ "
                                  "بدون بررسی نتیجه، اقدامات را تکرار نکنید.\n" + str(e),
@@ -857,17 +907,21 @@ class AgentRunner:
                     await bus.enqueue_run(rid, "routine")  # فقط پس از Commit تا Worker اجرای ثبت‌نشده نبیند
                 tool_ctx.extra["enqueue_runs"] = []
                 continue
-            window = min((m.context_window for m in chain if m.context_window), default=128_000)
-            f_hist, f_user, f_tx, fit = fit_request(system_stable + "\n" + system_dynamic, specs, history, user_msg,
-                                                    transcript, max_tokens, window)
+            keep = set(s.get("tools_used", [])) | {"tools_load"} | {
+                tc.name for m in transcript for tc in m.tool_calls}  # قرارداد بازپخش tool-call حفظ می‌شود
+            f_hist, f_user, f_tx, fit, send_specs, send_chain = plan_submission(
+                system_stable + "\n" + system_dynamic, specs, history, user_msg, transcript, max_tokens, chain, keep)
+            if fit.get("dropped_tools") or fit.get("model_switch"):
+                await self._step(rc, "info", "تطبیق ظرفیت: حذف Schema ابزارهای اختیاری/مدل با پنجره بزرگ‌تر",
+                                 detail={k: fit.get(k) for k in ("dropped_tools", "model_switch", "attempts")})
             if fit["changed"]:
                 s["context_fit"] = fit
                 await self._step(rc, "info", "تطبیق درخواست با پنجره کانتکست",
                                  detail={k: fit.get(k) for k in ("window", "est_before", "est_after",
                                                                  "compacted_tool_results", "dropped_history", "fits")})
             res = await self._llm(
-                rc, chain, "execution" if not s.get("escalated") else "management", system_stable, system_dynamic,
-                [*f_hist, f_user, *f_tx], tools=specs or None, max_tokens=max_tokens, effort=effort,
+                rc, send_chain, "execution" if not s.get("escalated") else "management", system_stable, system_dynamic,
+                [*f_hist, f_user, *f_tx], tools=send_specs or None, max_tokens=max_tokens, effort=effort,
                 title="اجرا" if not s.get("escalated") else "اجرا (مدیر)",
             )
             r = res.response
@@ -1558,6 +1612,9 @@ class AgentRunner:
         evidence = s.get("evidence", [])
         required = execution_required(rc.run, s, answer)
         issues = evidence_issues(s, required, rc.run.input or "")
+        objective = objective_report(rc.run, s)
+        s["objective"] = {k: v for k, v in objective.items() if k != "issues"}
+        issues.extend(objective.get("issues") or [])  # شاهد بی‌ربط (مثلاً خواندن فایل) هرگز هدف را اثبات نمی‌کند
         criteria = (s.get("goal") or {}).get("success_criteria")
         if not isinstance(criteria, list) or not criteria or any(not isinstance(c, str) or not c.strip() for c in criteria):
             issues.append("معیارهای صریح موفقیت ثبت نشده یا نامعتبر است")
@@ -1681,7 +1738,7 @@ class AgentRunner:
         تکرار نمی‌شود. وضعیت تحویل جدا از وضعیت کار در run.state["delivery"] ثبت می‌شود: کار انجام‌شده به‌خاطر شکست
         اعلان «ناموفق» نمی‌شود و ارسال‌نشدن پیام هم «تحویل‌شده» گزارش نمی‌شود.
         """
-        from xagent_tools.builtin.telegram import _definitely_not_sent
+        from xagent_tools.builtin.telegram import _definitely_not_sent, valid_receipt
 
         run = rc.run
         reply_to = rc.state.get("reply_to")
@@ -1700,7 +1757,7 @@ class AgentRunner:
             rc.state["delivery"] = {**record, "status": "sent", "dedupe": True}
             return
         if verdict == "uncertain" or aid is None:
-            rc.state["delivery"] = {**record, "status": "uncertain",
+            rc.state["delivery"] = {**record, "status": "pending_reconciliation",
                                     "note": "تلاش قبلی نتیجه نامعلوم داشت؛ برای جلوگیری از پیام تکراری دوباره ارسال نشد"}
             return
         await missions.outbox_mark(aid, "sending")
@@ -1711,7 +1768,11 @@ class AgentRunner:
             await missions.outbox_mark(aid, "failed" if definite else "unknown", {"error": f"{type(e).__name__}: {str(e)[:200]}"})
             rc.state["delivery"] = {**record, "status": "failed" if definite else "unknown", "error": type(e).__name__}
             return
-        mid = (res or {}).get("message_id") if isinstance(res, dict) else None
+        mid = valid_receipt(res)
+        if mid is None:  # بازگشت بدون رسید معتبر: «ارسال شد» نیست؛ نامعلوم و بدون تکرار کورکورانه
+            await missions.outbox_mark(aid, "unknown", {"error": "missing_or_malformed_receipt"})
+            rc.state["delivery"] = {**record, "status": "unknown", "error": "missing_or_malformed_receipt"}
+            return
         await missions.outbox_mark(aid, "sent", {"message_id": mid})
         rc.state["delivery"] = {**record, "status": "sent", "message_id": mid}
 

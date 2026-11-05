@@ -94,6 +94,7 @@ export function RunSteps({ runId, initialOpen = false }: { runId: string; initia
 const DELIVERY_FA: Record<string, [string, string]> = {
   sent: ["تحویل شد", "text-success"], failed: ["ارسال نشد", "text-danger"], unknown: ["نتیجه ارسال نامعلوم", "text-warning"],
   uncertain: ["نتیجه تلاش قبلی نامعلوم؛ تکرار نشد", "text-warning"], not_connected: ["کانال متصل نبود؛ ارسال نشد", "text-muted"],
+  pending_reconciliation: ["در انتظار تطبیق: نتیجه تلاش قبلی نامعلوم؛ تکرار نشد", "text-warning"],
 };
 
 /** واقعیت اجرایی Run از State سمت سرور: شواهد ابزار، اعتبارسنجی و تحویل اعلان — نه برداشت از متن مدل */

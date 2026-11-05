@@ -28,6 +28,7 @@ DISPLAY = os.environ.get("DISPLAY", ":1")
 HOME = os.environ.get("HOME", "/home/agent")
 WORKDIR = os.path.join(HOME, "work")
 MAX_OUT = 200_000
+REQUEST_TIMEOUT = float(os.environ.get("MCP_REQUEST_TIMEOUT", "300"))
 STATE = {"takeover": False}
 SAFE_ENV = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": HOME, "LANG": "C.UTF-8",
             "DISPLAY": DISPLAY, "TERM": "xterm-256color"}
@@ -128,15 +129,24 @@ async def takeover(request: web.Request) -> web.Response:
 
 # ───────────── پل MCP (stdio ← HTTP) ─────────────
 class StdioServer:
+    """یک فرایند MCP مشترک برای همه کلاینت‌ها (کارمندان/اجراها) با جداسازی کامل پاسخ‌ها.
+
+    شناسه JSON-RPC هر درخواست به شناسه داخلی یکتا نگاشت می‌شود و پاسخ فقط به همان درخواست‌کننده با
+    شناسه اصلی خودش برمی‌گردد؛ دو کلاینت با شناسه یکسان هرگز پاسخ هم را نمی‌گیرند. پاسخ دیررس پس از
+    Timeout/قطع اتصال دور ریخته می‌شود. پس از خروج سرور، دست‌دهی initialize دوباره پخش می‌شود."""
+
     def __init__(self, name: str, config: dict[str, Any]):
         self.name = name
         self.config = config
         self.proc: asyncio.subprocess.Process | None = None
-        self.pending: dict[Any, asyncio.Future] = {}
+        self.pending: dict[str, asyncio.Future] = {}
         self.init_result: dict[str, Any] | None = None
+        self.init_msg: dict[str, Any] | None = None
         self.lock = asyncio.Lock()
+        self.init_lock = asyncio.Lock()
         self.reader: asyncio.Task | None = None
         self._notified = False
+        self._seq = 0
 
     async def ensure(self) -> None:
         async with self.lock:
@@ -150,49 +160,82 @@ class StdioServer:
             )
             self.init_result = None
             self._notified = False
-            self.reader = asyncio.create_task(self._read())
+            self.reader = asyncio.create_task(self._read(self.proc))
 
-    async def _read(self) -> None:
-        assert self.proc and self.proc.stdout
+    async def _read(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stdout
         while True:
-            line = await self.proc.stdout.readline()
+            line = await proc.stdout.readline()
             if not line:
                 break
             try:
                 msg = json.loads(line)
             except ValueError:
                 continue
-            fut = self.pending.pop(msg.get("id"), None) if isinstance(msg, dict) and "id" in msg else None
+            if not isinstance(msg, dict) or "id" not in msg or "method" in msg:
+                continue  # اعلان یا درخواست سرور → کلاینت: به هیچ درخواست‌کننده‌ای نسبت داده نمی‌شود
+            fut = self.pending.pop(str(msg["id"]), None)
             if fut and not fut.done():
                 fut.set_result(msg)
-        for fut in self.pending.values():
+        await proc.wait()
+        for key, fut in list(self.pending.items()):
             if not fut.done():
                 fut.set_exception(RuntimeError("MCP server exited"))
-        self.pending.clear()
+            self.pending.pop(key, None)
 
-    async def send(self, msg: dict[str, Any], timeout: float = 300) -> dict[str, Any] | None:
-        await self.ensure()
+    async def _write(self, msg: dict[str, Any]) -> None:
         assert self.proc and self.proc.stdin
-        method = msg.get("method")
-        if method == "initialize" and self.init_result is not None:
-            return {"jsonrpc": "2.0", "id": msg["id"], "result": self.init_result}
-        if method == "notifications/initialized" and self._notified:
-            return None
-        is_request = "id" in msg and method is not None
-        fut: asyncio.Future | None = None
-        if is_request:
-            fut = asyncio.get_running_loop().create_future()
-            self.pending[msg["id"]] = fut
         self.proc.stdin.write((json.dumps(msg) + "\n").encode())
         await self.proc.stdin.drain()
+
+    async def _request(self, msg: dict[str, Any], timeout: float) -> dict[str, Any]:
+        self._seq += 1
+        internal = f"xa-{self._seq}"
+        fut = asyncio.get_running_loop().create_future()
+        self.pending[internal] = fut
+        try:
+            await self._write({**msg, "id": internal})
+            resp = await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self.pending.pop(internal, None)  # Timeout یا قطع اتصال: نشتی نیست و پاسخ دیررس به کسی نمی‌رسد
+        return {**resp, "id": msg["id"]}
+
+    async def _handshake(self, timeout: float) -> None:
+        """پس از ری‌استارت سرور، دست‌دهی کلاینت اولیه تکرار می‌شود تا درخواست‌های بعدی پذیرفته شوند."""
+        async with self.init_lock:
+            if self.init_result is not None or self.init_msg is None:
+                return
+            resp = await self._request(self.init_msg, timeout)
+            if "result" in resp:
+                self.init_result = resp["result"]
+                await self._write({"jsonrpc": "2.0", "method": "notifications/initialized"})
+                self._notified = True
+
+    async def send(self, msg: dict[str, Any], timeout: float | None = None) -> dict[str, Any] | None:
+        timeout = timeout or REQUEST_TIMEOUT
+        await self.ensure()
+        method = msg.get("method")
+        if method == "initialize":
+            async with self.init_lock:  # دو کلاینت هم‌زمان: فقط یک initialize به سرور می‌رسد
+                if self.init_result is None:
+                    self.init_msg = {k: v for k, v in msg.items() if k != "id"} | {"id": 0}
+                    resp = await self._request(msg, timeout)
+                    if "result" in resp:
+                        self.init_result = resp["result"]
+                    return resp
+            return {"jsonrpc": "2.0", "id": msg["id"], "result": self.init_result}
         if method == "notifications/initialized":
+            if self._notified:
+                return None
+            await self._write(msg)
             self._notified = True
-        if fut is None:
             return None
-        resp = await asyncio.wait_for(fut, timeout=timeout)
-        if method == "initialize" and "result" in resp:
-            self.init_result = resp["result"]
-        return resp
+        if self.init_result is None and self.init_msg is not None:
+            await self._handshake(timeout)
+        if "id" in msg and method is not None:
+            return await self._request(msg, timeout)
+        await self._write(msg)  # اعلان کلاینت
+        return None
 
     async def stop(self) -> None:
         if self.proc and self.proc.returncode is None:
