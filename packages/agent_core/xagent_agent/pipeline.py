@@ -1412,7 +1412,7 @@ class AgentRunner:
             if c == MISSION_ASK:
                 mission_allows = mission_allows or ap is not None  # اعتبار آن همین بالا سنجیده شد
                 continue
-            d = harness.evaluate(rules.get(c), c, tool.action, args)
+            d = harness.evaluate(rules.get(c), c, tool.action, self._policy_args(rc, cid, c, args))
             if d.action == "deny":
                 return "policy"
             if d.action == "ask" and ap is None and not mission_allows:
@@ -1557,6 +1557,13 @@ class AgentRunner:
         return "blocked", why
 
     @staticmethod
+    def _policy_args(rc: RunCtx, cid: str, category: str, args: dict) -> dict:
+        """Evaluate target conditions against observed metadata without mutating
+        operation arguments or changing the canonical approval binding."""
+        scope = rc.state.get("approval_scopes", {}).get(cid, {}).get(category) or {}
+        return {**args, **scope}
+
+    @staticmethod
     def _approval_args(rc: RunCtx, cid: str, category: str, args: dict) -> dict:
         """The same immutable operation and separately observed effect scope at every check.
 
@@ -1588,6 +1595,7 @@ class AgentRunner:
     ) -> str:
         """allow | deny | mismatch | expired — یا Paused تا تصمیم کارفرما. force_ask: تنظیم «خودکار» نادیده گرفته می‌شود."""
         bound_args = self._approval_args(rc, cid, category, args)
+        policy_args = self._policy_args(rc, cid, category, args)
         sig = self._binding(rc, tool, category, bound_args)
         # آیا قبلاً برای این فراخوانی تصمیم گرفته شده؟ (همان Run؛ تأیید Run دیگر هرگز استفاده نمی‌شود)
         existing = (
@@ -1619,7 +1627,7 @@ class AgentRunner:
         if category == MISSION_ASK:
             d = harness.Decision("ask", reason or MISSION_ASK_LABEL, MISSION_ASK)
         else:
-            d = harness.evaluate(rules.get(category), category, tool.action, args)
+            d = harness.evaluate(rules.get(category), category, tool.action, policy_args)
             if force_ask and d.action == "allow":
                 d = harness.Decision("ask", reason or d.reason, category, d.rule_text)
         label = MISSION_ASK_LABEL if category == MISSION_ASK else harness.CATEGORIES.get(category, {}).get("label", category)
@@ -1632,7 +1640,7 @@ class AgentRunner:
             return d.action
         ap = Approval(
             run_id=rc.run.id, tool_call_id=cid, category=category, tool_name=tool.name,
-            args={**display_args(tool.name, args, sensitive=cid in rc.state.get("sensitive_calls", [])),
+            args={**display_args(tool.name, policy_args, sensitive=cid in rc.state.get("sensitive_calls", [])),
                   "__binding": {"sig": sig, "employee": str(rc.run.employee_id or "")}},
             reason=reason or d.reason,
         )
@@ -1643,7 +1651,7 @@ class AgentRunner:
             "conversation_id": str(rc.run.conversation_id) if rc.run.conversation_id else None,
             "category": category, "category_label": label,
             "tool_name": tool.name, "tool_label": tool.label,
-            "args": display_args(tool.name, args, sensitive=cid in rc.state.get("sensitive_calls", [])), "reason": ap.reason,
+            "args": display_args(tool.name, policy_args, sensitive=cid in rc.state.get("sensitive_calls", [])), "reason": ap.reason,
             "rule_text": d.rule_text,
         })
         await notify(rc.session, f"درخواست اجازه: {tool.label or tool.name}", ap.reason, level="approval",

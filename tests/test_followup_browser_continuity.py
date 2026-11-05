@@ -53,7 +53,7 @@ async def test_finished_run_keeps_visible_page_and_reuses_it(comp, env):
     assert comp._sessions[str(second.run_id)] is page
     assert await page.input_value('#draft') == 'persistent draft'
 
-@pytest.mark.parametrize("scenario", ["normal", "reconnect", "denied", "revoked", "expired", "arguments_changed", "call_id_changed"])
+@pytest.mark.parametrize("scenario", ["normal", "reconnect", "denied", "revoked", "expired", "arguments_changed", "call_id_changed", "policy_change"])
 async def test_escalated_approval_resumes_exact_browser_effect(app_client, configured_model, mock_llm, comp, env, scenario):
     from xagent_agent.pipeline import AgentRunner
     from xagent_core.db import session_scope
@@ -88,6 +88,10 @@ async def test_escalated_approval_resumes_exact_browser_effect(app_client, confi
         assert await page.evaluate('window.sends || 0') == 0
         response = await app_client.post(f'/api/approvals/{aid}', json={'decision': 'deny' if scenario == 'denied' else 'approve'})
         assert response.status_code == 200
+        if scenario == 'policy_change':
+            response = await app_client.put('/api/settings/harness/external_message', json={
+                'mode': 'conditional', 'conditions': {'deny': ['127.0.0.1'], 'deny_mode': 'forbid'}})
+            assert response.status_code == 200
         if scenario == 'revoked':
             assert (await app_client.post(f'/api/approvals/{aid}', json={'decision': 'revoke'})).status_code == 200
         if scenario in ('arguments_changed', 'call_id_changed', 'expired'):
@@ -115,8 +119,9 @@ async def test_escalated_approval_resumes_exact_browser_effect(app_client, confi
         await runner.execute(rid)
         if scenario == 'reconnect':
             page = next(p for p in (await comp._context()).pages if p.url.endswith('/editor'))
-        if scenario in ('denied', 'revoked', 'arguments_changed', 'call_id_changed', 'expired'):
+        if scenario in ('denied', 'revoked', 'arguments_changed', 'call_id_changed', 'expired', 'policy_change'):
             assert await page.evaluate('window.sends || 0') == 0
+            assert await page.input_value('#draft') == ''
             async with session_scope() as s:
                 run = await s.get(Run, rid)
                 assert run.status != 'succeeded'
@@ -135,6 +140,8 @@ async def test_escalated_approval_resumes_exact_browser_effect(app_client, confi
         assert await page.evaluate('window.sends || 0') == 1
     finally:
         mock_llm.handlers.remove(handler)
+        if scenario == 'policy_change':
+            await app_client.put('/api/settings/harness/external_message', json={'mode': 'ask', 'conditions': {}})
 
 async def test_sequential_runs_are_bounded_and_user_tabs_protected(comp, env, monkeypatch):
     bctx = await comp._context()
