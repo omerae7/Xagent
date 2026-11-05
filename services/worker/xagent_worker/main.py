@@ -513,6 +513,9 @@ class Worker:
 
 
 def main() -> None:
+    from xagent_core.config import assert_production_secrets
+
+    assert_production_secrets()  # کلید/توکن پیش‌فرض در production: اجرا نمی‌شود
     w = Worker()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

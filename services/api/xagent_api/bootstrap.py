@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import secrets
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from xagent_agent.harness import ensure_defaults
 from xagent_core import bus
@@ -27,6 +27,8 @@ AGENT_FACTS = {
 async def bootstrap() -> None:
     s = get_settings()
     async with session_scope() as session:
+        # چند فرایند API هم‌زمان: راه‌اندازی اولیه (کاربر کارفرما، پیش‌فرض‌ها) سریالی تا ساخت تکراری/خطای یکتایی رخ ندهد
+        await session.execute(text("SELECT pg_advisory_xact_lock(816192474)"))
         count = (await session.execute(select(func.count()).select_from(User))).scalar_one()
         if count == 0:
             password = s.owner_password or secrets.token_urlsafe(12)

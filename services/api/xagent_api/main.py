@@ -44,6 +44,9 @@ log = logging.getLogger("xagent.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from xagent_core.config import assert_production_secrets
+
+    assert_production_secrets()  # کلید/توکن پیش‌فرض در production: اجرا نمی‌شود
     await bootstrap()
     log.info("X Agent API آماده است (پروفایل: %s)", get_settings().profile)
     from . import hostops

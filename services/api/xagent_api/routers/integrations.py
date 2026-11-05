@@ -156,6 +156,13 @@ class InstallIn(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+async def _enqueue_control(fields: dict[str, str]) -> None:
+    try:
+        await bus.enqueue_control(fields)
+    except bus.ControlBacklogFull as e:
+        raise HTTPException(429, str(e)) from e
+
+
 @router.get("/tools")
 async def tools(_: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     installed = (await session.execute(select(InstalledTool).order_by(InstalledTool.created_at.desc()))).scalars().all()
@@ -182,7 +189,7 @@ async def install(body: InstallIn, user: User = Depends(owner_user)):
         raise HTTPException(400, str(e)) from e
     payload = {**body.model_dump(exclude={"env"}), "actor": user.username,
                "env_sealed": seal_secrets({"env": body.env})["env"] if body.env else {}}  # اسرار در صف Redis رمزشده
-    await bus.get_redis().xadd("xagent:control", {"cmd": "install", "payload": json.dumps(payload)})
+    await _enqueue_control({"cmd": "install", "payload": json.dumps(payload)})
     return {"ok": True, "message": "نصب در محیط ایزوله آغاز شد؛ نتیجه در اعلان‌ها نمایش داده می‌شود."}
 
 
@@ -203,7 +210,7 @@ async def tool_action(tid: str, action: str, body: dict[str, Any] | None = None,
         await bus.publish("tool.changed", {"id": str(t.id), "status": t.status})
         return tool_out(t)
     if action in ("update", "rollback"):
-        await bus.get_redis().xadd("xagent:control", {"cmd": action, "payload": json.dumps(
+        await _enqueue_control({"cmd": action, "payload": json.dumps(
             {"tool_id": str(t.id), "ref": body.get("ref"), "version_id": body.get("version_id"), "actor": user.username})})
         return {"ok": True, "message": "درخواست ثبت شد"}
     raise HTTPException(400, "اقدام نامعتبر")
@@ -264,6 +271,9 @@ async def desktop_screenshot(_: User = Depends(current_user)):
     return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
+VNC_REAUTH_SECONDS = 15
+
+
 @router.websocket("/desktop/vnc")
 async def vnc_proxy(ws: WebSocket, mode: str = "view"):
     """پروکسی WebSocket احرازشده به noVNC داخلی؛ حالت کنترل فقط هنگام Takeover فعال است."""
@@ -302,13 +312,19 @@ async def vnc_proxy(ws: WebSocket, mode: str = "view"):
                         await ws.send_text(data)
 
             async def watch_takeover():
-                # با پایان Takeover، اتصال کنترلی بسته می‌شود
-                while mode == "control":
+                # با پایان Takeover، اتصال کنترلی بسته می‌شود؛ نشست هم دوره‌ای دوباره سنجیده می‌شود
+                # (خروج/ابطال توکن/غیرفعال‌شدن کاربر جلسه VNC طولانی را می‌بندد)
+                last_auth = asyncio.get_running_loop().time()
+                while True:
                     await asyncio.sleep(2)
-                    if not await bus.is_takeover():
+                    if mode == "control" and not await bus.is_takeover():
                         break
-                else:
-                    await asyncio.Event().wait()
+                    if asyncio.get_running_loop().time() - last_auth >= VNC_REAUTH_SECONDS:
+                        last_auth = asyncio.get_running_loop().time()
+                        async with get_sessionmaker()() as s2:
+                            u = await resolve_user(s2, ws.cookies.get("xa_token"))
+                        if u is None or (mode == "control" and u.role != "owner"):
+                            break
 
             tasks = [asyncio.create_task(c()) for c in (client_to_up, up_to_client, watch_takeover)]
             _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

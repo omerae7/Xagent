@@ -106,6 +106,34 @@ async def subscribe(ready: asyncio.Event | None = None) -> AsyncIterator[dict[st
         await pubsub.aclose()
 
 
+# ── صف فرمان‌های کنترلی (نصب/به‌روزرسانی/Rollback ابزار، Dream دستی): ورودی محدود ──
+CONTROL_STREAM = "xagent:control"
+CONTROL_MAX_BACKLOG = 200       # فرمان پردازش‌نشده بیش از این → رد صریح (۴۲۹)، نه انباشت بی‌حد
+CONTROL_STREAM_MAXLEN = 5000    # فقط تاریخچه پردازش‌شده بریده می‌شود (بسیار بیشتر از سقف صف)
+
+
+class ControlBacklogFull(Exception):
+    pass
+
+
+async def control_backlog() -> int:
+    r = get_redis()
+    try:
+        groups = await r.xinfo_groups(CONTROL_STREAM)
+    except aioredis.ResponseError:
+        return 0  # جریان هنوز ساخته نشده است
+    g = next((x for x in groups if (x.get("name") if isinstance(x, dict) else None) in (RUN_GROUP, RUN_GROUP.encode())), None)
+    if g is None:
+        return int(await r.xlen(CONTROL_STREAM))  # بدون گروه مصرف‌کننده همه ورودی‌ها پردازش‌نشده‌اند
+    return int(g.get("lag") or 0) + int(g.get("pending") or 0)
+
+
+async def enqueue_control(fields: dict[str, str]) -> None:
+    if await control_backlog() >= CONTROL_MAX_BACKLOG:
+        raise ControlBacklogFull("صف فرمان‌های کنترلی پر است؛ پس از پردازش فرمان‌های قبلی دوباره تلاش کنید.")
+    await get_redis().xadd(CONTROL_STREAM, fields, maxlen=CONTROL_STREAM_MAXLEN, approximate=True)
+
+
 # ── صف Runها ──
 async def ensure_groups() -> None:
     r = get_redis()

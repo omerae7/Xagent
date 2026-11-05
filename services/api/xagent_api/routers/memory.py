@@ -260,7 +260,10 @@ async def dream_now(user: User = Depends(owner_user), session: AsyncSession = De
     cfg = await get_setting(session, "dream", DreamSettings)
     if not cfg.enabled:
         raise HTTPException(409, "Dream غیرفعال است؛ ابتدا آن را از تنظیمات فعال کنید.")
-    await bus.get_redis().xadd("xagent:control", {"cmd": "dream", "force": "1", "by": user.username})
+    try:
+        await bus.enqueue_control({"cmd": "dream", "force": "1", "by": user.username})
+    except bus.ControlBacklogFull as e:
+        raise HTTPException(429, str(e)) from e
     return {"ok": True, "message": "رویا در صف اجرا قرار گرفت"}
 
 

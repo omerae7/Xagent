@@ -1210,9 +1210,29 @@ class AgentRunner:
                                   detail={"args": display_args(name, args)})
             t0 = time.monotonic()
             await self._assert_owner(rc)  # Worker کهنه هرگز اثر بیرونی تازه‌ای نمی‌گذارد
+            effectful = requires_verification(tool, args) or bool(set(cats) - {"desktop_control"})
+            intents = s.setdefault("effect_intents", {})
+            if effectful and cid in intents:
+                # همین اثر بیرونی در اجرای قبلی آغاز شد و نتیجه‌اش هرگز ثبت نشد (Crash/قطع): ممکن است انجام شده باشد.
+                # تکرار کورکورانه ممنوع است؛ نتیجه «نامعلوم» ثبت و به مدل/کارفرما گفته می‌شود.
+                result = ToolResult(False, "این اقدام بیرونی در اجرای قبلی آغاز شد ولی نتیجه‌اش ثبت نشد (قطع/Crash)؛ "
+                                    "ممکن است انجام شده باشد. برای جلوگیری از اثر تکراری دوباره اجرا نشد؛ "
+                                    "نتیجه را بررسی و به کارفرما گزارش کن.", {"uncertain": True, "replay_blocked": True})
+                await self._finish_step(rc, st, "error", {"output": result.output}, duration_ms=0)
+                intents.pop(cid, None)
+                transcript.append(LLMMessage("tool", result.output, tool_call_id=cid, tool_name=name, is_error=True))
+                self._record_evidence(rc, cid, name, args, result, True)
+                s["transcript"] = [m.to_json() for m in transcript]
+                await self._checkpoint(rc)
+                continue
+            if effectful:
+                intents[cid] = {"tool": name, "at": utcnow().isoformat()}
+                s["transcript"] = [m.to_json() for m in transcript]
+                await self._checkpoint(rc)  # قصد اثر پیش از اجرای آن پایدار می‌شود
             try:
                 result = await asyncio.wait_for(tool.handler(tctx, args), timeout=TOOL_TIMEOUT)
             except EscalateCategory as esc:
+                s.get("effect_intents", {}).pop(cid, None)  # تشدید پیش از اثر: هنوز چیزی اجرا نشده است
                 if esc.category == "login":
                     self._mark_sensitive(rc, cid, name, args, transcript)
                 if esc.category in cats:
@@ -1245,6 +1265,7 @@ class AgentRunner:
             # Escalated categories (send, payment, login, ...) need effect verification
             # even when a browser interaction was initially classified as navigation.
             verification_required = requires_verification(tool, args) or bool(set(cats) - {"desktop_control"})
+            s.get("effect_intents", {}).pop(cid, None)  # نتیجه (موفق/ناموفق) ثبت شد؛ قصد باز دیگر لازم نیست
             result = checked_result(tool, args, result, verification_required=verification_required)
             dur = int((time.monotonic() - t0) * 1000)
             out = bound_tool_output(rc.run.id, cid, result.output)

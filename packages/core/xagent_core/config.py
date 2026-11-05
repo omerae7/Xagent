@@ -98,3 +98,31 @@ def get_settings() -> Settings:
         except OSError:
             pass
     return s
+
+
+KNOWN_DEFAULT_SECRETS = {"change-me-in-production-please-32+chars", "change-me", "changeme", "secret", ""}
+KNOWN_DEFAULT_TOKENS = {"change-me-desktop-token", "change-me", ""}
+
+
+def production_secret_problems(s: Settings) -> tuple[list[str], list[str]]:
+    """(مانع، هشدار): در production با کلید/توکن پیش‌فرض شناخته‌شده یا خالی سرویس اجرا نمی‌شود (مقدار هرگز چاپ نمی‌شود)."""
+    if s.env != "production":
+        return [], []
+    blocking, warnings = [], []
+    if s.secret_key.strip() in KNOWN_DEFAULT_SECRETS:
+        blocking.append("XAGENT_SECRET_KEY پیش‌فرض یا خالی است (امضای نشست و رمزنگاری اسرار قابل جعل می‌شود)")
+    elif len(s.secret_key) < 32:
+        warnings.append("XAGENT_SECRET_KEY کوتاه‌تر از ۳۲ نویسه است؛ با «openssl rand -hex 32» تعویض شود")
+    if s.desktop_token.strip() in KNOWN_DEFAULT_TOKENS:
+        blocking.append("DESKTOP_TOKEN پیش‌فرض یا خالی است (دسترسی به دیمن کامپیوتر ایجنت بدون راز واقعی)")
+    return blocking, warnings
+
+
+def assert_production_secrets(s: Settings | None = None) -> None:
+    import logging
+
+    blocking, warnings = production_secret_problems(s or get_settings())
+    for w in warnings:
+        logging.getLogger("xagent.config").warning(w)
+    if blocking:
+        raise RuntimeError("اجرای production با اسرار ناامن متوقف شد: " + "؛ ".join(blocking))
