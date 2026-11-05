@@ -23,6 +23,8 @@
 #    --npm-registry URL   آینه npm برای ساخت ایمیج
 #    --timezone TZ        منطقه زمانی پیش‌فرض (Asia/Tehran)
 #    --no-firewall        عدم تنظیم UFW
+#    --repair             تعمیر نصب موجود با حفظ داده (بدون reset --hard و بدون بازنویسی .env)؛
+#                         بدون این گزینه، نصب روی نصب موجود رد می‌شود (برای به‌روزرسانی: xagent update)
 # ════════════════════════════════════════════════════════════════════
 set -Eeuo pipefail
 
@@ -39,6 +41,7 @@ PIP_INDEX=""
 NPM_REGISTRY=""
 TIMEZONE="Asia/Tehran"
 FIREWALL=1
+REPAIR=0
 
 c_blue='\033[1;34m'; c_green='\033[1;32m'; c_yellow='\033[1;33m'; c_red='\033[1;31m'; c_off='\033[0m'
 step() { echo -e "\n${c_blue}▶ $*${c_off}"; }
@@ -63,10 +66,22 @@ while [ $# -gt 0 ]; do
     --npm-registry) NPM_REGISTRY="$2"; shift 2 ;;
     --timezone) TIMEZONE="$2"; shift 2 ;;
     --no-firewall) FIREWALL=0; shift ;;
+    --repair) REPAIR=1; shift ;;
     -h|--help) sed -n '2,32p' "$0" 2>/dev/null || true; exit 0 ;;
     *) die "گزینه ناشناخته: $1" ;;
   esac
 done
+
+# >>> existing_install_guard (F13)
+# پیش از هر تغییر سیستمی: نصب دوباره روی نصب موجود به‌طور پیش‌فرض رد می‌شود (کد، .env و داده دست‌نخورده).
+existing_install() {
+  [ -d "$XAGENT_HOME/app/.git" ] || [ -f "$XAGENT_HOME/app/.env" ] || [ -n "$(ls -A "$XAGENT_HOME/pgdata" 2>/dev/null)" ]
+}
+if existing_install && [ "$REPAIR" != "1" ]; then
+  die "نصب موجود در $XAGENT_HOME شناسایی شد؛ نصب دوباره مخرب انجام نشد و کد، .env و داده دست‌نخورده ماندند.
+  برای به‌روزرسانی: «xagent update» — برای تعمیر با حفظ داده و پیکربندی: همین دستور با گزینه --repair"
+fi
+# <<< existing_install_guard
 
 [ "$(id -u)" -eq 0 ] || die "این اسکریپت باید با sudo یا کاربر root اجرا شود."
 export DEBIAN_FRONTEND=noninteractive
@@ -188,8 +203,39 @@ fi
 # ───────────── ۵. دریافت کد ─────────────
 step "دریافت کد از GitHub"
 APP="$XAGENT_HOME/app"
+# >>> repair_functions (F13)
+# تعمیر نصب موجود (فقط با --repair): هیچ reset --hard و هیچ بازنویسی .env؛ تغییرات محلی در stash و patch.
+repair_code() {
+  local stamp; stamp="$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "$XAGENT_HOME/backups"
+  if [ -n "$(git -C "$APP" status --porcelain -- . ':(exclude).env' ':(exclude).env.*')" ]; then
+    git -C "$APP" diff HEAD > "$XAGENT_HOME/backups/repair-local-$stamp.patch" || true
+    # .env و اسرار هرگز به stash منتقل نمی‌شوند (پیکربندی زنده سر جای خود می‌ماند)
+    git -C "$APP" -c user.name="X Agent Installer" -c user.email=installer@xagent.local \
+      stash push --include-untracked -m "xagent-repair-$stamp" -- . ':(exclude).env' ':(exclude).env.*' >/dev/null
+    warn "تغییرات محلی در git stash «xagent-repair-$stamp» و backups/repair-local-$stamp.patch حفظ شد"
+  fi
+  git -C "$APP" fetch --depth 50 origin "$BRANCH"
+  git -C "$APP" merge --ff-only "origin/$BRANCH" \
+    || die "نسخه محلی ادامه مستقیم origin/$BRANCH نیست؛ تعمیر متوقف شد (چیزی بازنویسی نشد؛ تغییرات در stash است)"
+}
+repair_env() {  # .env موجود حفظ می‌شود: پشتیبان + افزودن فقط کلیدهای غایب
+  local new="$1" stamp k line; stamp="$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "$XAGENT_HOME/backups"
+  [ -f "$ENV_FILE" ] || die ".env موجود یافت نشد؛ تعمیر متوقف شد (پیکربندی تازه جایگزین نمی‌شود)"
+  cp -p "$ENV_FILE" "$XAGENT_HOME/backups/env-$stamp.bak"
+  chmod 600 "$XAGENT_HOME/backups/env-$stamp.bak"
+  while IFS= read -r line; do
+    case "$line" in ''|\#*) continue ;; esac
+    k="${line%%=*}"
+    grep -qE "^${k}=" "$ENV_FILE" || printf '%s\n' "$line" >> "$ENV_FILE"
+  done < "$new"
+  rm -f "$new"
+  ok "پیکربندی موجود حفظ شد (پشتیبان: backups/env-$stamp.bak)؛ فقط کلیدهای غایب افزوده شدند"
+}
+# <<< repair_functions
 if [ -d "$APP/.git" ]; then
-  git -C "$APP" fetch --depth 50 origin "$BRANCH" && git -C "$APP" reset --hard "origin/$BRANCH"
+  repair_code   # فقط در حالت --repair به این‌جا می‌رسد (نگهبان نصب موجود)
 else
   git clone --depth 50 --branch "$BRANCH" "$REPO_URL" "$APP"
 fi
@@ -218,7 +264,9 @@ fi
 if [ "$DESKTOP" = "on" ]; then PROFILES="desktop"; SANDBOX="desktop"; else PROFILES=""; SANDBOX="runner"; fi
 
 umask 077
-cat > "$ENV_FILE" <<EOF
+ENV_TARGET="$ENV_FILE"
+[ -f "$ENV_FILE" ] && ENV_TARGET="$(mktemp "$APP/.env.new.XXXXXX")"  # نصب موجود: هرگز بازنویسی مستقیم
+cat > "$ENV_TARGET" <<EOF
 # ── X Agent — پیکربندی (ساخته‌شده توسط install.sh در $(date -u +%F)) ──
 # این فایل حاوی اسرار است؛ آن را منتشر نکنید.
 XAGENT_ENV=production
@@ -258,6 +306,7 @@ PIP_INDEX_URL=${PIP_INDEX:-https://pypi.org/simple}
 NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org}
 EOF
 umask 022
+[ "$ENV_TARGET" = "$ENV_FILE" ] || repair_env "$ENV_TARGET"
 chmod 600 "$ENV_FILE"
 ok "پیکربندی در $ENV_FILE ذخیره شد (دسترسی فقط root)"
 
@@ -275,6 +324,11 @@ for i in $(seq 1 90); do
   [ "$i" -eq 90 ] && die "سرویس API آماده نشد. لاگ: docker compose -f $APP/compose.yaml logs api"
   sleep 4
 done
+step "تشخیص لایه‌به‌لایه استقرار (کانتینر، API، Worker، HTTPS با/بدون SNI، اعتماد گواهی، دسترسی عمومی)"
+H="$(docker compose exec -T api python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=4).read().decode())" 2>/dev/null || true)"
+python3 infra/scripts/deploy_check.py --env "$ENV_FILE" --health-json "$H" \
+  --ps-json "$(docker compose ps --format json 2>/dev/null || true)" \
+  || warn "یک یا چند لایه استقرار هنوز سالم نیست؛ «xagent doctor» را پس از چند دقیقه دوباره اجرا کنید"
 printf '{"version":"%s","commit":"%s","installed_at":"%s"}\n' "$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)" "$COMMIT" "$(date -u +%FT%TZ)" > "$XAGENT_HOME/data/control/version.json"
 chown 1001:1001 "$XAGENT_HOME/data/control/version.json"
 
@@ -297,7 +351,7 @@ PASS="$( [ -f "$PASS_FILE" ] && awk '/password:/ {print $2}' "$PASS_FILE" || ech
 
 echo
 echo -e "${c_green}════════════════════════════════════════════════════════${c_off}"
-echo -e "${c_green}  ✅ X Agent با موفقیت نصب شد${c_off}"
+echo -e "${c_green}  ✅ X Agent نصب شد (وضعیت لایه‌های HTTPS و دسترسی عمومی: گزارش «تشخیص استقرار» بالا)${c_off}"
 echo -e "${c_green}════════════════════════════════════════════════════════${c_off}"
 echo -e "  نشانی پنل:      ${c_blue}$PUBLIC_URL${c_off}"
 echo -e "  نام کاربری:     admin"

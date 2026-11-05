@@ -46,7 +46,11 @@ case "${1:-status}" in
     echo "نسخه: $(git rev-parse --short HEAD) — شاخه منبع: $(envget XAGENT_REPO_BRANCH) — ایمیج: $(envget XAGENT_IMAGE_TAG)"
     echo "تغییرات محلی: $(git status --porcelain | wc -l) فایل"
     echo "سرویس به‌روزرسان: $(systemctl is-active xagent-updater.path 2>/dev/null || echo نامشخص)"
-    health || echo "API: ناسالم" ;;
+    # لایه‌به‌لایه: کانتینر، API، آمادگی Worker، HTTPS با/بدون SNI، سیاست اعتماد، دسترس‌پذیری عمومی (F17).
+    # سلامت داخلی API هرگز اثبات کارکرد HTTPS عمومی گزارش نمی‌شود.
+    H="$(health 2>/dev/null || true)"
+    python3 "$APP/infra/scripts/deploy_check.py" --env "$APP/.env" --health-json "$H" \
+      --ps-json "$(dc ps --format json 2>/dev/null || true)" || echo "⚠ یک یا چند لایه استقرار سالم نیست (جزئیات بالا)" ;;
   logs)    dc logs -f --tail=200 "${2:-api}" ;;
   restart) shift; dc restart "$@" ;;
   update)

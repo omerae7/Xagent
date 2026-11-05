@@ -28,9 +28,9 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { get, post } from "../../lib/api";
+import { FAILURE_FA, failureKind, get, post } from "../../lib/api";
 import { compact, faNum, relTime, usd } from "../../lib/format";
 import { useLive, useLiveStatus } from "../../lib/live";
 import { toast, toastError, useTheme } from "../../lib/store";
@@ -256,9 +256,35 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
 
   const badges = { "/desk": d?.inbox?.unread || 0, "/chat": d?.approvals_pending || 0 };
   // وضعیت واقعی سرویس‌ها (نه وضعیت ساختگی): API/دیتابیس/Redis و آمادگی حلقه‌های Worker
-  const health = useQuery({ queryKey: ["health"], queryFn: () => get("/api/health"), refetchInterval: 30_000, retry: 0 });
+  const [wasDown, setWasDown] = useState(false);
+  const health = useQuery({ queryKey: ["health"], queryFn: () => get("/api/health"), retry: 0,
+                            refetchInterval: (q) => (q.state.status === "error" || q.state.data?.ok === false ? 5_000 : 30_000) });
   const backendDown = health.isError || (health.data && health.data.ok === false);
   const workerDegraded = !backendDown && health.data?.worker?.ready === false;
+  // نوع قطعی (نه «خروج از حساب»): شبکه، API در دسترس نیست، ۵xx، یا ناسالمی پایگاه داده/Redis
+  const outageText = health.isError
+    ? FAILURE_FA[(failureKind(health.error) as keyof typeof FAILURE_FA)] || FAILURE_FA.server
+    : "API پاسخ می‌دهد ولی پایگاه داده یا Redis ناسالم است";
+  useEffect(() => {  // شکست شبکه/۵xx هر درخواست پنل → سنجش فوری سلامت و نمایش نوع قطعی (بدون انتظار ۳۰ ثانیه)
+    let last = 0;
+    const h = () => {  // بدون لغو درخواست جاری و حداکثر هر ۳ ثانیه (خود درخواست سلامت هم این رویداد را می‌سازد)
+      if (Date.now() - last < 3000) return;
+      last = Date.now();
+      qc.refetchQueries({ queryKey: ["health"] }, { cancelRefetch: false });
+    };
+    window.addEventListener("xa:service-error", h);
+    return () => window.removeEventListener("xa:service-error", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (backendDown) setWasDown(true);
+    else if (wasDown && health.isSuccess) {
+      setWasDown(false);
+      qc.invalidateQueries();  // پس از بازیابی: همگام‌سازی کامل داده‌ها
+      toast("اتصال با سرور دوباره برقرار شد", "success");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendDown, health.isSuccess]);
 
   return (
     <div className="min-h-dvh">
@@ -328,10 +354,10 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
           {(backendDown || workerDegraded) && (
             <div role="status" className={cn("mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl px-4 py-3 text-[13.5px] leading-6 ring-1 ring-inset",
               backendDown ? "bg-danger/10 text-danger ring-danger/25" : "bg-warning/10 text-warning ring-warning/25")}>
-              <span className="font-semibold">{backendDown ? "سرور در دسترس نیست" : "بخشی از پردازش پس‌زمینه از کار افتاده است"}</span>
+              <span className="font-semibold" data-testid="outage-banner">{backendDown ? "سرور در دسترس نیست — در حال اتصال دوباره" : "بخشی از پردازش پس‌زمینه از کار افتاده است"}</span>
               <span className="text-ink/80">
                 {backendDown
-                  ? "داده‌های این صفحه ممکن است قدیمی باشند؛ تا برقراری اتصال، کار تازه ثبت یا اجرا نمی‌شود."
+                  ? `${outageText}. نشست شما معتبر است؛ داده‌های این صفحه ممکن است قدیمی باشند و تا برقراری اتصال، کار تازه ثبت یا اجرا نمی‌شود.`
                   : `حلقه‌های ناسالم: ${(health.data?.worker?.degraded || []).map((x: any) => x.loop).join("، ") || "نامشخص"} — روتین‌ها و صف ممکن است با تأخیر اجرا شوند.`}
               </span>
               <button type="button" onClick={() => { health.refetch(); qc.invalidateQueries(); }} className="ms-auto rounded-full px-3 py-1 text-[12.5px] font-medium ring-1 ring-inset ring-current/30 hover:bg-current/10">
