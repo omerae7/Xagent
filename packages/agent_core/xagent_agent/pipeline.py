@@ -1181,6 +1181,8 @@ class AgentRunner:
             "call_id": cid, "signature": LoopController.signature(name, args),
             "tool": name, "ok": result.ok, "verified": result.verified,
             "requires_verification": verification_required, "summary": truncate(result.output, 300),
+            # فقط نتیجه‌ای که محتوای صفحه را واقعاً دید (نه صرف رسیدن به URL) بررسی سایت حساب می‌شود
+            "content_observed": isinstance(result.data, dict) and result.data.get("content_observed") is True,
         })
 
     async def _fallback_method(self, rc: RunCtx, tool_map: dict[str, Tool], transcript: list[LLMMessage], name: str,
@@ -1361,7 +1363,7 @@ class AgentRunner:
         s = rc.state
         evidence = s.get("evidence", [])
         required = execution_required(rc.run, s, answer)
-        issues = evidence_issues(s, required)
+        issues = evidence_issues(s, required, rc.run.input or "")
         criteria = (s.get("goal") or {}).get("success_criteria")
         if not isinstance(criteria, list) or not criteria or any(not isinstance(c, str) or not c.strip() for c in criteria):
             issues.append("معیارهای صریح موفقیت ثبت نشده یا نامعتبر است")

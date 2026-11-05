@@ -9,6 +9,13 @@ from xagent_tools.base import Tool, ToolResult
 # Ordinary UI interactions return observations, not proof of a send or purchase.
 # The caller separately enforces verification for escalated external-effect categories.
 OBSERVATION_TOOLS = {"browser_open", "browser_click", "browser_type", "desktop_input"}
+# Discovery lists tabs or loads tools; it never shows requested page content.
+DISCOVERY_TOOLS = {"tools_load", "browser_tabs"}
+# Browser work counts as inspection only when some browser result actually observed page content
+# (DOM text/elements or a real vision analysis). Navigation alone (URL reached) is not inspection.
+BROWSER_TOOLS = {"browser_tabs", "browser_open", "browser_read", "browser_click", "browser_type", "browser_screenshot"}
+# Asking *about* tabs (plural/listing), not «open X in a new tab».
+_TABS = re.compile(r"(?<!\w)tabs(?!\w)|(?<!\w)تب(\u200c|\s)?ها", re.I)
 _COMPLETION = re.compile(
     r"\b(done|sent|created|saved|deleted|executed|completed|scheduled|updated)\b|"
     r"(انجام|ارسال|ثبت|ساخته|ذخیره|حذف|اجرا|زمان‌بندی)\s*(شد|کردم|شده)", re.I,
@@ -52,7 +59,7 @@ def execution_required(run: Any, state: dict, answer: str) -> bool:
     return bool(state.get("tools_used") or _COMPLETION.search(answer))
 
 
-def evidence_issues(state: dict, required: bool) -> list[str]:
+def evidence_issues(state: dict, required: bool, request: str = "") -> list[str]:
     evidence = state.get("evidence") or []
     if not isinstance(evidence, list):
         return ["ساختار شواهد اجرا معتبر نیست"]
@@ -64,7 +71,7 @@ def evidence_issues(state: dict, required: bool) -> list[str]:
         latest[(e["tool"], e.get("signature", idx))] = e
     issues = []
     observations = [i for i, e in enumerate(evidence) if e["ok"] is True and e.get("verified") is not False
-                    and e.get("requires_verification") is False]
+                    and e.get("requires_verification") is False and e["tool"] not in DISCOVERY_TOOLS]
     for e in latest.values():
         # A failed read may be recovered by an alternative observation; it remains
         # in the evidence and requires a model criterion check, never a relabel to success.
@@ -87,6 +94,12 @@ def evidence_issues(state: dict, required: bool) -> list[str]:
                     issues.append("فراخوانی ابزار بدون نتیجه ثبت‌شده وجود دارد")
     if required and not evidence:
         issues.append("هیچ شاهدی از اجرای ابزار برای انجام درخواست وجود ندارد")
+    browser = [e for e in evidence if e["tool"] in BROWSER_TOOLS]
+    # Listing tabs is itself the objective only when the request asks about tabs.
+    inspects = any(e["tool"] not in DISCOVERY_TOOLS for e in browser) or bool(browser) and not _TABS.search(request)
+    if inspects and not any(e["ok"] is True and e.get("content_observed") is True for e in browser):
+        issues.append("مرورگر استفاده شد ولی محتوای قابل استفاده صفحه مشاهده نشد؛ ناوبری یا فهرست تب‌ها "
+                      "بررسی سایت نیست (ناوبری فقط تلاش‌شده/جزئی است)")
     completed_tools = {e["tool"] for e in latest.values() if e["ok"] is True and e.get("verified") is not False
                        and (not e.get("requires_verification", True) or e.get("verified") is True)}
     for step in (state.get("plan") or {}).get("steps", []):

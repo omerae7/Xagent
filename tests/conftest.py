@@ -269,3 +269,4 @@ def _browser_session_hygiene():
         registry.clear()
     computer._adopted.clear()
     computer._page_employee.clear()
+    computer._page_errors.clear()

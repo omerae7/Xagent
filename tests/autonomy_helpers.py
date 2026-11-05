@@ -92,10 +92,20 @@ class FakePage:
     async def wait_for_timeout(self, _ms: int) -> None:
         return None
 
+    def on(self, *_: Any) -> None:
+        return None
+
+    async def reload(self, **_: Any):
+        return SimpleNamespace(status=200)
+
     async def title(self) -> str:
         return f"کاتالوگ — صفحه {self.page_no}"
 
     async def evaluate(self, js: str, *_: Any):
+        if "xa:snapshot" in js:  # آمادگی صفحه: سند کامل با متن و عنصر رندرشده
+            body = await self.evaluate("")
+            return {"ready": "complete", "title": await self.title(), "chars": len(body), "sample": body[:300],
+                    "interactive": 1, "visual": 0}
         if "input[type=password]" in js:
             return False  # صفحه ساختگی فیلد رمز ندارد (تشخیص صفحه ورود)
         if "querySelectorAll" in js:
@@ -178,10 +188,20 @@ class MultiPage:
     async def wait_for_timeout(self, _ms: int) -> None:
         return None
 
+    def on(self, *_: Any) -> None:
+        return None
+
+    async def reload(self, **_: Any):
+        return SimpleNamespace(status=200)
+
     async def title(self) -> str:
         return f"صفحه {self.url}"
 
     async def evaluate(self, js: str, *args: Any):
+        if "xa:snapshot" in js:
+            body = f"محتوای {self.url}"
+            return {"ready": "complete", "title": await self.title(), "chars": len(body), "sample": body,
+                    "interactive": len(self.BUTTONS), "visual": 0}
         if "input[type=password]" in js:
             return False
         if "querySelectorAll" in js:

@@ -83,6 +83,45 @@ _AUTH_PATH = re.compile(r"/(login|log-in|signin|sign-in|auth|sso|oauth)\b|#/logi
 _AUTH_TEXT = re.compile(r"log in to telegram|log in by (qr|phone)|scan (this|the) qr|ورود به تلگرام|"
                         r"sign in to continue|please log ?in|برای ادامه وارد شوید", re.I)
 
+# ── آمادگی صفحه: موفقیت ناوبری (URL) با آمادگی سند و محتوای مشاهده‌شده یکی نیست ──
+READY_TIMEOUT_MS = 10000  # سقف انتظار رندر محتوا پس از ناوبری (صفحات JavaScript-محور)
+READY_POLL_MS = 250
+READY_STABLE_POLLS = 2  # محتوای یکسان در نمونه‌های پیاپی = رندر پایدار
+CONTENT_GRACE_MS = 1500  # صفحه پویا (محتوای همیشه در حال تغییر) پس از این مدت محتوا ثبت می‌شود
+EMPTY_RETRIES = 1  # بارگذاری مجدد محدود وقتی سند کامل شد ولی هیچ محتوایی رندر نشد
+_page_errors: dict[int, list[str]] = {}  # id(page) → خطاهای JavaScript صفحه (pageerror) از آخرین ناوبری
+_SNAPSHOT_JS = """
+() => { /* xa:snapshot */
+  const b = document.body, text = b ? (b.innerText || '').trim() : '';
+  const box = (el, min) => { const r = el.getBoundingClientRect(); return r.width >= min && r.height >= min; };
+  const all = s => b ? Array.from(document.querySelectorAll(s)) : [];
+  return {ready: document.readyState, title: (document.title || '').trim(), chars: text.length, sample: text.slice(0, 300),
+          interactive: all('a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=link]')
+                         .filter(e => box(e, 1)).length,
+          visual: all('img,canvas,svg,video,picture,iframe,embed,object').filter(e => box(e, 48)).length};
+}
+"""
+_CHALLENGE_TEXT = re.compile(
+    r"verify (that )?you are (a )?human|are you a (human|robot)|not a robot|robot check|enter the characters you see|"
+    r"unusual traffic|checking (your browser|if the site connection is secure)|just a moment\.\.\.|press (and|&) hold|"
+    r"complete the security check|من ربات نیستم|ربات نیستید", re.I)
+_CHALLENGE_URL = re.compile(r"captcha|/cdn-cgi/challenge|challenge-platform|/sorry/", re.I)
+_DENIED_TEXT = re.compile(r"access denied|access to this page has been denied|request blocked|"
+                          r"you don't have permission to access|403 forbidden|error 1020|دسترسی (غیرمجاز|ممنوع|مسدود)", re.I)
+_PLACEHOLDER = re.compile(r"^\s*(loading|please wait|در حال بارگذاری|لطفا? ?صبر کنید)[.…\s]*$|enable javascript|"
+                          r"javascript (is )?(required|disabled)|جاوااسکریپت را فعال", re.I)
+_STATE_MSG = {
+    "blank": "سند بارگذاری شد ولی هیچ عنوان، متن، عنصر قابل تعامل یا محتوای تصویری رندر نشد. ناوبری انجام شد اما "
+             "بازدید/بررسی سایت تأیید نشده است. علت از این شواهد مشخص نیست؛ درباره مسدودسازی یا علت دیگر حدس نزن.",
+    "loading": "صفحه فقط پیام بارگذاری/نیاز به JavaScript نشان داد و محتوای اصلی در مهلت رندر نشد؛ بررسی سایت تأیید نشده است.",
+    "visual_only": "صفحه فقط عناصر تصویری (بدون متن یا عنصر قابل تعامل) دارد؛ محتوا از DOM مشاهده نشد. برای بررسی، "
+                   "browser_screenshot با تحلیل بینایی لازم است.",
+    "challenge": "صفحه چالش ضدربات/کپچا نمایش داده شد؛ محتوای سایت در دسترس نیست. کپچا را حل نکن و دور نزن؛ به کارفرما گزارش بده.",
+    "access_denied": "سایت پاسخ «دسترسی ممنوع» داد؛ محتوای درخواستی در دسترس نیست.",
+    "auth": "این صفحه ورود/احراز هویت است؛ کاربر وارد نشده و محتوای درخواستی (مثلاً گفتگوها) در دسترس نیست. "
+            "هیچ محتوایی را حدس نزن؛ به کارفرما گزارش بده که ورود لازم است.",
+}
+
 
 class BrowserBusy(Exception):
     pass
@@ -175,6 +214,7 @@ async def release_session(key: Any) -> None:
     _session_used.pop(k, None)
     if page is not None and not adopted:
         _page_employee.pop(id(page), None)
+        _page_errors.pop(id(page), None)
         try:
             if not page.is_closed():
                 await page.close()
@@ -270,6 +310,96 @@ async def _auth_wall(page, text: str) -> bool:  # noqa: ANN001
     return bool(has_pw) and len(text) < 3000
 
 
+def _errors(page) -> list[str]:  # noqa: ANN001
+    """خطاهای JavaScript صفحه (pageerror)؛ شنونده یک بار برای هر تب ثبت می‌شود."""
+    errs = _page_errors.get(id(page))
+    if errs is None:
+        errs = _page_errors[id(page)] = []
+
+        def on_error(e: Any) -> None:
+            if len(errs) < 10:
+                errs.append(truncate(str(e), 200))
+        page.on("pageerror", on_error)
+    return errs
+
+
+async def _snapshot(page) -> dict[str, Any]:  # noqa: ANN001
+    try:
+        snap = await page.evaluate(_SNAPSHOT_JS)
+    except Exception:  # noqa: BLE001 — سند در حال جابه‌جایی (ناوبری سمت کاربر)
+        snap = None
+    if not isinstance(snap, dict):
+        return {"ready": "loading", "title": "", "chars": 0, "sample": "", "interactive": 0, "visual": 0}
+    return snap
+
+
+def _has_content(snap: dict[str, Any]) -> bool:
+    if snap["chars"] < 300 and _PLACEHOLDER.search(snap.get("sample") or ""):
+        return False
+    return snap["chars"] > 0 or snap["interactive"] > 0
+
+
+async def _settle(page) -> dict[str, Any]:  # noqa: ANN001
+    """انتظار محدود برای آمادگی واقعی: readyState=complete و محتوای رندرشده پایدار، یا پایان مهلت (نه تأخیر ثابت)."""
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    deadline, last, stable, seen, snap = start + READY_TIMEOUT_MS / 1000, None, 0, None, {}
+    for _ in range(READY_TIMEOUT_MS // READY_POLL_MS + 1):
+        snap = await _snapshot(page)
+        key = (snap["ready"], snap["title"], snap["chars"], snap["interactive"], snap["visual"])
+        now = loop.time()
+        if snap["ready"] == "complete" and _has_content(snap):
+            seen = now if seen is None else seen
+            stable = stable + 1 if key == last else 0
+            if stable >= READY_STABLE_POLLS or (now - seen) * 1000 >= CONTENT_GRACE_MS:
+                break
+        else:
+            seen = None
+        last = key
+        if now >= deadline:
+            break
+        await page.wait_for_timeout(READY_POLL_MS)
+    snap["waited_ms"] = int((loop.time() - start) * 1000)
+    return snap
+
+
+def _classify(snap: dict[str, Any], status: int, url: str, text: str, auth: bool) -> str:
+    """وضعیت قابل مشاهده صفحه؛ فقط «content» یعنی محتوای قابل استفاده واقعاً دیده شد."""
+    short = text[:5000] if len(text) < 5000 else ""
+    title = snap.get("title") or ""
+    if _CHALLENGE_URL.search(urlparse(url or "").path) or _CHALLENGE_TEXT.search(f"{title}\n{short}"):
+        return "challenge"
+    if status == 401 or auth:
+        return "auth"
+    if status in (403, 451) or _DENIED_TEXT.search(f"{title}\n{short[:1500]}"):
+        return "access_denied"
+    if status >= 400:
+        return "http_error"
+    if not _has_content(snap):
+        return "visual_only" if snap["visual"] and not snap["chars"] else (
+            "loading" if snap["chars"] else "blank")
+    return "content"
+
+
+def _redirects(resp, final_url: str) -> list[str]:  # noqa: ANN001
+    chain, req = [], getattr(getattr(resp, "request", None), "redirected_from", None)
+    while req is not None and len(chain) < 10:
+        chain.append(req.url)
+        req = req.redirected_from
+    chain.reverse()
+    landed = getattr(resp, "url", "") or ""
+    if landed and final_url and landed != final_url:  # هدایت سمت کاربر (JavaScript/meta) پس از پاسخ
+        chain.append(landed)
+    return chain
+
+
+def _diagnostics(snap: dict[str, Any], status: int, errs: list[str], retries: int) -> str:
+    line = (f"شواهد صفحه: readyState={snap['ready']}، HTTP {status or 'نامشخص'}، متن {snap['chars']} نویسه، "
+            f"عناصر قابل تعامل {snap['interactive']}، عناصر تصویری {snap['visual']}، انتظار {snap['waited_ms']}ms"
+            f"{f'، بارگذاری مجدد {retries}' if retries else ''}")
+    return line + (f"\nخطاهای JavaScript صفحه: {' | '.join(errs[:3])}" if errs else "")
+
+
 async def browser_tabs(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     """کشف تب‌های نشست مرورگر مجاز و مالک هر تب (پیش از باز کردن صفحه تازه)."""
     await _guard()
@@ -294,8 +424,9 @@ async def browser_tabs(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
         tabs.append({"index": idx, "url": pg.url, "title": title, "access": "own" if owner == me else
                      ("busy" if owner else "free")})
     out = "\n".join(lines) or "هیچ تبی باز نیست."
-    return ToolResult(True, "تب‌های مرورگر:\n" + out + "\nبرای استفاده از تب آزاد همان سایت، browser_open با همان نشانی را بزن.",
-                      {"tabs": tabs}, untrusted=True)
+    return ToolResult(True, "تب‌های مرورگر:\n" + out + "\nبرای استفاده از تب آزاد همان سایت، browser_open با همان نشانی را بزن."
+                      "\n(فهرست تب‌ها فقط کشف است، نه مشاهده محتوای صفحه.)",
+                      {"tabs": tabs, "content_observed": False}, untrusted=True)
 
 
 async def browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
@@ -313,36 +444,57 @@ async def _browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     page = await _page(ctx, prefer_host=want if a.get("reuse", True) else None)
     before = page.url
     reused = _host(before) == want and before.rstrip("/").startswith(url.rstrip("/"))
-    status = 0
+    status, chain, retries = 0, [], 0
+    errs = _errors(page)
     if not reused:
+        errs.clear()
         try:
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
             status = resp.status if resp else 0
+            chain = _redirects(resp, page.url)
         except Exception as e:  # noqa: BLE001 — Timeout/خطای شبکه: گزارش دقیق، نه موفقیت
-            return ToolResult(False, f"باز کردن «{url}» ناموفق بود: {type(e).__name__}: {truncate(str(e), 300)}\n"
-                              f"نشانی فعلی تب: {page.url}", {"url": page.url, "requested": url, "error": type(e).__name__})
-        await page.wait_for_timeout(800)
+            state = "timeout" if "Timeout" in type(e).__name__ else "network"
+            return ToolResult(False, f"باز کردن «{url}» ناموفق بود (ناوبری فقط تلاش شد؛ وضعیت: {state}): "
+                              f"{type(e).__name__}: {truncate(str(e), 300)}\nنشانی فعلی تب: {page.url}",
+                              {"url": page.url, "requested": url, "error": type(e).__name__, "page_state": state,
+                               "navigation": "attempted", "content_observed": False})
+    snap = await _settle(page)
+    while (not _blank(page.url) and status < 400 and retries < EMPTY_RETRIES
+           and _classify(snap, status, page.url, "", False) in ("blank", "loading")):
+        retries += 1  # سند کامل ولی بی‌محتوا: یک بارگذاری مجدد محدود، نه فرض موفقیت
+        try:
+            resp = await page.reload(wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            status = resp.status if resp else status
+        except Exception:  # noqa: BLE001 — شواهد تلاش اول معتبر می‌ماند
+            break
+        snap = await _settle(page)
     text = await page.evaluate("() => document.body ? document.body.innerText : ''")
     els = await _elements(page)
     title = await page.title()
     now_host = _host(page.url)
     auth = await _auth_wall(page, text)
+    state = "network" if _blank(page.url) or not now_host else _classify(snap, status, page.url, text, auth)
+    observed = state == "content"
     data = {"url_before": before, "url": page.url, "requested": url, "status": status, "title": title,
             "reused_tab": reused or ctx is not None and _session_key(ctx) in _adopted, "auth_required": auth,
-            "host_match": now_host == want}
+            "host_match": now_host == want, "page_state": state, "content_observed": observed,
+            "navigation": "confirmed" if observed else ("attempted" if state == "network" else "partial"),
+            "ready_state": snap["ready"], "text_chars": snap["chars"], "interactive": snap["interactive"],
+            "visual": snap["visual"], "page_errors": list(errs), "redirect_chain": chain,
+            "waited_ms": snap["waited_ms"], "retries": retries}
     head = f"عنوان: {title}\nنشانی: {page.url}"
-    if _blank(page.url) or not now_host:
-        return ToolResult(False, f"{head}\nصفحه بارگذاری نشد (تب خالی). محتوای درخواستی مشاهده نشد.", data)
-    if status >= 400:
-        return ToolResult(False, f"{head}\nپاسخ HTTP {status}؛ صفحه درخواستی در دسترس نیست.", data, untrusted=True)
-    if auth:
-        return ToolResult(False, f"{head}\nاین صفحه ورود/احراز هویت است؛ کاربر وارد نشده و محتوای درخواستی "
-                          "(مثلاً گفتگوها) در دسترس نیست. هیچ محتوایی را حدس نزن؛ به کارفرما گزارش بده که ورود لازم است.",
+    diag = _diagnostics(snap, status, errs, retries)
+    if state == "network":
+        return ToolResult(False, f"{head}\nصفحه بارگذاری نشد (تب خالی). محتوای درخواستی مشاهده نشد.\n{diag}", data)
+    if not observed:
+        reason = _STATE_MSG.get(state) or f"پاسخ HTTP {status}؛ صفحه درخواستی در دسترس نیست."
+        return ToolResult(False, f"ناوبری جزئی (وضعیت صفحه: {state})؛ محتوای قابل استفاده مشاهده نشد.\n{head}\n{reason}\n"
+                          f"{diag}" + (f"\n\n--- متن ---\n{truncate(text, 1500)}" if text.strip() else ""),
                           data, untrusted=True)
     redirect = "" if now_host == want else f"\nتوجه: به میزبان دیگری هدایت شد ({now_host})."
     return ToolResult(
         True,
-        f"{head}{redirect}{' (تب موجود همین سایت استفاده شد)' if data['reused_tab'] else ''}\n\n--- متن ---\n"
+        f"{head}{redirect}{' (تب موجود همین سایت استفاده شد)' if data['reused_tab'] else ''}\n{diag}\n\n--- متن ---\n"
         f"{truncate(text, 6000)}\n\n--- عناصر قابل تعامل ---\n{els}",
         data, untrusted=True,
     )
@@ -354,7 +506,8 @@ async def browser_read(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     if page is None or _blank(page.url):
         return ToolResult(False, f"هیچ صفحه‌ای در تب این اجرا باز نیست ({getattr(page, 'url', 'about:blank') or 'about:blank'}). "
                           "خواندن تب خالی، مشاهده سایت درخواستی نیست؛ ابتدا browser_tabs یا browser_open.",
-                          {"url": getattr(page, "url", "about:blank")})
+                          {"url": getattr(page, "url", "about:blank"), "content_observed": False, "page_state": "blank"})
+    snap = await _settle(page)
     if a.get("selector"):
         try:
             text = await page.inner_text(a["selector"], timeout=10000)
@@ -363,13 +516,22 @@ async def browser_read(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
                               {"url": page.url})
     else:
         text = await page.evaluate("() => document.body ? document.body.innerText : ''")
-    data = {"url": page.url, "title": await page.title(), "chars": len(text)}
-    if await _auth_wall(page, text):
+    auth = await _auth_wall(page, text)
+    state = _classify(snap, 0, page.url, text, auth)
+    data = {"url": page.url, "title": await page.title(), "chars": len(text), "page_state": state,
+            "ready_state": snap["ready"], "page_errors": list(_errors(page)),
+            "content_observed": bool(text.strip()) and state not in ("challenge", "access_denied", "auth", "loading")}
+    if auth:
         data["auth_required"] = True
         return ToolResult(False, f"نشانی: {page.url}\nاین صفحه ورود است؛ محتوای درخواستی در دسترس نیست (ورود لازم است).",
                           data, untrusted=True)
+    if state in ("challenge", "access_denied", "loading"):
+        return ToolResult(False, f"نشانی: {page.url}\n{_STATE_MSG[state]}\n{_diagnostics(snap, 0, data['page_errors'], 0)}",
+                          data, untrusted=True)
     if not text.strip():
-        return ToolResult(False, f"نشانی: {page.url}\nصفحه هیچ متن قابل‌خواندنی ندارد.", data)
+        hint = f"\n{_STATE_MSG[state]}" if state in _STATE_MSG else ""
+        return ToolResult(False, f"نشانی: {page.url}\nصفحه هیچ متن قابل‌خواندنی ندارد.{hint}\n"
+                          f"{_diagnostics(snap, 0, data['page_errors'], 0)}", data)
     if a.get("expect") and str(a["expect"]) not in text:
         data["expect_found"] = False
         return ToolResult(False, f"نشانی: {page.url}\nمتن مورد انتظار «{a['expect']}» در صفحه مشاهده نشد.\n"
@@ -440,6 +602,7 @@ async def browser_screenshot(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     png = await page.screenshot(full_page=False, type="png")
     res = await _visual(ctx, png, a.get("question") or "این صفحه مرورگر را دقیق توصیف کن.", "صفحه مرورگر")
     res.data["url"] = page.url
+    res.data["content_observed"] = res.data.get("vision_analyzed") is True  # فقط تحلیل واقعی بینایی، نه صرف گرفتن تصویر
     return res
 
 
