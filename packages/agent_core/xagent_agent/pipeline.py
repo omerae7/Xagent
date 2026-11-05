@@ -1138,6 +1138,14 @@ class AgentRunner:
         rules: dict,
     ) -> None:
         s = rc.state
+        ids = [call.get("id") if isinstance(call, dict) else None for call in pending]
+        if any(not isinstance(cid, str) or not cid for cid in ids) or len(set(ids)) != len(ids):
+            # One call ID is one authorization/effect identity. Reject the entire
+            # malformed batch before any effect, rather than running a prefix or
+            # interpreting duplicate IDs as separately approved operations.
+            s["abort_kind"] = "validation"
+            s["abort_reason"] = "شناسه فراخوانی ابزار نامعتبر یا تکراری است؛ هیچ عملیات این دسته اجرا نشد."
+            return
         approved: dict[str, list[str]] = s.setdefault("approved", {})
         done_ids = {m.tool_call_id for m in transcript if m.role == "tool"}
         for call in pending:
