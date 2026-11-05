@@ -52,6 +52,31 @@ def _boundary(tz: str, month: bool = False) -> datetime:
     return local.astimezone(UTC)
 
 
+def _run_cap(run: Run, settings: StopLossSettings) -> Decimal | None:
+    """سقف مؤثر هزینه یک Run: سراسری، کارمند و سقف صریح Run — کمترین آن‌ها."""
+    limit = Decimal(str(settings.max_cost_per_task_usd))
+    if run.employee_id is not None:
+        limit = min(limit, Decimal(str(settings.employee_max_cost_usd)))
+    cap = (run.state or {}).get("max_cost")
+    if cap is not None:
+        try:
+            limit = min(limit, Decimal(str(cap)))
+        except (ValueError, ArithmeticError):
+            return None
+    return limit
+
+
+async def _subtree_exposure(s, root_id: uuid.UUID) -> tuple[Decimal, int]:
+    """مواجهه کل زیردرخت (بازگشتی): هزینه تأییدشده + رزرو حل‌نشده/نامعلوم، و توکن مصرفی + رزروشده."""
+    tree = select(Run.id).where(Run.id == root_id).cte("run_tree", recursive=True)
+    tree = tree.union_all(select(Run.id).where(Run.parent_run_id == tree.c.id))
+    cost, tokens = (await s.execute(select(
+        func.coalesce(func.sum(UsageEvent.cost_usd + UsageEvent.reserved_cost_usd), 0),
+        func.coalesce(func.sum(UsageEvent.tokens_in + UsageEvent.tokens_out + UsageEvent.reserved_tokens), 0),
+    ).where(UsageEvent.run_id.in_(select(tree.c.id))))).one()
+    return Decimal(cost), int(tokens)
+
+
 async def begin_attempt(model: Any, req: ChatRequest, *, purpose: str,
                         run_id: uuid.UUID | None = None, input_hint: int | None = None,
                         output_hint: int | None = None, origin_id: str | None = None) -> uuid.UUID:
@@ -107,13 +132,23 @@ async def begin_attempt(model: Any, req: ChatRequest, *, purpose: str,
                 raise BudgetDenied("سقف هزینه هر تسک برای درخواست جدید کافی نیست")
             if int(used_tokens) + predicted_input + max_output > settings.max_tokens_per_task:
                 raise BudgetDenied("سقف توکن هر تسک پیش از درخواست جدید پر می‌شود")
-            if run.parent_run_id:
-                descendants = select(Run.id).where((Run.id == run.parent_run_id) | (Run.parent_run_id == run.parent_run_id))
-                parent_cost = Decimal((await s.execute(select(func.coalesce(func.sum(
-                    UsageEvent.cost_usd + UsageEvent.reserved_cost_usd), 0)).where(
-                        UsageEvent.run_id.in_(descendants)))).scalar_one())
-                if parent_cost + reserve > Decimal(str(settings.max_cost_per_task_usd)):
-                    raise BudgetDenied("بودجه مشترک مدیر و کارمندان کافی نیست")
+            # بودجه ریشه (F09): برای هر گره مسیر تا ریشه، کل زیردرخت (فرزند/نوه/هم‌سطح) شامل مصرف تأییدشده،
+            # رزرو حل‌نشده و هزینه نامعلوم، به‌علاوه این رزرو، باید در سقف مؤثر همان گره بماند. سقف تنگ‌تر والد
+            # بر سقف سراسری سهل‌گیرتر غالب است. همه زیر همان قفل Advisory دفتر کل.
+            node, depth = run, 0
+            while node is not None and node.parent_run_id is not None and depth < 16:
+                parent = await s.get(Run, node.parent_run_id)
+                if parent is None:
+                    break
+                tree_cost, tree_tokens = await _subtree_exposure(s, parent.id)
+                cap = _run_cap(parent, settings)
+                if cap is None:
+                    raise BudgetDenied("محدودیت هزینه Run والد معتبر نیست")
+                if tree_cost + reserve > cap:
+                    raise BudgetDenied("بودجه مشترک مدیر و کارمندان (سقف اجرای والد/ریشه) کافی نیست")
+                if tree_tokens + predicted_input + max_output > settings.max_tokens_per_task:
+                    raise BudgetDenied("سقف توکن کل درخت اجرا (والد و کارمندان) پیش از درخواست جدید پر می‌شود")
+                node, depth = parent, depth + 1
         if purpose == "dream":
             dream = await get_setting(s, "dream", DreamSettings)
             if not dream.enabled:
