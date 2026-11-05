@@ -4,15 +4,27 @@
     "passed": 461,
     "failed": 0,
     "skipped": 0,
-    "seconds": 295.17
+    "seconds": 295.17,
+    "frontend_overlap_disclosed": true,
+    "python_source_unchanged_during_run": true,
+    "original_built_ui_recheck": {
+      "outage_screen": true,
+      "outage_recovered": true,
+      "disconnect_banner": true,
+      "disconnect_did_not_log_out": true,
+      "disconnect_recovered": true,
+      "unauthorized_redirected_login": true,
+      "scope": "Original pre-edit built assets; focused UI checks, not exhaustive original-UI validation"
+    }
   },
   "release": {
-    "source_commit": "06220f56c05491e5841c85acd1dd077d55ab95fb",
-    "passed": 547,
+    "source_commit": "0dac265d8db1dc24646b709db473f8f3c11d90ed",
+    "runtime_source_commit": "06220f56c05491e5841c85acd1dd077d55ab95fb",
+    "passed": 548,
     "failed": 0,
     "skipped": 0,
-    "seconds": 345.72,
-    "new_cases": 86,
+    "seconds": 349.25,
+    "new_cases": 87,
     "removed_baseline_cases": 0
   },
   "desktop": [
@@ -124,5 +136,28 @@
       "ruff": "0.17.3"
     }
   },
-  "caddy_configuration_matches_tracked_source": true
+  "caddy_configuration_matches_tracked_source": true,
+  "takeover_fixture": {
+    "production_guard_bypassed": false,
+    "before_regression_failed": true,
+    "targeted_passed": 39,
+    "targeted_seconds": 59.77,
+    "real_owner_api_and_redis_used": true
+  },
+  "ci_checkpoint": {
+    "checkpoint_sha": "397eec6928bdc04061aacfef74868543dbe55670",
+    "push": {
+      "url": "https://github.com/omerae7/Xagent/actions/runs/42071197477",
+      "status": "success"
+    },
+    "pull_request": {
+      "url": "https://github.com/omerae7/Xagent/actions/runs/42071209794",
+      "status": "success"
+    },
+    "jobs": [
+      "tests",
+      "containers"
+    ],
+    "latest_delivery": "Check the exact final documentation/test HEAD separately; immutable final run links appear in delivery response."
+  }
 }

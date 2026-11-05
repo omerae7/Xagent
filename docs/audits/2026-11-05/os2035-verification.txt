@@ -2,14 +2,23 @@ Xagent OS2035 — verification checkpoint 2026-11-05
 Repository: https://github.com/omerae7/Xagent
 Branch: ccr-345833d2-sca9ob
 Baseline: c3257dcc375c93af38260902a83462304cebc588
-Validated source: 06220f56c05491e5841c85acd1dd077d55ab95fb
+Validated source/tests: 0dac265d8db1dc24646b709db473f8f3c11d90ed
+Production source unchanged since 06220f56c05491e5841c85acd1dd077d55ab95fb
 Working tree was initially clean. Complete non-shallow repository; git fsck connectivity passed.
 
 Executed baseline: 461 passed, 0 failed, 0 skipped, 295.17 seconds.
-Executed final source: 547 passed, 0 failed, 0 skipped, 345.72 seconds.
-Original testcase identity set retained: 461/461. Added cases: 86. Removed cases: 0.
+Baseline scope: command started from clean c325; Python source remained unchanged during
+the run. Frontend design work overlapped part of the long run, so this command alone is
+not an immutable visual baseline. Original pre-edit built assets were separately checked
+in Chromium: outage screen, recovery, disconnect banner without logout, recovery after
+disconnect, and 401 login all matched expected outcomes. Original screenshot uses those
+pre-edit assets. Standalone check: /workspace/xagent-os2035/pristine_ui_baseline.py;
+result: /workspace/xagent-os2035/pristine-ui-baseline.log. This limited original-UI check
+is not an exhaustive baseline UI audit.
+Executed final source/tests: 548 passed, 0 failed, 0 skipped, 349.25 seconds.
+Original testcase identity set retained: 461/461. Added cases: 87. Removed cases: 0.
 Final command (disposable local services, no production secrets):
-PATH=/workspace/xagent-followup-4da3581/bin:$PATH XAGENT_TEST_CHROME=/usr/bin/chromium XAGENT_UI_ARTIFACT_DIR=/workspace/xagent-os2035 PYTHONDONTWRITEBYTECODE=1 /workspace/xagent-audit-venv/bin/pytest -q -rs --tb=short --junitxml=/workspace/xagent-os2035/ship.xml
+PATH=/workspace/xagent-followup-4da3581/bin:$PATH XAGENT_TEST_CHROME=/usr/bin/chromium XAGENT_UI_ARTIFACT_DIR=/workspace/xagent-os2035 PYTHONDONTWRITEBYTECODE=1 /workspace/xagent-audit-venv/bin/pytest -q -rs --tb=short --junitxml=/workspace/xagent-os2035/takeover-full.xml
 The PATH supplies real PostgreSQL CLI wrappers for the owned disposable test container.
 
 Targeted checks executed:
@@ -74,7 +83,16 @@ GitHub API check returned: Get https://api.github.com/repos/omerae7/Xagent/pulls
 Web session is not authenticated. Need API egress, then verify App Pull requests: read/write.
 Git remote authentication is separate; push/remote verification and CI recorded in delivery appendix.
 
-Exact application/test/configuration files changed versus baseline (no deletions):
+Additional test integrity verification:
+- Inherited browser fixture bypassed the takeover guard; a negative real owner-API test exposed it.
+- Guard bypass removed; starting test Redis owner state is isolated and restored instead.
+- Actual owner API -> Redis -> browser guard -> no field effect -> return -> verified field effect.
+- Targeted 39 passed in 59.77s; full 548 passed, 0 failed, 0 skipped.
+- Checkpoint 397eec6 CI push 42071197477 and PR 42071209794 completed successfully, tests and containers.
+- Final test-only commit: 0dac265d8db1dc24646b709db473f8f3c11d90ed.
+- Updated report/final delivered HEAD CI must be independently checked; see final delivery response.
+
+Exact files changed versus baseline, including documentation/evidence (no deletions):
 M	apps/web/package-lock.json
 M	apps/web/package.json
 M	apps/web/src/components/chat.tsx
@@ -89,6 +107,16 @@ M	apps/web/src/pages/Settings.tsx
 M	apps/web/src/styles/index.css
 M	apps/web/src/styles/tokens.css
 M	compose.yaml
+A	docs/audits/2026-11-05/codex-os2035-engineering.md
+A	docs/audits/2026-11-05/os2035-evidence.json
+A	docs/audits/2026-11-05/os2035-inventory.csv
+A	docs/audits/2026-11-05/os2035-pr-body.md
+A	docs/audits/2026-11-05/os2035-verification.txt
+A	docs/audits/2026-11-05/os2035/baseline-chat.png
+A	docs/audits/2026-11-05/os2035/chat-dark-desktop.png
+A	docs/audits/2026-11-05/os2035/chat-dark-mobile.png
+A	docs/audits/2026-11-05/os2035/chat-light-desktop.png
+A	docs/audits/2026-11-05/os2035/chat-light-mobile.png
 M	infra/desktop/agentd.py
 A	packages/agent_core/xagent_agent/grants.py
 M	packages/agent_core/xagent_agent/manifest.py
@@ -108,6 +136,7 @@ M	tests/autonomy_helpers.py
 M	tests/desktop_browser.py
 M	tests/test_autonomy_acceptance.py
 M	tests/test_execution_validation.py
+M	tests/test_followup_browser_continuity.py
 M	tests/test_forensic_s1_markdown.py
 M	tests/test_master_worker.py
 A	tests/test_os2035_browser.py

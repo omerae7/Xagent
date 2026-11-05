@@ -155,7 +155,7 @@ trace کامل source/test/hash در `codex-followup-references.json` موجود
 | بررسی | ماهیت / حدود |
 |---|---|
 | baseline | ۴۶۱ passed، ۰ failed، ۰ skipped، ۲۹۵٫۱۷s؛ شامل ۴۲۴ قبلی + ۳۷ رگرسیون دور پیش |
-| release suite | **۵۴۷ passed، صفر failed و صفر skipped، ۳۴۵٫۷۲s**؛ ۴۶۱ پایه بدون حذف + ۸۶ مورد جدید؛ PostgreSQL/Redis و Chromium محلی، model کنترل‌شده |
+| release suite | **۵۴۸ passed، صفر failed و صفر skipped، 349.25s**؛ ۴۶۱ پایه بدون حذف + ۸۷ مورد جدید؛ PostgreSQL/Redis و Chromium محلی، model کنترل‌شده |
 | پنل واقعی متصل | React → owner auth → API → Run → AgentRunner → DOM → approval API → همان effect → receipt/response → tab باز؛ مصرف Worker queue به‌صورت مستقیم با AgentRunner هدایت شد، نه soak Worker |
 | Telegram happy path | ۱۰ occurrence، ۲ reply/receipt، ۸ interval خالی با ۰ model call؛ duplicate event و settlement، دو scheduler و restart شبیه‌سازی‌شده |
 | receipt reconciliation | ID ثبت‌شده، outgoing واقعی و outbox واقعی؛ متن مشابه، نام نمایشی و cached status به‌تنهایی تأیید نیستند. |
@@ -167,7 +167,9 @@ trace کامل source/test/hash در `codex-followup-references.json` موجود
 | static/build | ruff، Python AST، shell syntax، TypeScript/Vite؛ dependency runtime جدید ندارد |
 | updater/migrations | regression suite و CI؛ اجرای کامل updater محلی به root/chown/systemd ایزوله نیاز دارد و قبلاً در این محیط blocked بوده است. موفقیت آن از نتیجهٔ job containers روی SHA نهایی جدا گزارش می‌شود. |
 
-دو اجرای میانی «موفق» گزارش نشدند: اول ۵۰۰ passed/۱۶ failed که ابتدا SSE timeout و سپس token contamination بود؛ پس از اصلاح، اجرای بعدی ۵۱۹ passed/۲ failed شامل assertion نادرست کنترل greeting و viewport پیش از ثبات layout بود. اجرای بعد ۵۲۹ passed/۱ failed به literal HTML test وابسته بود؛ payloadهای XSS حذف نشدند. پس از آن checkpointهای ۵۳۱، ۵۳۳ و ۵۴۲ موفق شدند. اجرای ۵۴۵ موردی یک شکست در بازیابی mock مرورگر داشت؛ انتظار مشاهدهٔ واقعی و recovery امن اصلاح شد و هدف ۴۳ موردی موفق شد. این‌ها نتیجهٔ نهایی نیستند؛ نتیجهٔ انتشار ۵۴۷/۰/۰ است و شواهد میانی حفظ شده‌اند.
+حد شاهد baseline: فرمان ۴۶۱ موردی از working tree پاک آغاز شد و Python آن تا پایان ثابت ماند؛ کار طراحی frontend با بخشی از اجرای طولانی هم‌پوشانی داشت. بنابراین آن اجرا را به‌تنهایی baseline بصری کاملاً immutable نمی‌نامیم. assetهای اصلی که پیش از ویرایش build شده بودند جداگانه و بدون تغییر با مرورگر بررسی شدند: outage صفحهٔ خطا نشان داد، recovery به صفحه برگشت، قطع SSE باعث logout نشد و 401 به login رفت. screenshot «قبل» نیز از همان build اصلی است؛ این بازسنجی محدود، جای ممیزی تمام UI اولیه را نمی‌گیرد.
+
+دو اجرای میانی «موفق» گزارش نشدند: اول ۵۰۰ passed/۱۶ failed که ابتدا SSE timeout و سپس token contamination بود؛ پس از اصلاح، اجرای بعدی ۵۱۹ passed/۲ failed شامل assertion نادرست کنترل greeting و viewport پیش از ثبات layout بود. اجرای بعد ۵۲۹ passed/۱ failed به literal HTML test وابسته بود؛ payloadهای XSS حذف نشدند. پس از آن checkpointهای ۵۳۱، ۵۳۳ و ۵۴۲ موفق شدند. اجرای ۵۴۵ موردی یک شکست در بازیابی mock مرورگر داشت؛ انتظار مشاهدهٔ واقعی و recovery امن اصلاح شد و هدف ۴۳ موردی موفق شد. این‌ها نتیجهٔ نهایی نیستند؛ نتیجهٔ checkpoint پیشین ۵۴۷/۰/۰ بود؛ پس از تقویت fixture، نتیجهٔ نهایی ۵۴۸/۰/۰ است و شواهد میانی حفظ شده‌اند.
 
 sum همهٔ chunkهای JS غیر‌فشرده: baseline **۹۶۴٬۹۱۵ bytes**، پس از تغییر **۹۶۸٬۰۰۶ bytes**، اختلاف **۳٬۰۹۱ bytes / ۰٫۳۲٪**. شامل chunk تنبل noVNC است؛ initial-load و FPS نیست. dependency جدید فقط `axe-core@4.14.0` در devDependencies و lockfile است. هزار مرحله → شش node در حالت خلاصه؛ با بازکردن، هزار مرحله قابل مشاهده است. عدد دلار یا token saving واقعی وجود ندارد؛ نتیجهٔ idle-zero با مدل ساختگی اندازه‌گیری شده است. بارگذاری history با بودجهٔ حدود ۱۸۰۰ توکنِ تخمینی در هر ورودی goal/planning می‌تواند توکن درخواست پیچیده را افزایش دهد؛ call مدلی تازه اضافه نشده و tradeoff برای جلوگیری از clarification بدون زمینه است. fitting تمام callهای فرعی و سنجش cost per verified objective هنوز لازم است.
 
@@ -214,7 +216,7 @@ F01–F22 از گزارش پیشین با آزمون‌های باقی‌مان�
 
 ## ۱۱. تحویل GitHub و محدودیت اتصال
 
-Commit کد نهایی: [`06220f56c05491e5841c85acd1dd077d55ab95fb`](https://github.com/omerae7/Xagent/commit/06220f56c05491e5841c85acd1dd077d55ab95fb). تمام ۵۴۷ آزمون روی همین source اجرا شدند؛ Commit گزارش بعدی source را تغییر نمی‌دهد. فهرست دقیق فایل‌ها و نتیجهٔ remote در verification companion ثبت می‌شوند. شاخهٔ مقصد همان شاخهٔ موجود است؛ merge/main/deploy انجام نشد. PR #2 از public HTML دارای marker **Draft** بود.
+Commit production code: [`06220f56c05491e5841c85acd1dd077d55ab95fb`](https://github.com/omerae7/Xagent/commit/06220f56c05491e5841c85acd1dd077d55ab95fb). Commit اعتبارسنجی نهایی: [`0dac265d8db1dc24646b709db473f8f3c11d90ed`](https://github.com/omerae7/Xagent/commit/0dac265d8db1dc24646b709db473f8f3c11d90ed)؛ فقط fixture/test نسبت به checkpoint تغییر کرد و production source همان است. تمام ۵۴۸ آزمون با guard واقعی روی این Commit اجرا شدند؛ Commit بعدی فقط گزارش را به‌روز می‌کند. فهرست دقیق فایل‌ها و نتیجهٔ remote در verification companion ثبت می‌شوند. شاخهٔ مقصد همان شاخهٔ موجود است؛ merge/main/deploy انجام نشد. PR #2 از public HTML دارای marker **Draft** بود.
 
 Git fetch/push و API دو مسیر متفاوت‌اند. `gh api repos/omerae7/Xagent/pulls/2` در این محیط `Get https://api.github.com/...: Forbidden` برگرداند؛ نشست وب هم logged-in نیست. تا رفع آن، ویرایش description PR قابل ادعا نیست. تنظیم لازم: افزودن HTTPS egress برای `api.github.com` در Codex Cloud network policy، سپس بررسی GitHub connection/App منتخب برای همین repo با **Pull requests: Read and write**. از این 403 نمی‌توان فقدان permission App را قطعی نتیجه گرفت. PAT در گفتگو درخواست نشد. نیازی به ساخت repo/PR جدید نیست.
 
@@ -246,7 +248,7 @@ sudo docker compose --project-directory /opt/xagent/app --env-file /opt/xagent/a
 اگر profile desktop نصب نشده یا سرویس در آن نصب فعال نیست، بخش stop/tar/start desktop لازم نیست؛ path واقعی را بررسی کنید. برای گرفتن archive سازگار، browser متوقف می‌شود؛ گرفتن archive فعال را معادل backup معتبر login ندانید. هیچ profile به Chrome دیگر کپی نمی‌شود؛ `XAGENT_BROWSER=auto` انتخاب موجود را حفظ می‌کند.
 
 ```bash
-TARGET_COMMIT='06220f56c05491e5841c85acd1dd077d55ab95fb'
+TARGET_COMMIT='0dac265d8db1dc24646b709db473f8f3c11d90ed'
 sudo xagent update --ref "$TARGET_COMMIT" --dry-run
 sudo xagent update --ref "$TARGET_COMMIT"
 sudo xagent version
@@ -289,4 +291,12 @@ installer را دوباره اجرا نکنید. `.env`، data، backups و desk
 | O12 | [packages/tools/xagent_tools/builtin/telegram.py:42](https://github.com/omerae7/Xagent/blob/06220f56c05491e5841c85acd1dd077d55ab95fb/packages/tools/xagent_tools/builtin/telegram.py#L42) |
 | Grants | [packages/agent_core/xagent_agent/grants.py:92](https://github.com/omerae7/Xagent/blob/06220f56c05491e5841c85acd1dd077d55ab95fb/packages/agent_core/xagent_agent/grants.py#L92) |
 
-وضعیت CI در زمان ساخت Commit گزارش هنوز dispatch نشده بود؛ [checks شاخه](https://github.com/omerae7/Xagent/actions/workflows/xagent-ci.yml?query=branch%3Accr-345833d2-sca9ob) منبع وضعیت جاری است. پاسخ نهایی تحویل، URL ثابت run و SHA نهایی remote را جداگانه ثبت می‌کند. این جمله ادعای موفقیت آزمون اجرا‌نشده نیست.
+CI checkpoint `397eec6` مستقلاً موفق شد: [push #206](https://github.com/omerae7/Xagent/actions/runs/42071197477) و [PR #207](https://github.com/omerae7/Xagent/actions/runs/42071209794)، هر دو با jobهای tests و containers. این نتیجه شامل buildهای Compose، graphical browser، Caddy و updater E2E طبق workflow است؛ دسترسی به متن کامل log بدون نشست GitHub مسدود بود و count درون log از وب استخراج نشد. CI مخصوص آخرین Commit آزمون/گزارش باید جدا سنجیده شود؛ [checks شاخه](https://github.com/omerae7/Xagent/actions/workflows/xagent-ci.yml?query=branch%3Accr-345833d2-sca9ob) منبع وضعیت جاری است و پاسخ نهایی URL ثابت run نهایی را ثبت می‌کند.
+
+## ۱۵. T01 — تقویت آزمون Takeover (P2، شکاف تست؛ نه نقص تولید اثبات‌شده)
+
+در `tests/test_followup_browser_continuity.py:comp` از قبل `_guard` با تابع خالی جایگزین می‌شد. آزمون تازه با API واقعی owner، `takeover=true` کرد ولی در آن fixture تایپ مسدود نشد (negative: DID NOT RAISE TakeoverActive). این failure دربارهٔ fixture بود، نه bypass در production که `_guard` اصلی را داشت.
+
+جایگزینی guard حذف شد؛ fixture فقط وضعیت اولیهٔ Redis آزمایشی را isolate و در teardown برمی‌گرداند. اکنون API owner → Redis → `_guard` واقعی → جلوگیری از تغییر مقدار فیلد، و سپس return-to-agent → تایپ و بازخوانی واقعی آزموده می‌شود. ۳۹ آزمون مرتبط و سپس همهٔ ۵۴۸ مورد موفق شدند. هیچ check امنیتی محصول برای پاس‌شدن تست خاموش نشده است. تصاویر و تست‌های قدیمی که guard را mock می‌کردند، به‌تنهایی proof این کنترل محسوب نمی‌شوند.
+
+Risk: fixture state isolation در Redis مختص تست است؛ هیچ state تولید تغییر نکرد. Migration ندارد. Acceptance: هنگام Takeover مقدار فیلد خالی بماند، پس از بازگشت کنترل فقط مقدار مجاز وارد شود.

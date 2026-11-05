@@ -10,14 +10,14 @@ OS2035 tokens و light/dark، Orbit اختصاصی، Command Center، Chat کا�
 
 ## اعتبارسنجی
 
-- **۵۴۷ passed، صفر failed، صفر skipped**؛ تمام ۴۶۱ مورد پایه حفظ و ۸۶ مورد اضافه شد.
+- **۵۴۸ passed، صفر failed، صفر skipped**؛ تمام ۴۶۱ مورد پایه حفظ و ۸۷ مورد اضافه شد.
 - پنل واقعی → API → Run → approval → فرم Chromium → یک effect و receipt → پاسخ صادقانه و tab باز.
 - ده وقوع Telegram با PostgreSQL/Redis واقعی و model/bridge ساختگی؛ دو reply با receipt، هشت interval خالی با صفر call مدل.
 - Chrome/Chromium گرافیکی Docker: reconnect، cookie restart، screenshot، Takeover و hung-browser readiness.
 - ۹ عرض صفحه در دو theme، axe WCAG A/AA، XSS، TypeScript/Vite، ruff و shell checks.
 - Caddy IP/domain بدون SNI، routing/restart؛ internal CA، public trust محسوب نمی‌شود.
 
-Source آزموده‌شده: [`06220f56c05491e5841c85acd1dd077d55ab95fb`](https://github.com/omerae7/Xagent/commit/06220f56c05491e5841c85acd1dd077d55ab95fb). CI دقیق HEAD گزارش در checks همین PR باید جدا بررسی شود.
+Source آزموده‌شده: [`0dac265d8db1dc24646b709db473f8f3c11d90ed`](https://github.com/omerae7/Xagent/commit/0dac265d8db1dc24646b709db473f8f3c11d90ed). CI دقیق HEAD گزارش در checks همین PR باید جدا بررسی شود.
 
 ## سازگاری و حدود
 
@@ -28,3 +28,5 @@ Migration **0008** فقط دو جدول permission اضافه می‌کند؛ ه
 گزارش فارسی، تصاویر، محدودیت‌ها، فایل‌های تغییرکرده و دستور دستی VPS در [codex-os2035-engineering.md](https://github.com/omerae7/Xagent/blob/ccr-345833d2-sca9ob/docs/audits/2026-11-05/codex-os2035-engineering.md) و [os2035-verification.txt](https://github.com/omerae7/Xagent/blob/ccr-345833d2-sca9ob/docs/audits/2026-11-05/os2035-verification.txt) ثبت شده‌اند.
 
 **PR باید Draft باقی بماند؛ merge به main یا deployment مجاز نیست.**
+
+fixture مرورگر دیگر guard Takeover را mock نمی‌کند؛ API مالک و Redis واقعی مسدودشدن تایپ را اثبات می‌کنند. checkpoint قبلی 397eec6 در CIهای [206](https://github.com/omerae7/Xagent/actions/runs/42071197477) و [207](https://github.com/omerae7/Xagent/actions/runs/42071209794) موفق بود؛ آخرین HEAD باید checks مستقل خودش را داشته باشد.
