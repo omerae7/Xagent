@@ -44,6 +44,18 @@ flowchart LR
 
 ## ۳. یافته‌های تازه و اصلاحات
 
+| ID | شدت | نقص تأییدشده | شاهد / اصلاح | اولویت |
+|---|---|---|---|---|
+| C01 | P1 | تب پس از پاسخ بسته شد | Chromium منفی؛ عمر مستقل tab/Run | فوری |
+| C02 | P1 | approval معتبر مصرف نشد | field خالی با engine اصلی؛ binding و DOM scope یکسان | فوری |
+| C03 | P2 | duplicate Run خطای ORM داد | MissingGreenlet؛ status پیش از rollback | همراه مسیر اجرا |
+| C04 | P1 | callback race / wake-up مفقود | ۵ شکست روی service اصلی؛ قفل تراکنشی و terminal guard | فوری |
+| C05 | P1 | MCP protocol به‌جای اثر verified | ۲ شکست؛ تفکیک read-only و write نامعلوم | فوری |
+| C06 | P2 | HTTP200 غیرCDP آماده بود | ۳ شکست؛ بررسی پروتکل/نسخه | همراه discovery |
+| C07 | P1 | رد مجوز ۵۴ call مصرف کرد | ۵۴→۴، صفر اثر؛ مصرف signal controller | فوری |
+| C08 | P1 | uncertainty به recovery رفت | ۴→۱، evidence محفوظ و توقف durable | فوری |
+| C09 | P2 | mode فایل مانع startup شد | image واقعی Permission denied؛ mode صریح | همراه Chrome |
+
 ### C01 — P1 — بسته‌شدن تب پس از پاسخ نهایی
 
 - **مکان:** `packages/tools/xagent_tools/builtin/computer.py`، `_page`، `release_session`؛ `pipeline._finalize`.
@@ -251,9 +263,9 @@ CDP داخلی همچنان 9222→loopback:9223 است؛ Compose هیچ پور�
 | graphical Docker | Chrome و Chromium؛ هر دو سناریو و checks بخش ۴ موفق |
 | Caddy واقعی | سه config: IP، domain، explicit SNI override؛ no-SNI handshake/routing/restart موفق؛ CA سیستم **رد کرد** و trust صریح CA تست موفق شد |
 | Static/build | ruff، compileall، bash -n، Compose config و tsc/vite build موفق |
-| updater E2E کامل | **BLOCKED** در chown UID 1001ِ دایرکتوری یکبارمصرف: Operation not permitted؛ bootstrap/ارتقای کامل این اجرا پاس محسوب نمی‌شود |
+| updater E2E کامل | **BLOCKED** در chown UID 1001ِ دایرکتوری یکبارمصرف: Operation not permitted؛ bootstrap/ارتقای کامل محلی پاس محسوب نمی‌شود؛ مرحله updater در CI موفقِ #198/#199 این محدودیت محلی را پوشش داده است |
 | supply chain | npm audit --omit=dev: سه package high در زنجیره React Router، نه سه exploit مستقل تأییدشده؛ upgrade نشده |
-| CI/remote | هنگام نگارش: push/CI نسخه تازه در انتظار؛ نتیجه زنده در [PR checks](https://github.com/omerae7/Xagent/pull/2/checks) و گزارش نهایی این مأموریت ثبت می‌شود. GitHub API/GraphQL این محیط 403 است؛ بررسی/به‌روزرسانی از رابط عادی وب انجام می‌شود. |
+| CI/remote | **CI برای `03bd818acb4a60b425a0dbf96f5fc71e4c035e1b` موفق است:** [push #198](https://github.com/omerae7/Xagent/actions/runs/42032132694) و [PR #199](https://github.com/omerae7/Xagent/actions/runs/42032142077)، هر دو tests و containers. آخرین وضعیتِ Commitهای صرفاً مستنداتی در [PR checks](https://github.com/omerae7/Xagent/pull/2/checks) دیده می‌شود. |
 
 سری‌های میانی شکست‌ها پنهان نشدند: یک اجرای نخست به‌دلیل هم‌پوشانی اشتباه دو process آزمون با fixture مشترک DB آلوده شد و مبنای پذیرش نیست. انتظارهای قدیمی درباره بستن تب، فرض موفقیت search بدون اثر، metadata echo و شمار مدل با قرارداد جدید اصلاح شدند؛ تست‌های امنیتی حذف/شل نشدند. خطای wrapper pg_dump -f مربوط به مسیر میزبان اصلاح شد؛ تولید تغییر نکرد. guard آخر ابتدا stop_reason/state.validation را ناسازگار می‌کرد؛ همین رگرسیون‌ها پیدا و قرارداد قبلی حفظ شد. خروجی‌های منفی، بدون اسرار، در `codex-followup-evidence.txt` خلاصه شده‌اند.
 
@@ -336,6 +348,14 @@ Commit گزارش مستقل است؛ SHA خود آن در history شاخه و �
 
 **۳۰ فایل: ۲۰ modified، ۱۰ added، صفر deleted.** فایل موقت، dependency نصب‌شده، secret یا runtime profile در Commitها وارد نشده است.
 
+
+**ذخیره راه دور:** پنج Commit آغازین این دور تا `03bd818acb4a60b425a0dbf96f5fc71e4c035e1b` push و با Fetch صریح ref شاخه، برابری SHA و tree تأیید شدند. fetch قدیمیِ محدود به main، tracking ref محلی را کهنه نگه می‌داشت؛ فقط remote-tracking ref تازه شد، تاریخچه یا source تغییر نکرد.
+
+**محدودیت ویرایش PR:** PR #2 هنوز Draft است. API/GraphQL به 403 رسید؛ `gh auth status` اعتبار اتصال را تأیید نکرد. نشست عادی وب `logged_in=false` و user-login خالی بود؛ فرم رسمی ویرایش با عنوان موجود و CSRF خودش 422 برگرداند. به‌روزرسانی description **انجام‌شده ادعا نمی‌شود**. Push کد موفق است؛ این blocker فقط metadata PR است و به اتصال GitHub مجاز برای ویرایش PR/دسترسی API نیاز دارد. هیچ credential در گزارش ذخیره نشده است.
+
+متن آماده برای description موجود (بدون ساخت PR تازه):
+
+> این نسخه تب مرورگر را پس از پایان Run حفظ و reuse می‌کند؛ approval به operation و scope واقعی DOM متصل است و پس از تأیید همان عمل با postcondition ادامه می‌یابد. write نامعلوم MCP، HTTP200 غیرCDP و permission/recovery loop دیگر شواهد موفقیت نمی‌سازند. Chrome Stable در amd64 تازه preferred است و Chromium/profile قبلی محفوظ می‌ماند. ۴۵۸ pytest موفق (۴۲۴ baseline + ۳۴ تازه)، graphical Chrome/Chromium، Caddy و CI #198/#199 موفق‌اند. مدل/Telegram ساختگی‌اند؛ VPS دست نخورده است. PR باید Draft بماند. network/desktop/workspace isolation کامل، verifierهای اختصاصی write و validation زنده/soak هنوز پیش‌نیاز unattended production هستند. گزارش کامل: `docs/audits/2026-11-05/codex-followup-engineering.md`.
 
 Migration پایگاه داده: ندارد. پیکربندی تازه: `XAGENT_BROWSER`، build arg `CHROME_VERSION`، scope/target اختیاری در state و annotation در schema ابزار. `.env`، profileهای موجود، migrationهای قبلی، updater rollback و branchهای مخزن حذف/overwrite نشدند. هیچ dependency تولید جدید framework اضافه نشد؛ Google Chrome یک بسته image است.
 

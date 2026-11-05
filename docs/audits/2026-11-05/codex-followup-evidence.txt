@@ -288,3 +288,11 @@ Tracked Caddyfile SHA256 equals image /etc/caddy/Caddyfile SHA256:
   "ruff": "0.17.3"
 }
 Static: ruff check packages services tests -> All checks passed; compileall, bash -n and Compose config passed.
+
+=== Remote verification and CI ===
+Remote branch and fetched tree verified equal to 03bd818acb4a60b425a0dbf96f5fc71e4c035e1b.
+https://github.com/omerae7/Xagent/actions/runs/42032132694 — push run #198 completed successfully.
+https://github.com/omerae7/Xagent/actions/runs/42032142077 — PR run #199 completed successfully.
+Both tests and containers jobs completed successfully. Source code equals tested commit 4afa6fa1fdeb92e0509d9e8416cfb43175c3d284.
+PR metadata update blocked: API/GraphQL 403; unauthenticated web session; official issue-edit form HTTP 422; description marker absent; Draft remains visible.
+Disposable graphical containers and their volumes cleaned; previously stopped PostgreSQL/Redis test containers restored to stopped state.
