@@ -62,6 +62,8 @@ async def check(image, choice):
                 await asyncio.sleep(1)
             raise AssertionError('desktop/browser not ready: ' + docker('logs', '--tail', '30', name))
         health = await ready()
+        assert health.get('desktop_ready') is True and health.get('display_ready') is True
+        assert request(api + '/ready')['desktop_ready'] is True
         startup = round(time.monotonic() - started, 3)
         html = '<title>Synthetic persistent browser</title><h1>Local test only</h1><input id="draft">'
         docker('exec', '-i', name, 'python3', '-c',
@@ -89,6 +91,18 @@ async def check(image, choice):
                 assert e.code == 423
             request(api + '/takeover', token, {'on': False})
             assert await page.input_value('#draft') == 'retained draft'
+            # A running but hung browser must fail readiness while agentd stays live.
+            process_name = 'chrome' if choice == 'chrome' else 'chromium'
+            docker('exec', name, 'pkill', '-STOP', '-x', process_name)
+            try:
+                assert request(api + '/health')['ok'] is True
+                try:
+                    request(api + '/ready')
+                    raise AssertionError('hung graphical browser was reported ready')
+                except urllib.error.HTTPError as e:
+                    assert e.code == 503
+            finally:
+                docker('exec', name, 'pkill', '-CONT', '-x', process_name)
             # Persist the profile before a graceful container restart.
             await page.context.storage_state()
             # Chrome batches cookie writes. Wait for its own durable store; a
@@ -122,7 +136,8 @@ async def check(image, choice):
         return {'choice': choice, 'health': health, 'startup_seconds': startup,
                 'single_sample_process_stats': stats,
                 'checks': ['graphical CDP', 'draft survives reconnect', 'cookie survives restart',
-                           'actual desktop screenshot', 'takeover rejects input', 'loopback test ports']}
+                           'actual desktop screenshot', 'takeover rejects input', 'loopback test ports',
+                           'hung browser fails readiness while daemon stays live']}
     finally:
         if created:
             docker('rm', '-f', name)

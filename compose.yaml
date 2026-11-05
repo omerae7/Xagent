@@ -202,7 +202,7 @@ services:
     networks: [desktop_link]
     mem_limit: ${DESKTOP_MEM_LIMIT:-2560m}
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7000/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7000/ready"]
       interval: 20s
       timeout: 5s
       retries: 10

@@ -36,7 +36,7 @@ SAFE_ENV = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOM
 
 @web.middleware
 async def auth(request: web.Request, handler):
-    if request.path == "/health":
+    if request.path in {"/health", "/ready"}:
         return await handler(request)
     if not TOKEN or request.headers.get("Authorization") != f"Bearer {TOKEN}":
         return web.json_response({"error": "unauthorized"}, status=401)
@@ -68,14 +68,36 @@ async def health(_: web.Request) -> web.Response:
         async with ClientSession(timeout=ClientTimeout(total=2)) as client:
             async with client.get("http://127.0.0.1:9223/json/version") as response:
                 data = await response.json()
-                version = data.get("Browser")
+                version = data.get("Browser") if isinstance(data, dict) else None
                 cdp = response.status == 200 and isinstance(version, str) and bool(data.get("Protocol-Version"))
     except (ClientError, OSError, TimeoutError, ValueError):
         pass
+    display_ready = False
+    if not RUNNER_MODE and shutil.which("xdotool"):
+        proc = await asyncio.create_subprocess_exec("xdotool", "getdisplaygeometry",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            out, _err = await asyncio.wait_for(proc.communicate(), timeout=1)
+            dimensions = out.decode().split()
+            display_ready = proc.returncode == 0 and len(dimensions) == 2 and all(
+                d.isdigit() and int(d) > 0 for d in dimensions)
+        except TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.communicate()
     return web.json_response({"ok": True, "display": DISPLAY, "chromium_cdp": cdp, "takeover": STATE["takeover"],
+                              "display_ready": display_ready, "desktop_ready": RUNNER_MODE or (cdp and display_ready),
                               "browser_cdp": cdp, "browser_version": version,
                               "git": bool(shutil.which("git")), "node": bool(shutil.which("node")),
                               "uv": bool(shutil.which("uv")), "mcp_servers": list(MCP.keys())})
+
+
+async def ready(request: web.Request) -> web.Response:
+    response = await health(request)
+    data = json.loads(response.body)
+    return web.json_response(data, status=200 if data["desktop_ready"] else 503)
 
 
 async def exec_(request: web.Request) -> web.Response:
@@ -283,7 +305,7 @@ async def mcp_other(_: web.Request) -> web.Response:
 
 def app() -> web.Application:
     a = web.Application(middlewares=[auth], client_max_size=32 * 1024 * 1024)
-    routes = [web.get("/health", health)]
+    routes = [web.get("/health", health), web.get("/ready", ready)]
     if RUNNER_MODE:
         routes.extend([
             web.post("/exec", exec_),

@@ -70,7 +70,7 @@ async def probe_desktop() -> dict[str, Any]:
     from xagent_tools.sandbox import get_sandbox
 
     h = await get_sandbox().health()
-    return {"ok": bool(h.get("ok")), "kind": h.get("kind")}
+    return {"ok": bool(h.get("ok")) and h.get("desktop_ready", True) is True, "kind": h.get("kind")}
 
 
 async def _redis_get(key: str) -> str | None:
