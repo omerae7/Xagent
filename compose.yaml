@@ -163,6 +163,7 @@ services:
     environment:
       XAGENT_SITE_ADDRESS: ${XAGENT_SITE_ADDRESS:-localhost}
       XAGENT_TLS: ${XAGENT_TLS:-internal}
+      XAGENT_DEFAULT_SNI: ${XAGENT_DEFAULT_SNI:-}
     ports:
       - "80:80"
       - "443:443"

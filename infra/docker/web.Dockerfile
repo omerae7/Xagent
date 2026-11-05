@@ -12,4 +12,8 @@ RUN npm run build
 
 FROM caddy:2.8-alpine
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
+COPY infra/caddy/entrypoint.sh /usr/local/bin/xagent-web-entrypoint
+RUN chmod +x /usr/local/bin/xagent-web-entrypoint
 COPY --from=build /web/dist /srv
+ENTRYPOINT ["/usr/local/bin/xagent-web-entrypoint"]
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

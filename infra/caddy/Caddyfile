@@ -3,6 +3,9 @@
 # XAGENT_TLS: ایمیل برای ACME یا internal
 {
 	admin off
+	# IP clients commonly omit TLS SNI. The image entrypoint derives this host
+	# from XAGENT_SITE_ADDRESS unless explicitly overridden.
+	default_sni {$XAGENT_DEFAULT_SNI:localhost}
 	servers {
 		protocols h1 h2
 	}

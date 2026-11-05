@@ -90,6 +90,8 @@ jobs:
         run: docker compose config -q
       - name: Build all images
         run: docker compose --profile desktop build
+      - name: HTTPS without client SNI (IP and domain, real Caddy)
+        run: python3 tests/caddy_tls.py --image xagent/web:latest
       - name: Updater end-to-end (bootstrap, broken migration, unhealthy release rollback, success, manual rollback)
         run: |
           sudo git config --global --add safe.directory '*'
