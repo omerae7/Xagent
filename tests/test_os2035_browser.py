@@ -62,3 +62,23 @@ async def test_missing_click_does_not_start_an_effect(comp, env):
     result = await comp.browser_click(c, {"ref": 99999})
     assert not result.ok and result.outcome.value == "NOT_STARTED"
     assert await comp._sessions[str(c.run_id)].evaluate("window.sends || 0") == 0
+
+
+async def test_real_owner_takeover_api_blocks_browser_typing(app_client, comp, env):
+    from xagent_tools.sandbox import TakeoverActive
+
+    c = ctx()
+    await comp.browser_open(c, {"url": env.web + "/editor"})
+    page = comp._sessions[str(c.run_id)]
+    try:
+        response = await app_client.post("/api/desktop/takeover", json={"on": True})
+        assert response.status_code == 200
+        with pytest.raises(TakeoverActive):
+            await comp.browser_type(c, {"selector": "#draft", "value": "must not execute"})
+        assert await page.input_value("#draft") == ""
+        assert (await app_client.post("/api/desktop/takeover", json={"on": False})).status_code == 200
+        result = await comp.browser_type(c, {"selector": "#draft", "value": "permitted after return"})
+        assert result.ok and result.verified is True
+        assert await page.input_value("#draft") == "permitted after return"
+    finally:
+        await app_client.post("/api/desktop/takeover", json={"on": False})

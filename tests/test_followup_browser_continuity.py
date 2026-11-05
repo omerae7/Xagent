@@ -24,11 +24,12 @@ def env():
 
 @pytest.fixture
 async def comp(env, monkeypatch, tmp_path):
+    from xagent_core import bus
     from xagent_tools.builtin import computer
     monkeypatch.setattr(computer, "_cdp_url", lambda: env.cdp)
-    async def no_guard():
-        return None
-    monkeypatch.setattr(computer, "_guard", no_guard)
+    # Isolate the starting owner state; keep the real runtime security guard.
+    takeover = await bus.is_takeover()
+    await bus.set_takeover(False, "synthetic-browser-fixture")
     monkeypatch.setattr(computer, "_identity_path", lambda emp: tmp_path / f"{emp}.state")
     await reset_computer(computer)
     for page in list((await computer._context()).pages):
@@ -36,6 +37,7 @@ async def comp(env, monkeypatch, tmp_path):
             await page.close()
     yield computer
     await reset_computer(computer)
+    await bus.set_takeover(takeover, "synthetic-browser-fixture")
 
 def ctx(employee=None):
     return SimpleNamespace(run_id=uuid.uuid4(), extra={"employee_id": employee, "approved": set()},
