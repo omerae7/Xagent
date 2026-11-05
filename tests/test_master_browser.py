@@ -93,6 +93,9 @@ async def comp(env, monkeypatch):
         await computer.release_session(k)
     if computer._browser is not None:
         try:
+            for context in computer._browser.contexts:
+                for page in list(context.pages):
+                    await page.close()
             await computer._browser.close()
         except Exception:  # noqa: BLE001
             pass
@@ -213,7 +216,7 @@ async def test_B8_concurrent_runs_are_isolated(comp, env):
     p1, p2 = comp._sessions[str(r1.run_id)], comp._sessions[str(r2.run_id)]
     assert p1 is not p2 and p1.url.endswith("/tg/") and p2.url.endswith("/other")
     await comp.release_session(r1.run_id)
-    assert p1.is_closed() and not p2.is_closed()
+    assert not p1.is_closed() and not p2.is_closed()  # releasing a Run preserves both visible tabs
     assert (await comp.browser_read(r2, {})).ok
 
 

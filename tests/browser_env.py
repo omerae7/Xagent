@@ -68,11 +68,17 @@ def start(routes: dict[str, Route | Callable[[], Route]]) -> tuple[SimpleNamespa
     return SimpleNamespace(web=f"http://127.0.0.1:{web_port}", cdp=f"http://127.0.0.1:{cdp_port}"), stop
 
 
-async def reset_computer(computer) -> None:  # noqa: ANN001
+async def reset_computer(computer, *, cleanup: bool = True) -> None:  # noqa: ANN001
     for k in list(computer._sessions):
         await computer.release_session(k)
     if computer._browser is not None:
         try:
+            if cleanup:
+                # Tests own this disposable browser. Production Run cleanup preserves
+                # tabs, so fixtures must explicitly dispose their synthetic pages.
+                for context in computer._browser.contexts:
+                    for page in list(context.pages):
+                        await page.close()
             await computer._browser.close()
         except Exception:  # noqa: BLE001
             pass

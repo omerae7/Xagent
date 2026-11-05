@@ -158,6 +158,16 @@ class FakeBrowserContext:
     async def storage_state(self) -> dict:
         return {"cookies": [], "origins": []}
 
+    async def new_cdp_session(self, page):
+        class CDP:
+            async def send(self, method):
+                assert method == "Target.getTargetInfo"
+                return {"targetInfo": {"targetId": page.target_id}}
+
+            async def detach(self):
+                return None
+        return CDP()
+
 
 class FakeBrowser:
     def __init__(self) -> None:
@@ -178,6 +188,7 @@ class MultiPage:
     BUTTONS = [("View", "a"), ("Edit", "button"), ("Send", "button"), ("Delete", "button"), ("Pay", "button")]
 
     def __init__(self, ctx: FakeBrowserContext) -> None:
+        self.target_id = uuid.uuid4().hex
         self.ctx = ctx
         self.context = ctx
         self.url = "about:blank"

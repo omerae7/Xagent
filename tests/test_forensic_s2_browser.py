@@ -117,6 +117,8 @@ async def test_F04_type_submit_classifies_by_real_form(comp, env):
     c = ctx()
     await comp.browser_open(c, {"url": f"{env.web}/admin/", "reuse": False})
     res = await comp.browser_type(c, {"selector": "#q", "value": "chair", "submit": True})
-    assert res.ok  # فرم جست‌وجو: عادی
+    # Search needs no sensitive approval; this synthetic form cancels submission,
+    # so typing is observed but no search-result postcondition may be fabricated.
+    assert res.data["field_verified"] and res.data["outcome_uncertain"] and not res.ok
     with pytest.raises(EscalateCategory):
         await comp.browser_type(c, {"selector": "#c5", "value": "x", "submit": True})

@@ -92,9 +92,9 @@ async def _guard() -> None:
 # ── مدیر نشست مرورگر: هر اجرا تب اختصاصی خودش را دارد ──
 # Context مشترک (Cookie و نشست‌های لاگین‌شده کارفرما حفظ می‌شود) ولی تب‌ها جدا: کلیک/تایپ یک اجرا هرگز در تب
 # اجرای دیگر انجام نمی‌شود. هر اجرا قفل عملیات خودش را دارد؛ اجراهای مختلف هم‌زمان روی تب‌های جدا کار می‌کنند.
-# مالکیت تب: تب ساخته‌شده توسط اجرا پس از پایان بسته می‌شود؛ تب موجود (مثلاً Telegram Web لاگین‌شده کارفرما) که
-# اجرا «به امانت» برداشته بسته نمی‌شود و فقط آزاد می‌شود. تب در دست اجرای دیگر یا کارمند دیگر هرگز برداشته نمی‌شود.
+# مالکیت تب مستقل از اجرای کوتاه‌مدت است؛ پایان اجرا فقط ادعای مالکیت و قفل تعامل را آزاد می‌کند. تب در دست اجرای دیگر یا کارمند دیگر هرگز برداشته نمی‌شود.
 MAX_SESSIONS = 4
+MAX_IDENTITY_TABS = 12  # refuse allocation at capacity; never evict meaningful/user/pinned tabs
 NAV_TIMEOUT_MS = 45000
 IDLE_EVICT_SECONDS = 1800  # فقط تب اجرای رهاشده (بیکار طولانی) آزاد می‌شود، نه تب اجرای فعال دیگر
 _sessions: dict[str, Any] = {}
@@ -102,6 +102,7 @@ _session_locks: dict[str, asyncio.Lock] = {}
 _session_used: dict[str, float] = {}
 _adopted: set[str] = set()
 _page_employee: dict[int, str] = {}  # id(page) → کارمند سازنده/دارنده (حریم تب کارمندان)
+_tab_leases: dict[str, str] = {}
 VISION_UNAVAILABLE = "(مدل بینایی تنظیم نشده است)"
 _AUTH_PATH = re.compile(r"/(login|log-in|signin|sign-in|auth|sso|oauth)\b|#/login", re.I)
 _AUTH_TEXT = re.compile(r"log in to telegram|log in by (qr|phone)|scan (this|the) qr|ورود به تلگرام|"
@@ -284,6 +285,26 @@ def _may_adopt(ctx: ToolContext | None, page) -> bool:  # noqa: ANN001
     return tab_emp == _employee_of(ctx)
 
 
+async def _target_id(page) -> str:  # noqa: ANN001
+    cdp = await page.context.new_cdp_session(page)
+    try:
+        return (await cdp.send("Target.getTargetInfo"))["targetInfo"]["targetId"]
+    finally:
+        await cdp.detach()
+
+
+async def _claim_page(ctx: ToolContext | None, page):  # noqa: ANN001
+    key, target = _session_key(ctx), await _target_id(page)
+    lease = f"browser:tab:{target}"
+    if not await bus.extend_lease(lease, key, 360_000) and not await bus.acquire_lease(lease, 360_000, key):
+        raise BrowserBusy("این تب در اختیار اجرای دیگری است؛ بدون مجوز مالکیت قابل استفاده نیست.")
+    _tab_leases[key] = lease
+    _sessions[key] = page
+    if ctx is not None and "run_state" in ctx.extra:
+        ctx.extra["run_state"]["browser_target"] = {"id": target, "host": _host(page.url)}
+    return page
+
+
 async def _page(ctx: ToolContext | None = None, prefer_host: str | None = None, create: bool = True,
                 host: str | None = None):
     """تب این اجرا. prefer_host: اگر تب آزاد و مجازی با همان سایت باز است، همان به امانت برداشته می‌شود.
@@ -296,17 +317,26 @@ async def _page(ctx: ToolContext | None = None, prefer_host: str | None = None, 
             await release_session(key)  # هویت مقصد فرق دارد (مثلاً اشتراک کارفرما)؛ تب هویت دیگر استفاده نمی‌شود
             page = None
     if page is None or page.is_closed():
-        bctx = await _context(ctx, host or prefer_host)
+        saved = (ctx.extra.get("run_state", {}) if ctx is not None else {}).get("browser_target", {})
+        bctx = await _context(ctx, host or prefer_host or saved.get("host"))
         async with _lock:
+            if saved and not prefer_host:
+                for cand in list(bctx.pages):
+                    if not cand.is_closed() and await _target_id(cand) == saved.get("id") and _may_adopt(ctx, cand):
+                        _session_used[key] = asyncio.get_running_loop().time()
+                        return await _claim_page(ctx, cand)
+                raise BrowserBusy("تب ذخیره‌شده اجرا بازیابی نشد؛ اثر حساس تکرار نشد. صفحه را دوباره بررسی کنید.")
             if prefer_host:
                 for cand in list(bctx.pages):
                     if _host(cand.url) == prefer_host and _may_adopt(ctx, cand):
                         _sessions[key] = cand
                         _adopted.add(key)
                         _session_used[key] = asyncio.get_running_loop().time()
-                        return cand
+                        return await _claim_page(ctx, cand)
             if not create:
                 return None
+            if len([pg for pg in bctx.pages if not pg.is_closed()]) >= MAX_IDENTITY_TABS:
+                raise BrowserBusy("ظرفیت تب‌های این هویت پر است؛ تب موجود را استفاده یا صریحاً ببندید.")
             now = asyncio.get_running_loop().time()
             live = [k for k, pg in _sessions.items() if not pg.is_closed()]
             if len(live) >= MAX_SESSIONS:
@@ -318,8 +348,9 @@ async def _page(ctx: ToolContext | None = None, prefer_host: str | None = None, 
             page = await bctx.new_page()
             _sessions[key] = page
             _page_employee[id(page)] = _employee_of(ctx)
+            page.on("close", lambda: (_page_employee.pop(id(page), None), _page_errors.pop(id(page), None)))
     _session_used[key] = asyncio.get_running_loop().time()
-    return page
+    return await _claim_page(ctx, page)
 
 
 def _op_lock(ctx: ToolContext | None) -> asyncio.Lock:
@@ -327,26 +358,24 @@ def _op_lock(ctx: ToolContext | None) -> asyncio.Lock:
 
 
 async def release_session(key: Any) -> None:
-    """پایان اجرا: تب ساخته‌شده توسط همین اجرا بسته و تب به‌امانت‌گرفته فقط آزاد می‌شود؛ قفل دسکتاپ آزاد می‌شود.
-    هرگز تب یا قفل اجرای دیگری را لمس نمی‌کند."""
+    """Release the Run's claim, not the user's visible browsing session.
+
+    Meaningful pages (including user/pinned pages) are never age-evicted. New-tab
+    allocation is bounded per identity. Explicit close remains a separate action.
+    """
     k = str(key)
     page = _sessions.pop(k, None)
-    adopted = k in _adopted
     _adopted.discard(k)
     _session_locks.pop(k, None)
     _session_used.pop(k, None)
     emp = _page_employee.get(id(page), "") if page is not None else ""
     if emp:
         await _save_identity(emp)
-    if page is not None and not adopted:
-        _page_employee.pop(id(page), None)
-        _page_errors.pop(id(page), None)
-        try:
-            if not page.is_closed():
-                await page.close()
-        except Exception:  # noqa: BLE001
-            pass
+    # Keep identity ownership until the page actually closes, independently of Run lifetime.
     try:
+        tab_lease = _tab_leases.pop(k, None)
+        if tab_lease:
+            await bus.release_lease(tab_lease, k)
         await bus.release_lease(DESKTOP_LEASE, k)
     except Exception:  # noqa: BLE001
         pass
@@ -441,11 +470,17 @@ async def _describe(page, a: dict[str, Any]) -> dict[str, Any] | None:  # noqa: 
 
 def _enforce_effect(ctx: ToolContext, page, info: dict[str, Any] | None, *, submit: bool = False) -> None:
     category = classify_effect(info, submit=submit)
-    if category and category not in (ctx.extra.get("approved") or set()):
-        host = urlparse(getattr(page, "url", "") or "").hostname or ""
-        label = (info or {}).get("label") or "(بدون برچسب)"
-        raise EscalateCategory(category, f"اقدام مرورگر با اثر حساس: «{label}» در {host}",
-                               {"element": label, "url": host, "effect": category})
+    if category:
+        _enforce_category(ctx, page, category, info)
+
+
+def _enforce_category(ctx: ToolContext, page, category: str, info: dict | None) -> None:
+    host = urlparse(getattr(page, "url", "") or "").hostname or ""
+    label = (info or {}).get("label") or "(بدون برچسب)"
+    scope = {"element": label, "url": page.url, "effect": category, "target": info}
+    expected = ctx.extra.get("approval_scopes", {}).get(category)
+    if category not in (ctx.extra.get("approved") or set()) or (expected is not None and expected != scope):
+        raise EscalateCategory(category, f"اقدام مرورگر با اثر حساس: «{label}» در {host}", scope)
 
 
 async def _elements(page) -> str:
@@ -606,6 +641,9 @@ async def _browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     url = a["url"] if "://" in a["url"] else "https://" + a["url"]
     want = _host(url)
     page = await _page(ctx, prefer_host=want if a.get("reuse", True) else None, host=want)
+    await page.bring_to_front()
+    if "browser_target" in ctx.extra.get("run_state", {}):
+        ctx.extra["run_state"]["browser_target"]["host"] = want
     before = page.url
     reused = _host(before) == want and before.rstrip("/").startswith(url.rstrip("/"))
     status, chain, retries = 0, [], 0
@@ -662,6 +700,21 @@ async def _browser_open(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
         f"{truncate(text, 6000)}\n\n--- عناصر قابل تعامل ---\n{els}",
         data, untrusted=True,
     )
+
+
+async def browser_close(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
+    """Only an explicit, authorized close may destroy the Run's current visible tab."""
+    await _guard()
+    async with _op_lock(ctx):
+        page = await _page(ctx, create=False)
+        if page is None:
+            return ToolResult(False, "هیچ تب متعلق به این اجرا برای بستن وجود ندارد.")
+        await page.close()
+        if "run_state" in ctx.extra:
+            ctx.extra["run_state"].pop("browser_target", None)
+        await release_session(ctx.run_id)
+        return ToolResult(True, "تب انتخاب‌شده صریحاً بسته شد.", {"closed": page.is_closed()},
+                          verified=page.is_closed())
 
 
 async def browser_read(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
@@ -743,23 +796,37 @@ async def browser_type(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
         sensitive = bool(await el.evaluate(_IS_SENSITIVE_JS))
         if sensitive:
             register_secret(str(a.get("value") or ""), min_len=6)  # هر جا (خطا/لاگ/خروجی) تکرار شود پنهان می‌شود
-        if (input_type == "password" or "password" in autocomplete) and "login" not in ctx.extra.get("approved", set()):
-            raise EscalateCategory("login", f"ورود رمز عبور در {urlparse(page.url).hostname}", {"url": page.url})
+        info = await _describe(page, a) or {}
+        if input_type == "password" or "password" in autocomplete:
+            _enforce_category(ctx, page, "login", info)
         if a.get("submit"):
-            info = await _describe(page, a) or {}
             info["type"] = info.get("type") or input_type
             _enforce_effect(ctx, page, info, submit=True)
         try:
+            expect = str(a.get("expect_text") or "").strip()
+            before_match = bool(expect and await page.get_by_text(expect, exact=True).count())
             await el.fill(a["value"], timeout=15000)
+            entered = await el.evaluate("e => e.isContentEditable ? e.innerText : e.value") == a["value"]
+            if not entered:
+                return ToolResult(False, "مقدار واقعی فیلد با ورودی مطابقت ندارد.",
+                                  {"sensitive_input": sensitive, "field_verified": False}, verified=False)
             if a.get("submit"):
                 await el.press("Enter")
-                await page.wait_for_timeout(1500)
+                if expect and not before_match:
+                    await page.get_by_text(expect, exact=True).first.wait_for(state="visible", timeout=10000)
+                else:
+                    return ToolResult(False, "Enter اجرا شد ولی پس‌شرط تازه‌ای برای تأیید ارسال مشخص نشده است؛ "
+                                      "نتیجه نامعلوم است، بدون بررسی تکرار نکن.",
+                                      {"sensitive_input": sensitive, "field_verified": True,
+                                       "outcome_uncertain": True}, verified=False)
         except Exception as e:  # noqa: BLE001 — پیام خطا هرگز مقدار حساس را حمل نمی‌کند
             msg = scrub(str(e)).replace(str(a.get("value") or "\0"), MASK) if sensitive else scrub(str(e))
             return ToolResult(False, f"وارد کردن مقدار ناموفق بود: {type(e).__name__}: {truncate(msg, 400)}",
-                              {"sensitive_input": sensitive})
+                              {"sensitive_input": sensitive, "outcome_uncertain": bool(a.get("submit"))})
     return ToolResult(True, f"مقدار{' حساس' if sensitive else ''} وارد شد{' و ارسال شد' if a.get('submit') else ''}. "
-                      f"نشانی: {page.url}", {"sensitive_input": sensitive}, untrusted=True)
+                      f"نشانی: {page.url}", {"sensitive_input": sensitive, "field_verified": True,
+                                              "submission_verified": bool(a.get("submit"))},
+                      untrusted=True, verified=True)
 
 
 async def _visual(ctx: ToolContext, png: bytes, question: str, where: str) -> ToolResult:
@@ -814,6 +881,8 @@ async def desktop_input(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
 
 
 TOOLS = [
+    Tool("browser_close", "بستن صریح تب انتخاب‌شده همین اجرا؛ ممکن است پیش‌نویس ذخیره‌نشده از بین برود.",
+         obj({}), browser_close, "browser", category="web_irreversible", label="بستن تب مرورگر"),
     Tool("browser_tabs", "فهرست تب‌های باز نشست مرورگر مجاز (نشانی، عنوان، آزاد/در دست اجرای دیگر). پیش از باز کردن "
          "سایتی که ممکن است با حساب لاگین‌شده باز باشد (مثل Telegram Web) استفاده کن.",
          obj({}), browser_tabs, "browser", label="تب‌های مرورگر"),
@@ -828,7 +897,8 @@ TOOLS = [
          obj({"ref": i("شماره عنصر"), "selector": s("selector"), "text": s("متن عنصر")}), browser_click, "browser",
          category="desktop_control", label="کلیک در مرورگر"),
     Tool("browser_type", "وارد کردن متن در فیلد (ref/selector) و ارسال اختیاری. ورود رمز عبور نیازمند مجوز لاگین است.",
-         obj({"ref": i("شماره عنصر"), "selector": s("selector"), "value": s("متن"), "submit": b("فشردن Enter")},
+         obj({"ref": i("شماره عنصر"), "selector": s("selector"), "value": s("متن"), "submit": b("فشردن Enter"),
+              "expect_text": s("متن دقیق رسید تازه و قابل مشاهده پس از ارسال؛ بدون آن ارسال تأیید نمی‌شود")},
              ["value"]), browser_type, "browser", category="desktop_control", label="تایپ در مرورگر"),
     Tool("browser_screenshot", "گرفتن تصویر از صفحه مرورگر و تحلیل آن با مدل بینایی.",
          obj({"question": s("چه چیزی بررسی شود")}), browser_screenshot, "browser", label="تصویر مرورگر"),

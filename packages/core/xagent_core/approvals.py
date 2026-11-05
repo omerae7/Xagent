@@ -35,7 +35,17 @@ class Decision:
 async def decide(session: AsyncSession, a: Approval, decision: str, actor: str, note: str | None = None,
                  channel: str = "panel") -> Decision:
     """decision: approve | deny | revoke. فراخواننده Commit و صف‌کردن دوباره Run را انجام می‌دهد."""
-    await session.refresh(a)  # وضعیت تازه، نه شیء کهنه نشست
+    # Lock the Run first: two distinct cards decided concurrently must not both miss
+    # the final wake-up. Use this order consistently before locking either card.
+    # Revocation must remain possible while an executor holds the Run row lock.
+    # It never transitions/requeues the Run, so only its approval row is locked.
+    run = None
+    if decision != "revoke":
+        run = (await session.execute(select(Run).where(Run.id == a.run_id).with_for_update()
+                                     .execution_options(populate_existing=True))).scalar_one_or_none()
+    # Serialize duplicate callbacks across API/Telegram transactions before deciding.
+    a = (await session.execute(select(Approval).where(Approval.id == a.id).with_for_update()
+                               .execution_options(populate_existing=True))).scalar_one()
     if decision == "revoke":
         if a.status != "approved":
             return Decision(False, "فقط تأیید معتبر قابل لغو است", a, conflict=True)
@@ -55,13 +65,11 @@ async def decide(session: AsyncSession, a: Approval, decision: str, actor: str, 
     a.decided_at, a.decided_by, a.decision_note = utcnow(), actor, note
     await audit(session, actor, f"approval.{a.status}", a.tool_name,
                 {"category": a.category, "run_id": str(a.run_id), "channel": channel})
-    run = await session.get(Run, a.run_id)
     remaining = (await session.execute(select(func.count()).select_from(Approval).where(
         Approval.run_id == a.run_id, Approval.status == "pending"))).scalar_one()
     requeue = None
-    if run is not None and remaining == 0:
-        if run.status == "waiting_approval":
-            run.status = "queued"
+    if run is not None and remaining == 0 and run.status == "waiting_approval":
+        run.status = "queued"
         requeue = run.id
     return Decision(True, "ثبت شد", a, requeue=requeue)
 

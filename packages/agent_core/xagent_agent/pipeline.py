@@ -516,8 +516,9 @@ class AgentRunner:
                 try:
                     run = await session.get(Run, run_id, with_for_update=True)
                     if run is None or run.status in TERMINAL or run.status == "waiting_approval" and not await self._approvals_decided(session, run):
+                        status = run.status if run else "missing"
                         await session.rollback()
-                        return run.status if run else "missing"
+                        return status  # rollback expires ORM attributes; never lazy-load them here
                     self._leases[run_id] = lease
                     return await self._execute(session, run)
                 except LeaseLost:
@@ -894,6 +895,10 @@ class AgentRunner:
                 if s.pop("tools_reload", False):
                     specs = [ToolSpec(t.name, t.description, t.parameters) for t in tool_map.values()]
                 if s.get("abort_reason"):
+                    if s.get("abort_kind") == "validation":
+                        s["validation"] = {"passed": False, "mode": "execution_guard", "issues": [s["abort_reason"]]}
+                        await self._step(rc, "validate", "تکمیل درخواست تأیید نشد", status="error", detail=s["validation"])
+                        raise ValidationFailed(s["abort_reason"])
                     raise LoopAbort(s["abort_reason"])
                 if s.get("escalate_now"):
                     s["escalated"] = True
@@ -1136,6 +1141,8 @@ class AgentRunner:
         approved: dict[str, list[str]] = s.setdefault("approved", {})
         done_ids = {m.tool_call_id for m in transcript if m.role == "tool"}
         for call in pending:
+            if s.get("abort_reason"):
+                return
             cid, name = call["id"], call["name"]
             args = open_secrets(call.get("arguments") or {})  # مقدار مهروموم‌شده Checkpoint فقط هنگام اجرا باز می‌شود
             if cid in done_ids:
@@ -1199,10 +1206,14 @@ class AgentRunner:
                 cats.append(category)
                 approved[cid] = cats
             tctx.extra["approved"] = set(cats)
+            tctx.extra["approval_scopes"] = s.get("approval_scopes", {}).get(cid, {})
             tctx.extra["tool_call_id"] = cid
             denial = await self._authorize_effect(rc, cid, tool, args, cats)  # مرجع تازه، درست پیش از هر اثر
             if denial is not None:
-                await self._step(rc, "approval", f"اجازه در لحظه اجرا معتبر نیست: {tool.label or name}",
+                why = {"revoked": "اجازه لغو شده است", "expired": "اجازه منقضی شده است",
+                       "mismatch": "اجازه با عملیات فعلی مطابقت ندارد", "deny": "اجازه رد شده است",
+                       "policy": "سیاست فعلی اجازه نمی‌دهد", "mission": "مأموریت مجوز ندارد"}.get(denial, denial)
+                await self._step(rc, "approval", f"{why}: {tool.label or name}",
                                  status="blocked", tool_name=name, detail={"reason": denial})
                 self._deny_call(rc, cid, name, args, transcript, loop, denial)
                 continue
@@ -1238,7 +1249,14 @@ class AgentRunner:
                 if esc.category in cats:
                     result = ToolResult(False, f"خطای داخلی ابزار پس از تایید: {esc.reason}")
                 else:
-                    d = await self._harness_decide(rc, cid, tool, esc.category, {**args, **esc.extra_args}, rules,
+                    scopes = s.setdefault("approval_scopes", {}).setdefault(cid, {})
+                    previous = scopes.get(esc.category)
+                    if previous is not None and previous != esc.extra_args:
+                        result = ToolResult(False, "هدف عملیات پس از درخواست اجازه تغییر کرده است؛ تأیید تازه لازم است.")
+                        d = "mismatch"
+                    else:
+                        scopes[esc.category] = esc.extra_args
+                        d = await self._harness_decide(rc, cid, tool, esc.category, args, rules,
                                                    reason=esc.reason)
                     if d == "allow":
                         approved[cid] = [*cats, esc.category]
@@ -1252,11 +1270,13 @@ class AgentRunner:
             except DesktopUnavailable as e:
                 result = ToolResult(False, f"کامپیوتر ایجنت در دسترس نیست: {e}")
             except TimeoutError:
-                result = ToolResult(False, f"ابزار پس از {TOOL_TIMEOUT} ثانیه پاسخ نداد (Timeout).")
+                result = ToolResult(False, f"ابزار پس از {TOOL_TIMEOUT} ثانیه پاسخ نداد (Timeout).",
+                                    {"outcome_uncertain": effectful})
             except Paused:
                 raise
             except Exception as e:  # noqa: BLE001
-                result = ToolResult(False, f"خطای ابزار: {type(e).__name__}: {truncate(scrub(str(e)), 800)}")
+                result = ToolResult(False, f"خطای ابزار: {type(e).__name__}: {truncate(scrub(str(e)), 800)}",
+                                    {"outcome_uncertain": effectful})
             if isinstance(result, ToolResult) and isinstance(result.data, dict) and result.data.get("sensitive_input"):
                 self._mark_sensitive(rc, cid, name, args, transcript)
             if isinstance(result, ToolResult) and isinstance(result.output, str):
@@ -1287,7 +1307,13 @@ class AgentRunner:
             # Checkpoint پس از هر ابزار: Crash بعدی همین گام انجام‌شده را تکرار نمی‌کند
             s["transcript"] = [m.to_json() for m in transcript]
             s["loop"] = loop.to_state()
+            if result.data.get("outcome_uncertain"):
+                s["abort_kind"] = "validation"
+                s["abort_reason"] = f"{name}: نتیجه اثر بیرونی نامعلوم است؛ اجرا برای جلوگیری از تکرار اثر متوقف شد. " \
+                                    "پیش از تلاش دوباره، نتیجه واقعی را مستقل بررسی کنید.\n" + truncate(result.output, 700)
             await self._checkpoint(rc)
+            if result.data.get("outcome_uncertain"):
+                return
             if signal == "abort":
                 s["abort_reason"] = "کنترلر حلقه: تکرار بی‌نتیجه یا خطای پیاپی؛ اجرا برای جلوگیری از هدر رفتن منابع متوقف شد."
                 return
@@ -1361,7 +1387,7 @@ class AgentRunner:
         needed = sorted({*(c for c in cats if c != MISSION_ASK), *([category] if category else [])})
         rows = (await rc.session.execute(
             select(Approval).where(Approval.run_id == rc.run.id, Approval.tool_call_id == cid)
-            .execution_options(populate_existing=True))).scalars().all()
+            .order_by(Approval.created_at).execution_options(populate_existing=True))).scalars().all()
         by_cat = {a.category: a for a in rows}
         order = [*([MISSION_ASK] if MISSION_ASK in cats else []), *needed]  # تأیید صریح مأموریت دسته را هم پوشش می‌دهد
         for c in order:
@@ -1369,13 +1395,19 @@ class AgentRunner:
             if ap is not None:
                 if ap.status == "revoked":
                     return "revoked"
+                if ap.status == "expired" or (ap.status == "approved" and ap.decided_at is not None
+                                              and utcnow() - ap.decided_at > APPROVAL_TTL):
+                    ap.status = "expired"
+                    await rc.session.flush()
+                    await self._harness_decide(rc, cid, tool, c, args, rules,
+                                               reason="اجازه منقضی شده است؛ تأیید تازه همان عملیات لازم است.",
+                                               force_ask=True)
                 if ap.status != "approved":
                     return "deny"
-                if ap.decided_at is not None and utcnow() - ap.decided_at > APPROVAL_TTL:
-                    return "expired"
                 bound = ((ap.args or {}).get("__binding") or {}).get("sig")
-                if bound and bound not in (self._binding(rc, tool, c, args),
-                                           self._binding(rc, tool, c, args, legacy=True)):
+                bound_args = self._approval_args(rc, cid, c, args)
+                if bound and bound not in (self._binding(rc, tool, c, bound_args),
+                                           self._binding(rc, tool, c, bound_args, legacy=True)):
                     return "mismatch"
             if c == MISSION_ASK:
                 mission_allows = mission_allows or ap is not None  # اعتبار آن همین بالا سنجیده شد
@@ -1429,7 +1461,10 @@ class AgentRunner:
         self._record_evidence(rc, cid, name, args, ToolResult(False, text))
         transcript.append(LLMMessage("tool", f"⛔ {text} راه دیگری پیشنهاد کن یا به کارفرما گزارش بده.",
                                      tool_call_id=cid, tool_name=name, is_error=True))
-        loop.observe(name, masked_args(name, args) if cid in rc.state.get("sensitive_calls", []) else args, False)
+        signal = loop.observe(name, masked_args(name, args) if cid in rc.state.get("sensitive_calls", []) else args, False)
+        if signal == "abort":
+            rc.state["abort_kind"] = "validation"
+            rc.state["abort_reason"] = "درخواست مکرر عملیات بدون مجوز؛ اجرا برای جلوگیری از حلقه و مصرف بیشتر متوقف شد."
 
     @staticmethod
     def _record_evidence(rc: RunCtx, cid: str, name: str, args: dict, result: ToolResult,
@@ -1522,6 +1557,16 @@ class AgentRunner:
         return "blocked", why
 
     @staticmethod
+    def _approval_args(rc: RunCtx, cid: str, category: str, args: dict) -> dict:
+        """The same immutable operation and separately observed effect scope at every check.
+
+        DOM metadata must not overwrite tool arguments or disappear on checkpoint restore.
+        The browser rechecks this scope against the live element before performing an effect.
+        """
+        scope = rc.state.get("approval_scopes", {}).get(cid, {}).get(category)
+        return {"operation": args, "effect": scope} if scope is not None else args
+
+    @staticmethod
     def _binding(rc: RunCtx, tool: Tool, category: str, args: dict, legacy: bool = False) -> str:
         """اثرانگشت عملیات تأییدشده: ابزار + دسته + آرگومان‌های کامل + کارمند + Run (نه فقط شناسه فراخوانی).
 
@@ -1542,17 +1587,18 @@ class AgentRunner:
         force_ask: bool = False,
     ) -> str:
         """allow | deny | mismatch | expired — یا Paused تا تصمیم کارفرما. force_ask: تنظیم «خودکار» نادیده گرفته می‌شود."""
-        sig = self._binding(rc, tool, category, args)
+        bound_args = self._approval_args(rc, cid, category, args)
+        sig = self._binding(rc, tool, category, bound_args)
         # آیا قبلاً برای این فراخوانی تصمیم گرفته شده؟ (همان Run؛ تأیید Run دیگر هرگز استفاده نمی‌شود)
         existing = (
             await rc.session.execute(
                 select(Approval).where(Approval.run_id == rc.run.id, Approval.tool_call_id == cid,
-                                       Approval.category == category)
+                                       Approval.category == category).order_by(Approval.created_at.desc())
             )
         ).scalars().first()
         if existing is not None:
             bound = ((existing.args or {}).get("__binding") or {}).get("sig")
-            if bound and bound != sig and bound != self._binding(rc, tool, category, args, legacy=True):
+            if bound and bound != sig and bound != self._binding(rc, tool, category, bound_args, legacy=True):
                 await self._step(rc, "approval", f"تأیید با عملیات فعلی مطابقت ندارد: {tool.label or tool.name}",
                                  status="blocked", tool_name=tool.name, detail={"category": category})
                 return "mismatch"
@@ -1561,11 +1607,15 @@ class AgentRunner:
                     existing.status = "expired"
                     await self._step(rc, "approval", f"تأیید منقضی شده است: {tool.label or tool.name}",
                                      status="blocked", tool_name=tool.name, detail={"category": category})
-                    return "expired"
-                return "allow"
-            if existing.status in ("denied", "expired"):
+                else:
+                    await self._step(rc, "approval", f"اجازه تأیید شد؛ ادامه عملیات: {tool.label or tool.name}",
+                                     detail={"category": category}, status="ok", tool_name=tool.name)
+                    return "allow"
+            if existing.status in ("denied", "revoked"):
                 return "deny"
-            raise Paused("waiting_approval", "منتظر تصمیم کارفرما", "approval")
+            if existing.status != "expired":
+                raise Paused("waiting_approval", "منتظر تصمیم کارفرما", "approval")
+            force_ask = True  # retain the expired audit record; issue a fresh, narrowly bound card
         if category == MISSION_ASK:
             d = harness.Decision("ask", reason or MISSION_ASK_LABEL, MISSION_ASK)
         else:

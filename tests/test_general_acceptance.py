@@ -129,7 +129,8 @@ async def test_B_two_concurrent_browser_missions_are_isolated(app_client, config
     for pg in fb.contexts[0].pages + []:
         hosts = {c.split("|")[0].split("/")[2] for c in pg.clicks}
         assert len(hosts) <= 1, f"کلیک‌های دو مأموریت در یک تب مخلوط شد: {pg.clicks}"
-    assert fb.contexts[0].pages == [], "تب‌ها پس از پایان اجرا آزاد نشدند"
+    assert len(fb.contexts[0].pages) == 2 and all(not p.is_closed() for p in fb.contexts[0].pages)
+    assert all(str(rid) not in computer._sessions for rid in ids), "قفل اجرای پایان‌یافته آزاد نشد"
 
 
 # ── C: تسک موعددار «فردا ساعت ۹:۳۰» با ساعت مجازی ──
