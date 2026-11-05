@@ -296,3 +296,32 @@ https://github.com/omerae7/Xagent/actions/runs/42032142077 — PR run #199 compl
 Both tests and containers jobs completed successfully. Source code equals tested commit 4afa6fa1fdeb92e0509d9e8416cfb43175c3d284.
 PR metadata update blocked: API/GraphQL 403; unauthenticated web session; official issue-edit form HTTP 422; description marker absent; Draft remains visible.
 Disposable graphical containers and their volumes cleaned; previously stopped PostgreSQL/Redis test containers restored to stopped state.
+
+=== Final-review conditional-domain regression ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_escalated_approval_resumes_exact_browser_effect[policy_change] ______
+tests/test_followup_browser_continuity.py:123: in test_escalated_approval_resumes_exact_browser_effect
+    assert await page.evaluate('window.sends || 0') == 0
+E   assert 1 == 0
+=========================== short test summary info ============================
+FAILED tests/test_followup_browser_continuity.py::test_escalated_approval_resumes_exact_browser_effect[policy_change]
+1 failed in 7.09s
+
+=== Adjacent policy/scope/redaction tests ===
+........................................                                 [100%]
+40 passed in 42.83s
+
+=== Final source test run ===
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 94%]
+...........................                                              [100%]
+459 passed in 283.38s (0:04:43)
+
+Final tested source commit: bcffc956b1818b01d8f8bb870a667c03e8a3aaf4
+Baseline 424 + new regressions 35 = 459 passed; zero failed/skipped.
+Cloud connection diagnosis: network_policy restricted, package_managers preset, api.github.com absent from effective_allowed_hosts; outbound_identities/secrets empty. Add explicit HTTPS egress rule for api.github.com and ensure repository-scoped GitHub Pull requests Read and write. Future checkout ref is still main in reusable Cloud settings; active workspace branch is correct. No Cloud settings were written.

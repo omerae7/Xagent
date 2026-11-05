@@ -77,6 +77,7 @@ flowchart LR
 - **تفکیک typing/submission:** fill معمولی پس‌شرط واقعی مقدار فیلد دارد؛ ورود password همچنان login می‌خواهد. Enter از روی فرم واقعی می‌تواند external_message/payment/web_irreversible شود؛ جست‌وجو صرفاً به دلیل تایپ حساس نمی‌شود. برای اثبات ارسال، `expect_text` اختیاریِ افزوده‌شده باید رسید **تازه، دقیق و visible** را مشاهده کند. نبود/وجود قبلی رسید، موفقیت ارسال نیست. DOM فقط رسید رابط است، نه اثبات مستقل بانک یا سرویس گیرنده.
 - **آزمون:** فرم واقعی Chromium؛ approve/reconnect/deny/revoke/expiry/changed arguments/changed call ID، مشاهده field و یک submission، duplicate execution بدون اثر دوم. تغییر DOM بعد از درخواست مجوز مسدود می‌شود. جداسازی Run در query و امضا حفظ شده است.
 - **پذیرش:** همان عملیات مصوب اجرا و مشاهده شود، یا دلیل دقیق عدم اجرا ثبت شود؛ اجازه هرگز شاهد انجام کار نیست.
+- **بازبینی نهایی این دور:** جداسازی scope از args یک regression در follow-up ایجاد کرده بود: scope در binding بود ولی به قواعد شرطی دامنه داده نمی‌شد. پس از Approve و سپس forbid دامنه، فرم محلی یک‌بار submit شد. `_policy_args` اکنون metadata مشاهده‌شده را فقط برای policy/display می‌سازد؛ operation و HMAC تغییر نمی‌کنند. همان آزمون پس از اصلاح، صفر fill/submit را ثابت کرد؛ ۴۰ آزمون مجاور و سپس ۴۵۹ آزمون کامل موفق شدند. این نقصِ کشف‌شده در اصلاح همین دور است، نه ادعای نقص تازه در baseline تاریخی.
 - **ریسک/سازگاری:** آرگومان جدید اختیاری است؛ scope قدیمیِ مبهم گسترش نمی‌یابد. تأییدهای تشدیدشده‌ای که قبل از اصلاح با امضای ناسازگار ذخیره شدند ممکن است نیازمند درخواست تازه باشند. event listenerهای دلخواه JavaScript و effectهای خام GUI فقط از روی DOM قابل اثبات نیستند؛ این محدودیت مرز امنیت مرورگر است.
 
 ### C03 — P2 — اجرای دوباره پیام Run پایانی به MissingGreenlet می‌رسید
@@ -137,22 +138,24 @@ flowchart LR
 
 | یافته | تابع و خط شروع |
 |---|---|
-| C01 | [`packages/tools/xagent_tools/builtin/computer.py:308` — `_page`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/tools/xagent_tools/builtin/computer.py#L308) |
-| C01 | [`packages/tools/xagent_tools/builtin/computer.py:296` — `_claim_page`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/tools/xagent_tools/builtin/computer.py#L296) |
-| C01 | [`packages/tools/xagent_tools/builtin/computer.py:360` — `release_session`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/tools/xagent_tools/builtin/computer.py#L360) |
-| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1130` — `_process_calls`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/pipeline.py#L1130) |
-| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1560` — `_approval_args`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/pipeline.py#L1560) |
-| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1585` — `_harness_decide`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/pipeline.py#L1585) |
-| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1367` — `_authorize_effect`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/pipeline.py#L1367) |
-| C02/C08 | [`packages/tools/xagent_tools/builtin/computer.py:477` — `_enforce_category`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/tools/xagent_tools/builtin/computer.py#L477) |
-| C02/C08 | [`packages/tools/xagent_tools/builtin/computer.py:788` — `browser_type`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/tools/xagent_tools/builtin/computer.py#L788) |
-| C03 | [`packages/agent_core/xagent_agent/pipeline.py:482` — `execute`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/pipeline.py#L482) |
-| C04 | [`packages/core/xagent_core/approvals.py:35` — `decide`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/core/xagent_core/approvals.py#L35) |
-| C05 | [`packages/tools/xagent_tools/registry.py:59` — `_mcp_tool`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/tools/xagent_tools/registry.py#L59) |
-| C06 | [`packages/agent_core/xagent_agent/manifest.py:51` — `probe_browser`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/manifest.py#L51) |
-| C07 | [`packages/agent_core/xagent_agent/pipeline.py:1452` — `_deny_call`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/pipeline.py#L1452) |
-| C08 | [`packages/agent_core/xagent_agent/validation.py:29` — `checked_result`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/packages/agent_core/xagent_agent/validation.py#L29) |
-| C09 | [`infra/desktop/agentd.py:64` — `health`](https://github.com/omerae7/Xagent/blob/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284/infra/desktop/agentd.py#L64) |
+| C01 | [`packages/tools/xagent_tools/builtin/computer.py:308` — `_page`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/tools/xagent_tools/builtin/computer.py#L308) |
+| C01 | [`packages/tools/xagent_tools/builtin/computer.py:296` — `_claim_page`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/tools/xagent_tools/builtin/computer.py#L296) |
+| C01 | [`packages/tools/xagent_tools/builtin/computer.py:360` — `release_session`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/tools/xagent_tools/builtin/computer.py#L360) |
+| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1130` — `_process_calls`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/pipeline.py#L1130) |
+| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1567` — `_approval_args`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/pipeline.py#L1567) |
+| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1592` — `_harness_decide`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/pipeline.py#L1592) |
+| C02 | [`packages/agent_core/xagent_agent/pipeline.py:1367` — `_authorize_effect`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/pipeline.py#L1367) |
+| C02/C08 | [`packages/tools/xagent_tools/builtin/computer.py:477` — `_enforce_category`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/tools/xagent_tools/builtin/computer.py#L477) |
+| C02/C08 | [`packages/tools/xagent_tools/builtin/computer.py:788` — `browser_type`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/tools/xagent_tools/builtin/computer.py#L788) |
+| C03 | [`packages/agent_core/xagent_agent/pipeline.py:482` — `execute`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/pipeline.py#L482) |
+| C04 | [`packages/core/xagent_core/approvals.py:35` — `decide`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/core/xagent_core/approvals.py#L35) |
+| C05 | [`packages/tools/xagent_tools/registry.py:59` — `_mcp_tool`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/tools/xagent_tools/registry.py#L59) |
+| C06 | [`packages/agent_core/xagent_agent/manifest.py:51` — `probe_browser`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/manifest.py#L51) |
+| C07 | [`packages/agent_core/xagent_agent/pipeline.py:1452` — `_deny_call`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/pipeline.py#L1452) |
+| C08 | [`packages/agent_core/xagent_agent/validation.py:29` — `checked_result`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/validation.py#L29) |
+| C09 | [`infra/desktop/agentd.py:64` — `health`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/infra/desktop/agentd.py#L64) |
+
+| C02 / conditional policy | [`packages/agent_core/xagent_agent/pipeline.py:1560` — `_policy_args`](https://github.com/omerae7/Xagent/blob/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4/packages/agent_core/xagent_agent/pipeline.py#L1560) |
 
 ## ۴. Chrome در برابر Chromium و مدل هویت
 
@@ -258,14 +261,14 @@ CDP داخلی همچنان 9222→loopback:9223 است؛ Compose هیچ پور�
 | bounded recovery پیش از fix | ۳ failed؛ denied=54 model calls، uncertain=4؛ marker uncertainty گم شد |
 | full پیش از آخرین guard | ۴۵۵ passed، ۰ skipped |
 | adjacent پس از سازگاری validation | ۶۰ passed |
-| آزمون نهایی کامل | **۴۵۸ passed، ۰ failed، ۰ skipped؛ 281.38 ثانیه** |
-| آزمون تازه pytest | ۳۴ case در ۵ فایل؛ baseline + ۳۴ = ۴۵۸ case |
+| آزمون نهایی کامل | **۴۵۹ passed، ۰ failed، ۰ skipped؛ 283.38 ثانیه**؛ اجرای قبل از آخرین رگرسیون نیز ۴۵۸ موفق بود |
+| آزمون تازه pytest | ۳۵ case در ۵ فایل؛ baseline + ۳۵ = ۴۵۹ case |
 | graphical Docker | Chrome و Chromium؛ هر دو سناریو و checks بخش ۴ موفق |
 | Caddy واقعی | سه config: IP، domain، explicit SNI override؛ no-SNI handshake/routing/restart موفق؛ CA سیستم **رد کرد** و trust صریح CA تست موفق شد |
 | Static/build | ruff، compileall، bash -n، Compose config و tsc/vite build موفق |
 | updater E2E کامل | **BLOCKED** در chown UID 1001ِ دایرکتوری یکبارمصرف: Operation not permitted؛ bootstrap/ارتقای کامل محلی پاس محسوب نمی‌شود؛ مرحله updater در CI موفقِ #198/#199 این محدودیت محلی را پوشش داده است |
 | supply chain | npm audit --omit=dev: سه package high در زنجیره React Router، نه سه exploit مستقل تأییدشده؛ upgrade نشده |
-| CI/remote | **CI برای `03bd818acb4a60b425a0dbf96f5fc71e4c035e1b` موفق است:** [push #198](https://github.com/omerae7/Xagent/actions/runs/42032132694) و [PR #199](https://github.com/omerae7/Xagent/actions/runs/42032142077)، هر دو tests و containers. آخرین وضعیتِ Commitهای صرفاً مستنداتی در [PR checks](https://github.com/omerae7/Xagent/pull/2/checks) دیده می‌شود. |
+| CI/remote | **CI پیش از آخرین رگرسیون دامنه برای `03bd818acb4a60b425a0dbf96f5fc71e4c035e1b` موفق است:** [push #198](https://github.com/omerae7/Xagent/actions/runs/42032132694) و [PR #199](https://github.com/omerae7/Xagent/actions/runs/42032142077)، هر دو tests و containers. نتیجه آخرین اصلاح policy و Commitهای بعدی باید جدا در [PR checks](https://github.com/omerae7/Xagent/pull/2/checks) دیده می‌شود. |
 
 سری‌های میانی شکست‌ها پنهان نشدند: یک اجرای نخست به‌دلیل هم‌پوشانی اشتباه دو process آزمون با fixture مشترک DB آلوده شد و مبنای پذیرش نیست. انتظارهای قدیمی درباره بستن تب، فرض موفقیت search بدون اثر، metadata echo و شمار مدل با قرارداد جدید اصلاح شدند؛ تست‌های امنیتی حذف/شل نشدند. خطای wrapper pg_dump -f مربوط به مسیر میزبان اصلاح شد؛ تولید تغییر نکرد. guard آخر ابتدا stop_reason/state.validation را ناسازگار می‌کرد؛ همین رگرسیون‌ها پیدا و قرارداد قبلی حفظ شد. خروجی‌های منفی، بدون اسرار، در `codex-followup-evidence.txt` خلاصه شده‌اند.
 
@@ -310,7 +313,9 @@ Dependencyها: Python>=3.12 با اغلب constraints باز، FastAPI>=0.115,<
 | [`8df980c3ac611e2e28cf2d6e5330220c593aad06`](https://github.com/omerae7/Xagent/commit/8df980c3ac611e2e28cf2d6e5330220c593aad06) | Require truthful capability and effect evidence; bound failed recovery |
 | [`4afa6fa1fdeb92e0509d9e8416cfb43175c3d284`](https://github.com/omerae7/Xagent/commit/4afa6fa1fdeb92e0509d9e8416cfb43175c3d284) | Prefer official Chrome with preserved profiles and graphical integration checks |
 
-Commit گزارش مستقل است؛ SHA خود آن در history شاخه و پاسخ نهایی آمده است. معیار source آزموده‌شده `4afa6fa1fdeb92e0509d9e8416cfb43175c3d284` است.
+| [`bcffc956b1818b01d8f8bb870a667c03e8a3aaf4`](https://github.com/omerae7/Xagent/commit/bcffc956b1818b01d8f8bb870a667c03e8a3aaf4) | Apply conditional authorization to observed browser targets after approval |
+
+Commit گزارش مستقل است؛ SHA خود آن در history شاخه و پاسخ نهایی آمده است. معیار source آزموده‌شده `bcffc956b1818b01d8f8bb870a667c03e8a3aaf4` است.
 
 
 | وضعیت | فایل |
@@ -353,9 +358,13 @@ Commit گزارش مستقل است؛ SHA خود آن در history شاخه و �
 
 **محدودیت ویرایش PR:** PR #2 هنوز Draft است. API/GraphQL به 403 رسید؛ `gh auth status` اعتبار اتصال را تأیید نکرد. نشست عادی وب `logged_in=false` و user-login خالی بود؛ فرم رسمی ویرایش با عنوان موجود و CSRF خودش 422 برگرداند. به‌روزرسانی description **انجام‌شده ادعا نمی‌شود**. Push کد موفق است؛ این blocker فقط metadata PR است و به اتصال GitHub مجاز برای ویرایش PR/دسترسی API نیاز دارد. هیچ credential در گزارش ذخیره نشده است.
 
+تنظیم دقیقِ مشاهده‌شده Cloud: `network_policy.mode=restricted` با preset=`package_managers` و `allowed_hosts=[]`؛ `api.github.com` در `effective_allowed_hosts` نیست. در تنظیم محیط Xagent، rule اضافی HTTPS برای **api.github.com** به `network_policy.egress_rules` اضافه و نسخه محیط با آن اعمال شود. برای authentication، اتصال GitHub همان مخزن باید permission **Pull requests: Read and write** داشته باشد؛ موفقیت Git push فقط دسترسی Git/Contents را ثابت می‌کند. نبود permission PR از پشت 403 شبکه قابل اثبات نیست، بنابراین آن permission باید بررسی شود، نه اینکه خودکار «غایب» فرض شود. متادیتای محیط `outbound_identities=[]` و `secrets=[]` دارد. هیچ token در گفتگو لازم نیست.
+
+همچنین تنظیم reusable checkout در Cloud هنوز `repositories[0].ref=main` است؛ برای محیط‌های آینده به **ccr-345833d2-sca9ob** تنظیم شود. این مورد علت API 403 نیست؛ checkout فعال صحیح است. پیکربندی Cloud در این مأموریت فقط خوانده شد و تغییر/منتشر نشد.
+
 متن آماده برای description موجود (بدون ساخت PR تازه):
 
-> این نسخه تب مرورگر را پس از پایان Run حفظ و reuse می‌کند؛ approval به operation و scope واقعی DOM متصل است و پس از تأیید همان عمل با postcondition ادامه می‌یابد. write نامعلوم MCP، HTTP200 غیرCDP و permission/recovery loop دیگر شواهد موفقیت نمی‌سازند. Chrome Stable در amd64 تازه preferred است و Chromium/profile قبلی محفوظ می‌ماند. ۴۵۸ pytest موفق (۴۲۴ baseline + ۳۴ تازه)، graphical Chrome/Chromium، Caddy و CI #198/#199 موفق‌اند. مدل/Telegram ساختگی‌اند؛ VPS دست نخورده است. PR باید Draft بماند. network/desktop/workspace isolation کامل، verifierهای اختصاصی write و validation زنده/soak هنوز پیش‌نیاز unattended production هستند. گزارش کامل: `docs/audits/2026-11-05/codex-followup-engineering.md`.
+> این نسخه تب مرورگر را پس از پایان Run حفظ و reuse می‌کند؛ approval به operation و scope واقعی DOM متصل است و پس از تأیید همان عمل با postcondition ادامه می‌یابد. write نامعلوم MCP، HTTP200 غیرCDP و permission/recovery loop دیگر شواهد موفقیت نمی‌سازند. Chrome Stable در amd64 تازه preferred است و Chromium/profile قبلی محفوظ می‌ماند. ۴۵۹ pytest موفق (۴۲۴ baseline + ۳۵ تازه)، graphical Chrome/Chromium، Caddy و CI #198/#199 موفق‌اند. مدل/Telegram ساختگی‌اند؛ VPS دست نخورده است. PR باید Draft بماند. network/desktop/workspace isolation کامل، verifierهای اختصاصی write و validation زنده/soak هنوز پیش‌نیاز unattended production هستند. گزارش کامل: `docs/audits/2026-11-05/codex-followup-engineering.md`.
 
 Migration پایگاه داده: ندارد. پیکربندی تازه: `XAGENT_BROWSER`، build arg `CHROME_VERSION`، scope/target اختیاری در state و annotation در schema ابزار. `.env`، profileهای موجود، migrationهای قبلی، updater rollback و branchهای مخزن حذف/overwrite نشدند. هیچ dependency تولید جدید framework اضافه نشد؛ Google Chrome یک بسته image است.
 
@@ -367,10 +376,10 @@ Migration پایگاه داده: ندارد. پیکربندی تازه: `XAGENT_
 cd /opt/xagent/app
 git status --short
 git fetch origin ccr-345833d2-sca9ob
-git show --stat 4afa6fa1fdeb92e0509d9e8416cfb43175c3d284
+git show --stat bcffc956b1818b01d8f8bb870a667c03e8a3aaf4
 sudo xagent backup
-sudo xagent update --dry-run --ref 4afa6fa1fdeb92e0509d9e8416cfb43175c3d284
-sudo xagent update --ref 4afa6fa1fdeb92e0509d9e8416cfb43175c3d284
+sudo xagent update --dry-run --ref bcffc956b1818b01d8f8bb870a667c03e8a3aaf4
+sudo xagent update --ref bcffc956b1818b01d8f8bb870a667c03e8a3aaf4
 sudo xagent doctor
 ```
 
