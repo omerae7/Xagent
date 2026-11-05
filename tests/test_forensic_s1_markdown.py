@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 import web_harness
 from browser_env import CHROME, start
@@ -98,6 +100,8 @@ async def test_F02_safe_rendering_preserves_persian_links_code_and_lists(site):
     assert "<strong>مهم</strong>" in st["cases"][11] and "<code>کد</code>" in st["cases"][11]
     assert st["text"][11].endswith("تمام.") and "سلام!" in st["text"][11]
     assert "<ol>" in st["cases"][12] and st["cases"][12].count("<li>") == 2
-    assert "<pre><code>" in st["cases"][7] and "<script>window.__xss=10</script>" in st["text"][7]  # متن، نه عنصر
+    assert re.search(r'<pre\b[^>]*><code>', st["cases"][7])
+    assert 'tabindex="0"' in st["cases"][7]  # keyboard access does not change HTML escaping
+    assert "<script>window.__xss=10</script>" in st["text"][7]  # متن، نه عنصر
     assert "<ul>" in st["cases"][9] and st["cases"][9].count("<li>") == 2
     assert "<img" in st["text"][2] and "javascript:window.__xss=6" in st["text"][4]  # به‌صورت متن نمایش داده شد

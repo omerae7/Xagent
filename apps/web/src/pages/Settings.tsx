@@ -518,10 +518,32 @@ function HarnessRow({ r }: { r: any }) {
     </Card>
   );
 }
+function ScopedPermissions() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["permissions"], queryFn: () => get("/api/settings/permissions") });
+  const revoke = async (id: string) => {
+    try { await post(`/api/settings/permissions/${id}/revoke`); qc.invalidateQueries({ queryKey: ["permissions"] }); toast("مجوز لغو شد", "success"); }
+    catch (e) { toastError(e); }
+  };
+  return <Card>
+    <CardHeader title="اجازه‌های محدود و قابل لغو" sub="هر اجازه به یک هویت، ابزار و مقصد مشخص محدود است؛ پرداخت و ورود حساب شامل آن نیست." icon={<Shield className="h-4 w-4" />} />
+    <div className="space-y-3 p-5">
+      {q.error && <ErrorBox error={q.error} retry={() => q.refetch()} />}
+      {q.isLoading && <Skeleton className="h-16" />}
+      {q.isSuccess && !q.data?.items?.length && <p className="text-sm text-muted">اجازهٔ پایداری ثبت نشده است. از کارت درخواست اجازه می‌توانید دامنهٔ محدود انتخاب کنید.</p>}
+      {(q.data?.items || []).map((g: any) => <div key={g.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-line/[.04] p-4">
+        <div className="min-w-0 text-xs leading-6"><p className="font-medium"><bdi>{g.tool_name}</bdi> · {g.kind === "mission" ? "در این مأموریت" : "اجازهٔ پایدار"}</p><p className="break-words text-muted"><bdi>{JSON.stringify(g.scope)}</bdi></p><p className="text-muted">{g.uses} از {g.max_uses} استفاده · انقضا: {fmtDate(g.expires_at)} · هویت: <bdi>{g.employee_id || "owner"}</bdi></p></div>
+        {g.revoked_at ? <Badge tone="neutral">لغوشده</Badge> : <Button size="sm" variant="danger" onClick={() => revoke(g.id)}>لغو اجازه</Button>}
+      </div>)}
+    </div>
+  </Card>;
+}
+
 function Harness() {
   const { data, isLoading, error } = useQuery({ queryKey: ["harness"], queryFn: () => get("/api/settings/harness") });
   return (
     <div className="space-y-3">
+      <ScopedPermissions />
       <div className="flex items-start gap-2 rounded-xl border border-primary/25 bg-primary/8 px-4 py-3 text-sm"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />این قوانین به‌صورت قطعی در Backend اجرا می‌شوند و مستقل از تصمیم مدل هوش مصنوعی هستند. تغییر هسته سیستم و پرداخت همیشه نیازمند تایید صریح شماست.</div>
       {error && <ErrorBox error={error} />}
       {isLoading && <Skeleton className="h-40" />}

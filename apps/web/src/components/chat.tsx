@@ -31,9 +31,10 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api, get, post } from "../lib/api";
 import { compact, duration, fmtTime, usd } from "../lib/format";
 import { toast, toastError } from "../lib/store";
-import { Badge, Button, cn } from "./ui";
+import { Badge, Button, cn, Select } from "./ui";
 import { ChipMark, PadArray } from "./viz/Silicon";
 import { Timeline, type TimelineItem } from "./viz/Timeline";
+import { ExecutionStatus, stepState } from "./ui/ExecutionStatus";
 
 // ───────────── Markdown سبک و امن ─────────────
 // ───────────── مراحل اجرا ─────────────
@@ -53,11 +54,13 @@ const STEP_ICON: Record<string, ReactNode> = {
 };
 
 export function StepList({ steps, live }: { steps: any[]; live?: boolean }) {
-  const items: TimelineItem[] = steps.map((s) => ({
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? steps : steps.slice(-6);
+  const items: TimelineItem[] = visible.map((s) => ({
     id: String(s.id || s.idx),
     status: s.status === "running" ? "running" : s.status === "error" ? "error" : s.status === "blocked" ? "blocked" : "done",
     icon: STEP_ICON[s.kind],
-    title: s.title,
+    title: <span className="flex flex-wrap items-center gap-2">{s.title}<ExecutionStatus state={stepState(s)} /></span>,
     meta: (s.model_label || s.tokens_in > 0 || s.tokens_out > 0 || s.duration_ms > 0) ? (
       <>
         {s.model_label && <span>{s.model_label}</span>}
@@ -72,7 +75,12 @@ export function StepList({ steps, live }: { steps: any[]; live?: boolean }) {
       </details>
     ) : undefined,
   }));
-  return <Timeline items={items} live={live} size="sm" />;
+  return <div className="space-y-2">
+    {steps.length > 6 && <button type="button" className="text-xs text-primary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      {expanded ? "نمایش خلاصهٔ اجرا" : `نمایش همهٔ ${steps.length} مرحله و شواهد`}
+    </button>}
+    <Timeline items={items} live={live} size="sm" />
+  </div>;
 }
 
 export function RunSteps({ runId, initialOpen = false }: { runId: string; initialOpen?: boolean }) {
@@ -123,10 +131,11 @@ function Outcome({ o }: { o?: any }) {
 // ───────────── کارت مجوز ─────────────
 export function ApprovalCard({ a, onDone }: { a: any; onDone?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [scope, setScope] = useState("once");
   const decide = async (decision: "approve" | "deny") => {
     setBusy(decision);
     try {
-      await post(`/api/approvals/${a.id}`, { decision });
+      await post(`/api/approvals/${a.id}`, { decision, scope: decision === "approve" ? scope : "once" });
       toast(decision === "approve" ? "اجازه داده شد؛ کار ادامه می‌یابد" : "درخواست رد شد", decision === "approve" ? "success" : "warning");
       onDone?.();
     } catch (e) {
@@ -151,6 +160,16 @@ export function ApprovalCard({ a, onDone }: { a: any; onDone?: () => void }) {
           {a.args && Object.keys(a.args).length > 0 && (
             <pre className="ltr max-h-40 overflow-auto rounded-xl bg-line/[.06] p-3 text-[11px] leading-5">{JSON.stringify(a.args, null, 2)}</pre>
           )}
+          {(a.grant_options || []).length > 1 && <div className="space-y-2">
+            <label className="block text-xs text-muted">دامنهٔ اجازه
+              <Select value={scope} onChange={(e) => setScope(e.target.value)} disabled={!!busy} aria-label="دامنه اجازه" className="mt-1">
+                <option value="once">فقط همین عملیات</option>
+                <option value="mission">این اقدام در همین مأموریت</option>
+                <option value="standing">اجازهٔ پایدار برای همین اقدام و مقصد</option>
+              </Select>
+            </label>
+            {scope !== "once" && <p className="text-xs leading-6 text-muted">مقصد: <bdi>{JSON.stringify(a.grant_scope)}</bdi> · حداکثر ۳۰ روز و ۱۰۰ عملیات؛ متن‌های جدید در همین اقدام و مقصد هم مجاز می‌شوند. ورود حساب، پرداخت، حذف و ارسال فایل پوشش ندارد. قابل لغو در تنظیمات مجوزها؛ تغییر سیاست یا هویت، اجازه را بی‌اعتبار می‌کند. اجازه، شاهد اجرا نیست.</p>}
+          </div>}
           <div className="flex flex-wrap gap-2 pt-1">
             <Button size="sm" variant="primary" loading={busy === "approve"} onClick={() => decide("approve")} icon={<Check className="h-3.5 w-3.5" />}>اجازه می‌دهم</Button>
             <Button size="sm" variant="danger" loading={busy === "deny"} onClick={() => decide("deny")} icon={<XCircle className="h-3.5 w-3.5" />}>رد</Button>
@@ -167,10 +186,10 @@ export function MessageBubble({ m, run }: { m: any; run?: any }) {
   const meta = m.meta || {};
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-      className={cn("flex gap-2.5", mine ? "flex-row-reverse" : "flex-row")}>
+      className="message-row" data-owner={mine ? "user" : "agent"}>
       {!mine && <div className="mt-1 shrink-0"><ChipMark state={meta.status === "failed" ? "stopped" : "idle"} size={30} /></div>}
-      <div className={cn("max-w-[86%] sm:max-w-[78%]", mine && "items-end")}>
-        <div className={cn("px-4 py-3 text-[14.5px] leading-7",
+      <div className="message-content">
+        <div className={cn("message-surface px-4 py-3 text-[14.5px] leading-7",
           mine ? "rounded-[22px] rounded-ee-[8px] bg-primary text-onprimary shadow-[0_14px_30px_-18px_rgb(var(--primary))]"
             : "die rounded-[22px] rounded-es-[8px]")}>
           {mine ? <p className="whitespace-pre-wrap break-words">{m.content}</p>

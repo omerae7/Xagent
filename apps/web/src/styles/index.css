@@ -85,7 +85,7 @@
       inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-edge-a)),
       inset 0 0 0 1px rgb(var(--glass-edge) / calc(var(--glass-edge-a) * 0.55)),
       0 1px 2px rgb(var(--glass-shadow) / 0.06),
-      0 18px 40px -22px rgb(var(--glass-shadow) / 0.28);
+      var(--elevation-1);
   }
   .die-2 {
     background: rgb(var(--glass) / var(--glass-strong-a));
@@ -107,12 +107,11 @@
       inset 0 0 0 1px rgb(var(--primary) / 0.32),
       0 0 0 4px rgb(var(--primary) / 0.07),
       0 18px 44px -20px rgb(var(--primary) / 0.45);
-    animation: live-breathe 3.6s ease-in-out infinite;
   }
   /* شیشه با بلور واقعی: فقط برای سطوحی که روی محتوا شناورند (نوار بالا، داک، پنجره) */
   .glass-blur {
-    -webkit-backdrop-filter: blur(22px) saturate(150%);
-    backdrop-filter: blur(22px) saturate(150%);
+    -webkit-backdrop-filter: blur(var(--blur-surface)) saturate(130%);
+    backdrop-filter: blur(var(--blur-surface)) saturate(130%);
   }
 
   .bevel {
@@ -328,3 +327,50 @@
 .prose-chat strong {
   font-weight: 700;
 }
+
+/* The physical conversation axis is always LTR; each bubble's text remains RTL. */
+.message-row { display: flex; direction: ltr; gap: 10px; align-items: flex-start; }
+.message-row[data-owner="user"] { justify-content: flex-end; }
+.message-row[data-owner="agent"] { justify-content: flex-start; }
+.message-content { direction: rtl; min-width: 0; max-width: min(88%, 680px); overflow-wrap: anywhere; }
+.message-row[data-owner="user"] .message-content { max-width: min(84%, 600px); }
+.message-row[data-owner="user"] .message-surface {
+  background: linear-gradient(135deg, rgb(var(--primary)), color-mix(in srgb, rgb(var(--primary)) 85%, #338c9c));
+  border-radius: 22px 22px 6px 22px;
+}
+.message-row[data-owner="agent"] .message-surface { border-radius: 6px 22px 22px 22px; }
+.message-surface { box-shadow: var(--elevation-1); }
+.prose-chat { min-width: 0; overflow-wrap: anywhere; }
+.prose-chat pre { max-width: 100%; }
+.chat-scroll { scrollbar-gutter: stable; overscroll-behavior-y: contain; }
+.chat-composer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.chat-workspace { height: calc(var(--visual-height, 100dvh) - 11.75rem); }
+.os-rail { border: 1px solid rgb(var(--glass-edge) / .32); box-shadow: var(--elevation-2); }
+.os-header { background: rgb(var(--glass) / .86); }
+.os-eyebrow { color: rgb(var(--muted)); font-size: 10px; letter-spacing: .18em; text-transform: uppercase; direction: ltr; }
+.execution-status { display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 3px 7px; font-size: 10px; line-height: 1.6; color: rgb(var(--state-color)); background: rgb(var(--state-color) / .08); }
+.execution-status[data-tone="planned"] { --state-color: var(--status-planned); }
+.execution-status[data-tone="running"] { --state-color: var(--status-running); }
+.execution-status[data-tone="executed"] { --state-color: var(--status-executed); }
+.execution-status[data-tone="verified"] { --state-color: var(--status-verified); }
+.execution-status[data-tone="approval"] { --state-color: var(--status-approval); }
+.execution-status[data-tone="partial"] { --state-color: var(--status-partial); }
+.execution-status[data-tone="unknown"] { --state-color: var(--status-unknown); }
+.execution-status[data-tone="failed"] { --state-color: var(--status-failed); }
+.execution-status[data-tone="blocked"] { --state-color: var(--status-blocked); }
+.execution-status[data-tone="cancelled"] { --state-color: var(--status-cancelled); }
+.command-center { background: radial-gradient(ellipse at 35% 0%, #477f9d55, transparent 65%), linear-gradient(125deg, #0e2335, #21445c 70%, #345a75); }
+.command-center .orbit-mark { filter: drop-shadow(0 0 16px #b1efff25); }
+.operation-metric { padding: 18px; border-inline-start: 1px solid rgb(var(--border) / .15); }
+.operation-metric:first-child { border-inline-start: 0; }
+.skip-link { position: fixed; top: -80px; left: 12px; z-index: 200; padding: 12px 20px; background: rgb(var(--surface)); border-radius: 12px; }
+.skip-link:focus { top: 12px; }
+@media (max-width: 639px) {
+  .glass-blur { --blur-surface: var(--blur-mobile); }
+  button, [role="button"] { min-height: 40px; }
+  input, textarea, select { font-size: 16px; }
+  .message-content { max-width: 90%; }
+  .operation-metric { padding: 12px; }
+}
+@media (min-width: 1024px) { .chat-workspace { height: calc(var(--visual-height, 100dvh) - 7.5rem); } }
+@media (max-height: 500px) { .mobile-dock { display: none; } .chat-workspace { height: calc(var(--visual-height, 100dvh) - 7rem); } }

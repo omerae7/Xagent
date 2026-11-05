@@ -12,7 +12,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { agentState, useDashboard } from "../components/layout/Shell";
 import { Badge, Button, Card, CardHeader, cn, ErrorBox, Skeleton } from "../components/ui";
-import { type BrainLink, DigitalBrain } from "../components/viz/Brain";
+import { type BrainLink } from "../components/viz/Brain";
+import { Orbit } from "../components/viz/Orbit";
 import { AreaChart, CHART, Gauge, Meter, Sparkline } from "../components/viz/charts";
 import type { AgentState } from "../components/viz/Silicon";
 import { get, post } from "../lib/api";
@@ -164,9 +165,10 @@ export default function Dashboard() {
   return (
     <div className="space-y-5">
       {/* ── صحنه مغز دیجیتال ── */}
-      <section className="stage px-4 pb-5 pt-5 sm:px-8 sm:pb-7 sm:pt-7" aria-label="وضعیت زنده مغز ایجنت">
+      <section className="stage command-center px-4 pb-5 pt-5 sm:px-8 sm:pb-7 sm:pt-7" aria-label="مرکز فرمان زنده">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
+            <p className="ltr mb-2 text-[10px] tracking-[.24em] text-white/70">XAGENT / COMMAND CENTER</p>
             <h2 className="text-[30px] font-light leading-10 tracking-[-0.01em] sm:text-[40px] sm:leading-[52px]">{title}</h2>
             <p className="mt-1 text-[14px] text-white/85">{sub}</p>
           </div>
@@ -175,9 +177,20 @@ export default function Dashboard() {
             <div className="num">{fmtDate(new Date().toISOString())}</div>
           </div>
         </div>
-        <div className="mt-2 sm:mt-0">
+        <div className="my-5 grid items-center gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           {isLoading ? <div className="grid h-72 place-items-center text-white/80">در حال خواندن وضعیت زنده…</div>
-            : <DigitalBrain state={state} inputs={inputs} outputs={outputs} />}
+            : <>
+              <div className="relative mx-auto grid h-[240px] w-full max-w-[360px] place-items-center">
+                <Orbit size={240} className="orbit-mark text-cyan-100" />
+                <span className="absolute bottom-0 text-[11px] text-white/75">درخواست ← اجرا ← شاهد ← نتیجه</span>
+              </div>
+              <div className="grid gap-2">
+                {[...inputs.slice(0, 2), outputs[3]].map((item) => <button key={item.key} onClick={item.onClick} className="flex items-center justify-between gap-3 rounded-2xl bg-white/[.06] px-4 py-3 text-start transition-colors hover:bg-white/[.12]">
+                  <span className="text-[13px] text-white/80">{item.title}</span><span className="text-[12px] font-medium">{item.value}</span>
+                </button>)}
+                <p className="px-1 text-[11px] leading-5 text-white/65">وضعیت از سرویس‌ها خوانده می‌شود. تأیید هر هدف به شاهد اجرای همان کار وابسته است.</p>
+              </div>
+            </>}
         </div>
         <form onSubmit={(e) => { e.preventDefault(); submit(); }} className="stage-glass mx-auto mt-4 flex w-full max-w-2xl items-center gap-2 rounded-full p-1.5 ps-5">
           <input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="مأموریتی به مدیر بسپار… (مثلاً هر دقیقه تلگرام را بررسی کن)" aria-label="مأموریت برای مدیر"
@@ -193,6 +206,15 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="die grid grid-cols-2 overflow-hidden sm:grid-cols-4" aria-label="نمای عملیاتی">
+        {[
+          { label: "اجرای در جریان", value: s.running, tone: "text-primary" },
+          { label: "منتظر اجازه", value: d?.approvals_pending, tone: "text-warning" },
+          { label: "روتین فعال", value: routinesActive, tone: "text-cyan" },
+          { label: "موفق امروز", value: s.succeeded_today, tone: "text-success" },
+        ].map((metric) => <div className="operation-metric" key={metric.label}><p className="text-xs text-muted">{metric.label}</p><p className={cn("num mt-2 text-3xl font-light", metric.tone)}>{isLoading ? "…" : metric.value == null ? "—" : faInt(metric.value)}</p></div>)}
       </section>
 
       <RunFlow s={s} onCleanup={cleanup} />

@@ -11,7 +11,8 @@ export default function Desktop() {
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["desktop"], queryFn: () => get("/api/desktop/status"), refetchInterval: 15000 });
   const takeover = !!data?.takeover;
-  const healthy = data?.health?.ok;
+  const healthy = data?.health?.ok && data?.health?.desktop_ready !== false;
+  const browserReady = data?.health?.browser_cdp ?? data?.health?.chromium_cdp;
   const box = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<any>(null);
   const [conn, setConn] = useState<"connecting" | "connected" | "disconnected">("connecting");
@@ -77,6 +78,7 @@ export default function Desktop() {
         {takeover ? <Badge tone="warning" dot><MousePointerClick className="h-3 w-3" />کنترل در دست شما — کلیک‌های خودکار ایجنت متوقف است</Badge>
           : <Badge tone="primary" dot>حالت مشاهده (فقط نمایش)</Badge>}
         <Badge tone={healthy ? "success" : "danger"} dot>{healthy ? "کامپیوتر ایجنت در دسترس" : "کامپیوتر ایجنت در دسترس نیست"}</Badge>
+        <Badge tone={browserReady === true ? "success" : "warning"}>{browserReady === true ? `مرورگر متصل: ${data?.health?.browser_version || "نسخه نامشخص"}` : "مرورگر تأیید نشده"}</Badge>
         <Badge tone={conn === "connected" ? "success" : conn === "connecting" ? "neutral" : "danger"}>{conn === "connected" ? "تصویر زنده متصل" : conn === "connecting" ? "در حال اتصال…" : "اتصال تصویر قطع"}</Badge>
         <Badge tone="cyan"><ShieldCheck className="h-3 w-3" />فقط از طریق پنل احرازشده</Badge>
       </div>

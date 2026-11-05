@@ -88,7 +88,7 @@ function textBlock(text: string, key: string): ReactNode[] {
 export function ChatMarkdown({ text, className = "prose-chat break-words" }: { text: string; className?: string }) {
   const parts: ReactNode[] = [];
   splitFences(text || "").forEach((b, i) => {
-    if (b.kind === "code") parts.push(<pre key={`c${i}`}><code>{b.text}</code></pre>);
+    if (b.kind === "code") parts.push(<pre key={`c${i}`} tabIndex={0} aria-label="بلوک کد؛ با کلیدهای جهت پیمایش کنید"><code>{b.text}</code></pre>);
     else parts.push(...textBlock(b.text, `t${i}`));
   });
   return <div className={className}>{parts}</div>;

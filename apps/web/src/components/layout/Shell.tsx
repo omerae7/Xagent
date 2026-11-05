@@ -36,6 +36,7 @@ import { useLive, useLiveStatus } from "../../lib/live";
 import { toast, toastError, useTheme } from "../../lib/store";
 import { Badge, Button, cn, Drawer } from "../ui";
 import { type AgentState, ChipMark } from "../viz/Silicon";
+import { Orbit } from "../viz/Orbit";
 
 export const NAV = [
   { to: "/", label: "داشبورد", icon: LayoutDashboard, group: "work" },
@@ -288,13 +289,14 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
 
   return (
     <div className="min-h-dvh">
+      <a className="skip-link" href="#workspace-content">رفتن به محتوای اصلی</a>
       <div className="app-bg" />
       {/* ریل شیشه‌ای شناور دسکتاپ (سمت راست در RTL) */}
-      <aside className="die glass-blur fixed inset-y-3 start-3 z-30 hidden w-[252px] flex-col overflow-hidden rounded-[28px] lg:flex">
+      <aside className="os-rail die glass-blur fixed inset-y-3 start-3 z-30 hidden w-[252px] flex-col overflow-hidden rounded-[28px] lg:flex">
         <div className="flex h-[72px] items-center gap-3 px-5">
-          <ChipMark state={state} size={38} />
+          <Orbit size={46} className="text-primary" />
           <div className="min-w-0">
-            <div className="ltr text-[18px] font-bold leading-6 tracking-[-0.01em]">X Agent</div>
+            <div className="ltr text-[18px] font-semibold leading-6 tracking-[.08em]">XAGENT</div>
             <div className="flex items-center gap-1.5 text-[12px] text-muted">
               <span className={cn("pad", live === "open" ? "text-success" : "text-warning")} />
               {STATE_LABEL[state]}
@@ -314,17 +316,17 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
       <div className="lg:ps-[276px]">
         {/* نوار بالا */}
         <header className="sticky top-0 z-20 px-3 pt-3 sm:px-5">
-          <div className="die glass-blur mx-auto flex h-16 max-w-[1480px] items-center gap-3 rounded-full ps-3 pe-2 sm:ps-5">
+          <div className="os-header die glass-blur mx-auto flex h-16 max-w-[1480px] items-center gap-2 rounded-[22px] ps-3 pe-2 sm:gap-3 sm:ps-5">
             <div className="flex items-center gap-2 lg:hidden">
               <ChipMark state={state} size={32} />
             </div>
             <div className="flex min-w-0 items-center gap-2.5">
-              <h1 className="truncate text-[16px] font-semibold">{current?.label || "X Agent"}</h1>
+              <div className="min-w-0"><p className="os-eyebrow hidden sm:block">DIGITAL OPERATING ENVIRONMENT</p><h1 className="truncate text-[15px] font-semibold">{current?.label || "Xagent"}</h1></div>
               <Badge tone={state === "stopped" ? "danger" : state === "waiting" ? "warning" : state === "idle" ? "success" : "primary"} dot className="hidden sm:inline-flex">
                 {STATE_LABEL[state]}
               </Badge>
               {d?.approvals_pending > 0 && (
-                <button onClick={() => nav("/desk")} className="shrink-0"><Badge tone="warning" dot>{faNum(d.approvals_pending)} منتظر اجازه</Badge></button>
+                <button onClick={() => nav("/desk")} className="hidden shrink-0 sm:block"><Badge tone="warning" dot>{faNum(d.approvals_pending)} منتظر اجازه</Badge></button>
               )}
             </div>
             <div className="ms-auto flex items-center gap-1 sm:gap-2">
@@ -350,7 +352,7 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
           )}
         </header>
 
-        <main className="mx-auto max-w-[1480px] px-3 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 sm:px-5 lg:pb-10">
+        <main id="workspace-content" tabIndex={-1} className="mx-auto min-w-0 max-w-[1480px] px-3 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 sm:px-5 lg:pb-10">
           {(backendDown || workerDegraded) && (
             <div role="status" className={cn("mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl px-4 py-3 text-[13.5px] leading-6 ring-1 ring-inset",
               backendDown ? "bg-danger/10 text-danger ring-danger/25" : "bg-warning/10 text-warning ring-warning/25")}>
@@ -366,7 +368,7 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
             </div>
           )}
           <AnimatePresence mode="wait">
-            <motion.div key={loc.pathname.split("/")[1]} initial={{ opacity: 0, y: 6, filter: "blur(4px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}>
+            <motion.div key={loc.pathname.split("/")[1]} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}>
               {children}
             </motion.div>
           </AnimatePresence>
@@ -374,9 +376,9 @@ export function Shell({ children, onLogout }: { children: ReactNode; onLogout: (
       </div>
 
       {/* داک قرصی شناور موبایل */}
-      <nav className="fixed inset-x-3 z-30 lg:hidden" style={{ bottom: "calc(12px + env(safe-area-inset-bottom))" }} aria-label="ناوبری اصلی">
+      <nav className="mobile-dock fixed inset-x-3 z-30 lg:hidden" style={{ bottom: "calc(12px + env(safe-area-inset-bottom))" }} aria-label="ناوبری اصلی">
         <div className="die glass-blur mx-auto grid h-[66px] max-w-md grid-cols-5 items-stretch rounded-[30px]">
-          {[NAV[0], NAV[1]].map((n) => <DockItem key={n.to} to={n.to} label={n.label} icon={n.icon} end={n.to === "/"} />)}
+          {[NAV[0], NAV[1]].map((n) => <DockItem key={n.to} to={n.to} label={n.label} icon={n.icon} end={n.to === "/"} badge={n.to === "/chat" ? d?.approvals_pending : undefined} />)}
           <button onClick={() => nav("/chat?voice=1")} className="relative grid place-items-center" aria-label="گفتگوی صوتی با ایجنت">
             <span className="grid h-[54px] w-[54px] -translate-y-4 place-items-center rounded-full text-white ring-4 ring-[rgb(var(--bg))]"
               style={{ background: "linear-gradient(135deg, rgb(var(--stage-1)), rgb(var(--stage-3)))", boxShadow: "0 12px 26px -12px rgb(var(--stage-1))" }}>

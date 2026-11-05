@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApprovalCard, Composer, MessageBubble, StepList, VoiceMode } from "../components/chat";
 import { Badge, Button, cn, Drawer, Empty, ErrorBox, Input, Select, Skeleton } from "../components/ui";
-import { ChipMark, PadArray, Thinking } from "../components/viz/Silicon";
+import { ChipMark, Thinking } from "../components/viz/Silicon";
+import { Orbit } from "../components/viz/Orbit";
 import { del, get, patch, post } from "../lib/api";
 import { compact, relTime, usd } from "../lib/format";
 import { useLive } from "../lib/live";
@@ -61,6 +62,11 @@ export default function Chat() {
   const [model, setModel] = useState("auto");
   const [liveSteps, setLiveSteps] = useState<Record<string, any[]>>({});
   const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
+  const [earlier, setEarlier] = useState<any[]>([]);
+  const [earlierRuns, setEarlierRuns] = useState<Record<string, any>>({});
+  const [earlierMore, setEarlierMore] = useState<boolean | null>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const historyRequest = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
   const waiters = useRef<Map<string, (t: string) => void>>(new Map());
   const autoSent = useRef(false);
@@ -69,15 +75,48 @@ export default function Chat() {
   const thread = useQuery({ queryKey: ["messages", id], queryFn: () => get(`/api/conversations/${id}/messages`), enabled: !!id });
   const data = thread.data;
   const activeRun = data?.active_run;
-  const runs = data?.runs || {};
+  const runs = { ...earlierRuns, ...(data?.runs || {}) };
+  const messages = [...new Map([...earlier, ...(data?.items || [])].map((m: any) => [m.id, m])).values()];
+  useEffect(() => { historyRequest.current++; setEarlier([]); setEarlierRuns({}); setEarlierMore(null); setLoadingEarlier(false); }, [id]);
+
+  const loadEarlier = async () => {
+    if (!id || !messages[0] || loadingEarlier) return;
+    setLoadingEarlier(true);
+    const request = ++historyRequest.current;
+    const parent = endRef.current?.parentElement;
+    const height = parent?.scrollHeight || 0;
+    try {
+      const page = await get(`/api/conversations/${id}/messages?before=${messages[0].id}`);
+      if (request !== historyRequest.current) return;
+      setEarlier((old) => [...page.items, ...old]);
+      setEarlierRuns((old) => ({ ...page.runs, ...old }));
+      setEarlierMore(page.has_more);
+      requestAnimationFrame(() => { if (parent) parent.scrollTop += parent.scrollHeight - height; });
+    } catch (e) { toastError(e); }
+    finally { if (request === historyRequest.current) setLoadingEarlier(false); }
+  };
 
   useEffect(() => {
     if (data?.conversation?.model_selection) setModel(data.conversation.model_selection);
   }, [data?.conversation?.id, data?.conversation?.model_selection]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    // Follow new messages only when the reader was already near the end.
+    // Reading an expanded evidence panel must not be interrupted by each SSE step.
+    const parent = endRef.current?.parentElement;
+    if (parent && parent.scrollHeight - parent.scrollTop - parent.clientHeight < 220) {
+      endRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "end" });
+    }
   }, [data?.items?.length, liveSteps, activeRun?.status]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const resize = () => document.documentElement.style.setProperty("--visual-height", `${viewport?.height || window.innerHeight}px`);
+    resize();
+    viewport?.addEventListener("resize", resize);
+    window.addEventListener("resize", resize);
+    return () => { viewport?.removeEventListener("resize", resize); window.removeEventListener("resize", resize); document.documentElement.style.removeProperty("--visual-height"); };
+  }, []);
 
   useEffect(() => setLiveApprovals([]), [id]);
 
@@ -167,11 +206,11 @@ export default function Chat() {
   const thinkingVariant = (steps.length % 4) as 0 | 1 | 2 | 3;
 
   return (
-    <div className="grid h-[calc(100dvh-11.75rem)] gap-4 lg:h-[calc(100dvh-7rem)] lg:grid-cols-[290px_1fr]">
+    <div className="chat-workspace grid min-h-[280px] min-w-0 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
       <aside className="die hidden overflow-hidden lg:block"><ConversationList activeId={id} onPick={() => undefined} /></aside>
       <Drawer open={listOpen} onClose={() => setListOpen(false)} title="گفتگوها"><ConversationList activeId={id} onPick={() => setListOpen(false)} /></Drawer>
 
-      <section className="die relative flex min-h-0 flex-col overflow-hidden">
+      <section className="die relative flex min-h-0 min-w-0 flex-col overflow-hidden" aria-label="فضای گفتگو">
         {/* سربرگ: انتخاب مدل */}
         <div className="flex items-center gap-2 border-b hairline px-3 py-2.5 sm:px-4">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setListOpen(true)} aria-label="فهرست گفتگوها"><PanelRightOpen className="h-5 w-5" /></Button>
@@ -204,12 +243,14 @@ export default function Chat() {
         </div>
 
         {/* پیام‌ها */}
-        <div className="flex-1 space-y-4 overflow-y-auto px-3 py-5 sm:px-6">
+        <div className="chat-scroll min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-5 sm:px-6" role="log" aria-label="پیام‌های گفتگو" aria-live="polite" aria-relevant="additions">
+          {(earlierMore ?? data?.has_more) && <div className="text-center"><Button size="sm" variant="ghost" loading={loadingEarlier} onClick={loadEarlier}>پیام‌های پیشین</Button></div>}
           {!id && (
             <div className="flex min-h-full flex-col items-center gap-5 py-2 text-center [&>*:first-child]:mt-auto [&>*:last-child]:mb-auto">
-              <PadArray state="idle" size={typeof window !== "undefined" && window.innerWidth < 640 ? 96 : 132} n={8} />
+              <Orbit size={132} className="text-primary" />
               <div>
-                <h2 className="text-xl font-bold">چه کاری برایتان انجام دهم؟</h2>
+                <p className="os-eyebrow mb-2">XAGENT · WORKSPACE</p>
+                <h2 className="text-xl font-semibold">از یک دستور، تا یک نتیجهٔ واقعی</h2>
                 <p className="mt-1 text-sm text-muted">پیام، فایل، عکس یا صدا بفرستید. کارهای حساس قبل از اجرا از شما اجازه می‌گیرند.</p>
               </div>
               <div className="grid w-full max-w-xl gap-2 sm:grid-cols-2">
@@ -221,14 +262,14 @@ export default function Chat() {
           )}
           {id && thread.isLoading && <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-3/4" />)}</div>}
           {id && thread.error && <ErrorBox error={thread.error} retry={() => thread.refetch()} />}
-          {data?.items?.map((m: any) => <MessageBubble key={m.id} m={m} run={runs[m.run_id]} />)}
+          {messages.map((m: any) => <MessageBubble key={m.id} m={m} run={runs[m.run_id]} />)}
 
           {/* اجرای زنده */}
           <AnimatePresence>
             {busy && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex gap-2.5">
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="message-row" data-owner="agent">
                 <div className="mt-1 shrink-0"><ChipMark state={activeRun.status === "waiting_approval" ? "waiting" : "thinking"} size={30} /></div>
-                <div className="die min-w-0 max-w-[86%] flex-1 rounded-xl rounded-es-md px-4 py-3 sm:max-w-[78%]">
+                <div className="message-content die flex-1 px-4 py-3">
                   <Thinking variant={thinkingVariant} label={activeRun.status === "waiting_approval" ? "منتظر اجازه شما…" : activeRun.status === "queued" ? "در صف اجرا…" : "در حال فکر و اجرا…"} />
                   {steps.length > 0 && <div className="mt-3"><StepList steps={steps} live={activeRun.status === "running"} /></div>}
                   <div className="num mt-2 text-[10px] text-muted">{compact(activeRun.tokens_in + activeRun.tokens_out)} توکن · {usd(activeRun.cost_usd)}</div>
@@ -249,7 +290,7 @@ export default function Chat() {
           <div ref={endRef} />
         </div>
 
-        <div className="border-t hairline p-3 sm:p-4">
+        <div className="chat-composer border-t hairline p-3 sm:p-4">
           <Composer onSend={async (t, a) => { try { await send(t, a); } catch (e) { toastError(e); throw e; } }} busy={busy} onStop={cancel} conversationId={id} onVoice={() => setVoice(true)} />
           <p className="mt-2 hidden items-center justify-center gap-1.5 text-center text-[10px] text-muted sm:flex">
             <Bot className="h-3 w-3" /> Enter ارسال · Shift+Enter خط جدید · فرمان‌های سریع بدون توکن: «وضعیت»، «توقف همه»، «ادامه همه»، «آندو»
