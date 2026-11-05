@@ -325,3 +325,31 @@ FAILED tests/test_followup_browser_continuity.py::test_escalated_approval_resume
 Final tested source commit: bcffc956b1818b01d8f8bb870a667c03e8a3aaf4
 Baseline 424 + new regressions 35 = 459 passed; zero failed/skipped.
 Cloud connection diagnosis: network_policy restricted, package_managers preset, api.github.com absent from effective_allowed_hosts; outbound_identities/secrets empty. Add explicit HTTPS egress rule for api.github.com and ensure repository-scoped GitHub Pull requests Read and write. Future checkout ref is still main in reusable Cloud settings; active workspace branch is correct. No Cloud settings were written.
+
+=== Duplicate-call negative and distinct-ID positive control ===
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_duplicate_tool_call_ids_are_rejected_before_database_effects[True] ____
+tests/test_followup_execution_bounds.py:104: in test_duplicate_tool_call_ids_are_rejected_before_database_effects
+    assert count == (0 if duplicate else 2), f'durable database effects: {count}'
+E   AssertionError: durable database effects: 2
+E   assert 2 == 0
+=========================== short test summary info ============================
+FAILED tests/test_followup_execution_bounds.py::test_duplicate_tool_call_ids_are_rejected_before_database_effects[True]
+1 failed, 1 passed, 3 deselected in 5.02s
+
+=== Duplicate-call adjacent regression ===
+................................................                         [100%]
+48 passed in 11.14s
+
+=== Final complete suite ===
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 46%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 93%]
+.............................                                            [100%]
+461 passed in 290.79s (0:04:50)
+
+Final tested source commit: 181bd1b37893972f4f883756b3d95deee6e37c81; baseline 424 + new 37 = 461; zero failures/errors/skips.
