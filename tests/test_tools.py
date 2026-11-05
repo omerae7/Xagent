@@ -22,10 +22,11 @@ from xagent_tools.registry import installed_tools
 
 SERVER = textwrap.dedent('''
     from mcp.server.mcpserver import MCPServer
+    from mcp.types import ToolAnnotations
 
     server = MCPServer("echo")
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
     def echo(text: str) -> str:
         """متن را برمی‌گرداند"""
         return "ECHO:" + text

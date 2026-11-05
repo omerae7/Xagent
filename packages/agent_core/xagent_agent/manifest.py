@@ -56,7 +56,14 @@ async def probe_browser() -> dict[str, Any]:
 
     async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as c:
         r = await c.get(_cdp_url().rstrip("/") + "/json/version")
-    return {"ok": r.status_code == 200, "status": r.status_code}
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    valid = (isinstance(data, dict) and isinstance(data.get("Browser"), str) and bool(data["Browser"])
+             and isinstance(data.get("Protocol-Version"), str)
+             and str(data.get("webSocketDebuggerUrl", "")).startswith(("ws://", "wss://")))
+    return {"ok": r.status_code == 200 and valid, "status": r.status_code}
 
 
 async def probe_desktop() -> dict[str, Any]:

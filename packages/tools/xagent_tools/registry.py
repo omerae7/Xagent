@@ -62,8 +62,14 @@ def _mcp_tool(t: InstalledTool, spec: dict[str, Any]) -> Tool:
     config = dict(t.config or {})
 
     async def handler(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
+        hints = spec.get("annotations") if isinstance(spec.get("annotations"), dict) else {}
+        read_only = hints.get("readOnlyHint") is True and hints.get("destructiveHint") is not True
         ok, out = await mcp_client.call_tool(t.name, config, tool_name, a)
-        return ToolResult(ok, out, untrusted=True, verified=ok if ok else None)
+        # A protocol response is an observation, not an independently verified write.
+        # Unknown/mutating MCP tools require a purpose-specific verifier before
+        # their external effects may contribute successful completion evidence.
+        return ToolResult(ok, out, {"protocol_ok": ok, "read_only": read_only}, untrusted=True,
+                          verified=True if ok and read_only else None)
 
     schema = spec.get("input_schema") or {"type": "object", "properties": {}}
     if schema.get("type") != "object":

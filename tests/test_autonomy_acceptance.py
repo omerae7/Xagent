@@ -243,7 +243,8 @@ async def test_acceptance_ten_minute_telegram_mission(app_client, configured_mod
     eve_item = next(i for i in items if i.kind == "message")
     assert "eve" in eve_item.title
     # ۱۲) فقط نوبت‌های دارای رویداد مدل را صدا زدند
-    assert {k: v for k, v in llm_by_tick.items() if v} == {"2": 5, "3": 5, "4": 6}, llm_by_tick
+    # The uncertain fourth-minute send now stops before recovery/evaluation calls.
+    assert {k: v for k, v in llm_by_tick.items() if v} == {"2": 5, "3": 5, "4": 3}, llm_by_tick
     # ۱۵) هیچ Lease بی‌صاحبی باقی نماند
     redis = bus.get_redis()
     leftovers = [k async for k in redis.scan_iter("xagent:lease:routine:*")] + \

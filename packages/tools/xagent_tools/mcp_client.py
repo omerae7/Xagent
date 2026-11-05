@@ -59,6 +59,8 @@ async def list_tools(name: str, config: dict[str, Any]) -> list[dict[str, Any]]:
                     "name": t.name,
                     "description": (t.description or "")[:1000],
                     "input_schema": _attr(t, "input_schema", "inputSchema") or {"type": "object", "properties": {}},
+                    "annotations": (t.annotations.model_dump(by_alias=True, exclude_none=True)
+                                    if getattr(t, "annotations", None) is not None else {}),
                 }
             )
         return out

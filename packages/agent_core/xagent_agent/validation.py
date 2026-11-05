@@ -39,6 +39,7 @@ def checked_result(tool: Tool, args: dict, result: Any, *, verification_required
     if result.ok and (result.verified is False or (needs_verification and result.verified is not True)):
         return ToolResult(False, "اثر عملیات تأیید نشده است؛ ممکن است انجام شده باشد. "
                           "بدون بررسی نتیجه، عملیات را تکرار نکن.\n" + result.output,
+                          {**result.data, "outcome_uncertain": bool(needs_verification)},
                           verified=result.verified, untrusted=result.untrusted)
     return result
 
