@@ -44,7 +44,7 @@ tests/test_followup_browser_continuity.py:129: in test_escalated_approval_resume
     assert await page.input_value('#draft') == 'synthetic payload', 'valid approval did not resume typing'
 E   AssertionError: valid approval did not resume typing
 E   assert '' == 'synthetic payload'
-E     
+E
 E     - synthetic payload
 =========================== short test summary info ============================
 FAILED tests/test_followup_browser_continuity.py::test_escalated_approval_resumes_exact_browser_effect[normal]
