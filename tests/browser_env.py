@@ -37,7 +37,8 @@ def start(routes: dict[str, Route | Callable[[], Route]]) -> tuple[SimpleNamespa
             r = routes.get(self.path.split("?")[0], (404, {}, "<html><body>not found</body></html>"))
             status, headers, body = r() if callable(r) else r
             self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            if not any(k.lower() == "content-type" for k in headers):
+                self.send_header("Content-Type", "text/html; charset=utf-8")
             for k, v in headers.items():
                 self.send_header(k, v)
             self.end_headers()

@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { safeHref } from "../components/markdown";
 import { motion } from "framer-motion";
 import {
   Brain, Bot, CheckCircle2, CircleSlash, Cloud, Cpu, Download, ExternalLink, GitPullRequest, Globe2, KeyRound, Lock, MessageCircle, Moon,
@@ -823,8 +824,8 @@ function CursorAgents() {
                 <span className="num">{fmtDate(r.created_at)}</span>
                 <span>· هزینه: نامعلوم</span>
                 <span className="ms-auto flex flex-wrap gap-1.5">
-                  {r.pr_url && <a href={r.pr_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-primary ring-1 ring-inset ring-primary/25 hover:bg-primary/8"><GitPullRequest className="h-3.5 w-3.5" />Pull Request</a>}
-                  {r.agent_url && <a href={r.agent_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 ring-1 ring-inset ring-line/20 hover:bg-line/6"><ExternalLink className="h-3.5 w-3.5" />Cursor</a>}
+                  {safeHref(r.pr_url || "") && <a href={safeHref(r.pr_url)!} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-primary ring-1 ring-inset ring-primary/25 hover:bg-primary/8"><GitPullRequest className="h-3.5 w-3.5" />Pull Request</a>}
+                  {safeHref(r.agent_url || "") && <a href={safeHref(r.agent_url)!} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 ring-1 ring-inset ring-line/20 hover:bg-line/6"><ExternalLink className="h-3.5 w-3.5" />Cursor</a>}
                   {["reserved", "creating", "running", "unknown"].includes(r.status) && !r.cancel_requested && (
                     <Button size="sm" variant="outline" icon={<Square className="h-3.5 w-3.5" />} onClick={async () => {
                       if (!confirm("اجرای Cursor لغو شود؟")) return;

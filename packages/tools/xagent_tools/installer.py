@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_core import bus
 from xagent_core.audit import audit, notify
 from xagent_core.models import InstalledTool, ToolVersion
+from xagent_core.redact import scrub
 from xagent_memory.revisions import record_change, snapshot
 
 from . import mcp_client
@@ -237,13 +238,13 @@ async def install(
         tool.ref = ref
         tool.source_url = source
         await record_change(session, "tool", tool, "update" if before else "create", before,
-                            f"نصب/به‌روزرسانی ابزار از {source} (نسخه {version})", actor=actor, origin="panel")
-        await audit(session, actor, "tool.install", name, {"source": source, "version": version})
-        await notify(session, f"ابزار «{name}» نصب شد", test_out[:300], level="success", link="/tools")
+                            f"نصب/به‌روزرسانی ابزار از {scrub(source)} (نسخه {version})", actor=actor, origin="panel")
+        await audit(session, actor, "tool.install", name, {"source": scrub(source), "version": version})
+        await notify(session, f"ابزار «{name}» نصب شد", scrub(test_out)[:300], level="success", link="/tools")
         await bus.publish("tool.changed", {"id": str(tool.id), "status": "ready"})
         return InstallOutcome(True, f"ابزار «{name}» با موفقیت نصب و تست شد (نسخه {version}).", tool.id, "\n".join(log))
     except Exception as e:  # noqa: BLE001
-        msg = str(e)
+        msg = scrub(str(e))
         if before and before.get("active_version_id"):
             # بازگشت به نسخه پایدار قبلی
             tool.status = "ready"
@@ -253,7 +254,7 @@ async def install(
             tool.status = "error"
             tool.enabled = False
             tool.last_error = msg
-        await audit(session, actor, "tool.install_failed", name, {"source": source, "error": msg})
+        await audit(session, actor, "tool.install_failed", name, {"source": scrub(source), "error": msg})
         await notify(session, f"نصب ابزار «{name}» ناموفق بود", msg[:300], level="error", link="/tools")
         await bus.publish("tool.changed", {"id": str(tool.id), "status": tool.status})
         return InstallOutcome(False, f"نصب ناموفق: {msg}", tool.id, "\n".join(log)[-8000:])

@@ -1,6 +1,7 @@
 /** اجزای مرکز گفتگو: پیام، مراحل زنده اجرا، کارت مجوز، ورودی چندرسانه‌ای و حالت مکالمه صوتی زنده. */
 
 import { AnimatePresence, motion } from "framer-motion";
+import { ChatMarkdown } from "./markdown";
 import {
   Brain,
   Check,
@@ -35,46 +36,6 @@ import { ChipMark, PadArray } from "./viz/Silicon";
 import { Timeline, type TimelineItem } from "./viz/Timeline";
 
 // ───────────── Markdown سبک و امن ─────────────
-function esc(s: string) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-export function renderMarkdown(src: string): string {
-  const blocks: string[] = [];
-  let s = esc(src || "").replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _l, code) => {
-    blocks.push(`<pre><code>${code}</code></pre>`);
-    return `\u0000${blocks.length - 1}\u0000`;
-  });
-  s = s
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
-  const lines = s.split("\n");
-  const out: string[] = [];
-  let list: "ul" | "ol" | null = null;
-  for (const line of lines) {
-    const ul = line.match(/^\s*[-•*]\s+(.*)/);
-    const ol = line.match(/^\s*[\d۰-۹]+[.)]\s+(.*)/);
-    if (ul || ol) {
-      const kind = ul ? "ul" : "ol";
-      if (list !== kind) {
-        if (list) out.push(`</${list}>`);
-        out.push(`<${kind}>`);
-        list = kind;
-      }
-      out.push(`<li>${(ul || ol)![1]}</li>`);
-      continue;
-    }
-    if (list) {
-      out.push(`</${list}>`);
-      list = null;
-    }
-    const h = line.match(/^#{1,4}\s+(.*)/);
-    out.push(h ? `<p><strong>${h[1]}</strong></p>` : line.trim() ? `<p>${line}</p>` : "");
-  }
-  if (list) out.push(`</${list}>`);
-  return out.join("").replace(/\u0000(\d+)\u0000/g, (_m, i) => blocks[+i]);
-}
-
 // ───────────── مراحل اجرا ─────────────
 const STEP_ICON: Record<string, ReactNode> = {
   route: <Route className="h-3.5 w-3.5" />,
@@ -212,7 +173,7 @@ export function MessageBubble({ m, run }: { m: any; run?: any }) {
           mine ? "rounded-[22px] rounded-ee-[8px] bg-primary text-onprimary shadow-[0_14px_30px_-18px_rgb(var(--primary))]"
             : "die rounded-[22px] rounded-es-[8px]")}>
           {mine ? <p className="whitespace-pre-wrap break-words">{m.content}</p>
-            : <div className="prose-chat break-words" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />}
+            : <ChatMarkdown text={m.content} />}
           {m.attachments?.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {m.attachments.map((a: any) => (

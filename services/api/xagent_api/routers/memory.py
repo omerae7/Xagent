@@ -23,6 +23,7 @@ from xagent_core.models import (
     Skill,
     User,
 )
+from xagent_core.redact import redact_obj, scrub
 from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_memory.revisions import record_change, snapshot, undo_revision
 from xagent_memory.store import (
@@ -224,7 +225,14 @@ async def revisions(status: str | None = None, entity_type: str | None = None, l
     if entity_type:
         stmt = stmt.where(MemoryRevision.entity_type == entity_type)
     rows = (await session.execute(stmt.order_by(MemoryRevision.created_at.desc()).limit(limit).offset(offset))).scalars()
-    return {"items": [ser(r) for r in rows]}
+    return {"items": [revision_out(r) for r in rows]}
+
+
+def revision_out(r: MemoryRevision) -> dict:
+    """خروجی امن نسخه: مقدار اسرار (env/headers/کلیدها/مهروموم‌شده) برای هیچ نقشی برگردانده نمی‌شود."""
+    return ser(r, extra={"before": redact_obj(r.before), "after": redact_obj(r.after),
+                         "baseline": redact_obj(r.baseline), "reason": scrub(r.reason or ""),
+                         "revert_reason": scrub(r.revert_reason) if r.revert_reason else None})
 
 
 @router.post("/memory/revisions/{rid}/undo")

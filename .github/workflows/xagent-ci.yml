@@ -62,16 +62,17 @@ jobs:
         run: |
           python -m playwright install --with-deps chromium
           echo "XAGENT_TEST_CHROME=$(python -c 'from playwright.sync_api import sync_playwright as s; p=s().start(); print(p.chromium.executable_path); p.stop()')" >> "$GITHUB_ENV"
-      - name: Pytest with live PostgreSQL, Redis and Chromium
-        run: pytest -q -rs
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Frontend dependencies (needed by real-Chromium UI security tests)
+        working-directory: apps/web
+        run: npm ci --no-audit --no-fund
+      - name: Pytest with live PostgreSQL, Redis and Chromium
+        run: pytest -q -rs
       - name: Frontend build and type-check
         working-directory: apps/web
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
+        run: npm run build
 
   containers:
     runs-on: ubuntu-24.04

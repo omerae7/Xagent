@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_agent.control import capabilities, changes, selfheal
 from xagent_core.models import AIModel, AIProvider, ConfigChange, Employee, Incident, Run, User
+from xagent_core.redact import redact_obj, scrub
 
 from ..deps import current_user, get_session, owner_user, parse_uuid, ser
 
@@ -74,7 +75,9 @@ async def list_changes(target_type: str | None = None, limit: int = Query(100, l
     q = select(ConfigChange).order_by(ConfigChange.created_at.desc()).limit(limit)
     if target_type:
         q = q.where(ConfigChange.target_type == target_type)
-    return {"items": [ser(c) for c in (await session.execute(q)).scalars()]}
+    return {"items": [ser(c, extra={"before": redact_obj(c.before), "after": redact_obj(c.after),
+                                    "summary": scrub(c.summary or ""), "reason": scrub(c.reason or "")})
+                      for c in (await session.execute(q)).scalars()]}
 
 
 @router.post("/changes/{cid}/rollback")

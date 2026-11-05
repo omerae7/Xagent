@@ -13,6 +13,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ from xagent_core import bus, inbox
 from xagent_core.audit import notify
 from xagent_core.db import get_sessionmaker, utcnow
 from xagent_core.models import Approval, Conversation, Message, Mission, Routine, Run, RunStep, Upload
-from xagent_core.redact import scrub
+from xagent_core.redact import MASK, open_secrets, scrub, scrub_known, seal_secrets
 from xagent_core.settings_store import (
     AISettings,
     GeneralSettings,
@@ -80,6 +81,40 @@ class LoopAbort(Exception):
 
 class WatchFailed(Exception):
     """پیش‌بررسی قطعی یا مجوز مأموریت اجازه ادامه نمی‌دهد (بدون فراخوانی مدل)."""
+
+
+# ── آرگومان‌های حساس ابزار (F21): مقدار تایپ‌شده در فیلد رمز/OTP/توکن در رونوشت، Checkpoint، گام‌ها و تأییدها ذخیره نمی‌شود ──
+SENSITIVE_ARGS: dict[str, tuple[str, ...]] = {"browser_type": ("value",)}
+_SENSITIVE_TARGET = re.compile(r"pass|pwd|secret|token|otp|cvv|api.?key|رمز|گذرواژه", re.I)
+
+
+def masked_args(name: str, args: dict) -> dict:
+    keys = SENSITIVE_ARGS.get(name, ())
+    return {k: (MASK if k in keys and v not in (None, "") else v) for k, v in (args or {}).items()}
+
+
+def display_args(name: str, args: dict, sensitive: bool = True) -> dict:
+    """نمایش امن آرگومان‌ها برای گام/رویداد/تأیید؛ مقدار تایپ مرورگر پیش از طبقه‌بندی فیلد هم نمایش داده نمی‌شود."""
+    return harness.redact(masked_args(name, args) if sensitive else args)
+
+
+def presumed_sensitive(name: str, args: dict) -> bool:
+    if name not in SENSITIVE_ARGS:
+        return False
+    target = " ".join(str(args.get(k) or "") for k in ("selector", "text"))
+    return bool(_SENSITIVE_TARGET.search(target))
+
+
+def _strip_values(obj: Any, values: list[str]) -> Any:
+    if isinstance(obj, str):
+        for v in values:
+            obj = obj.replace(v, MASK)
+        return obj
+    if isinstance(obj, dict):
+        return {k: _strip_values(v, values) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_values(v, values) for v in obj]
+    return obj
 
 
 class ValidationFailed(Exception):
@@ -829,7 +864,11 @@ class AgentRunner:
             r = res.response
             if r.tool_calls:
                 transcript.append(LLMMessage("assistant", r.text, tool_calls=r.tool_calls, raw=r.raw))
-                s["pending_calls"] = [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in r.tool_calls]
+                s["pending_calls"] = [{"id": c.id, "name": c.name, "arguments": self._sealed(c.name, c.arguments)}
+                                      for c in r.tool_calls]
+                for c in r.tool_calls:
+                    if presumed_sensitive(c.name, c.arguments):
+                        self._mark_sensitive(rc, c.id, c.name, c.arguments, transcript)
                 s["transcript"] = [m.to_json() for m in transcript]
                 await self._checkpoint(rc)
                 continue
@@ -1034,7 +1073,8 @@ class AgentRunner:
         approved: dict[str, list[str]] = s.setdefault("approved", {})
         done_ids = {m.tool_call_id for m in transcript if m.role == "tool"}
         for call in pending:
-            cid, name, args = call["id"], call["name"], call.get("arguments") or {}
+            cid, name = call["id"], call["name"]
+            args = open_secrets(call.get("arguments") or {})  # مقدار مهروموم‌شده Checkpoint فقط هنگام اجرا باز می‌شود
             if cid in done_ids:
                 continue
             if name == "tools_load" and not s.get("mission_id"):
@@ -1098,12 +1138,14 @@ class AgentRunner:
             tctx.extra["approved"] = set(cats)
             tctx.extra["tool_call_id"] = cid
             st = await self._step(rc, "tool", tool.label or name, status="running", tool_name=name,
-                                  detail={"args": harness.redact(args)})
+                                  detail={"args": display_args(name, args)})
             t0 = time.monotonic()
             await self._assert_owner(rc)  # Worker کهنه هرگز اثر بیرونی تازه‌ای نمی‌گذارد
             try:
                 result = await asyncio.wait_for(tool.handler(tctx, args), timeout=TOOL_TIMEOUT)
             except EscalateCategory as esc:
+                if esc.category == "login":
+                    self._mark_sensitive(rc, cid, name, args, transcript)
                 if esc.category in cats:
                     result = ToolResult(False, f"خطای داخلی ابزار پس از تایید: {esc.reason}")
                 else:
@@ -1125,7 +1167,12 @@ class AgentRunner:
             except Paused:
                 raise
             except Exception as e:  # noqa: BLE001
-                result = ToolResult(False, f"خطای ابزار: {type(e).__name__}: {truncate(str(e), 800)}")
+                result = ToolResult(False, f"خطای ابزار: {type(e).__name__}: {truncate(scrub(str(e)), 800)}")
+            if isinstance(result, ToolResult) and isinstance(result.data, dict) and result.data.get("sensitive_input"):
+                self._mark_sensitive(rc, cid, name, args, transcript)
+            if isinstance(result, ToolResult) and isinstance(result.output, str):
+                result.output = scrub_known(result.output)  # اسرار ثبت‌شده (کلیدها/رمز تایپ‌شده) هرگز به مدل برنمی‌گردد
+            sargs = masked_args(name, args) if cid in s.get("sensitive_calls", []) else args
             # Escalated categories (send, payment, login, ...) need effect verification
             # even when a browser interaction was initially classified as navigation.
             verification_required = requires_verification(tool, args) or bool(set(cats) - {"desktop_control"})
@@ -1144,7 +1191,7 @@ class AgentRunner:
                                     {"output": truncate(result.output, 1200), "verified": result.verified},
                                     duration_ms=dur)
             digest = hashlib.sha1(result.output[:4000].encode(errors="ignore")).hexdigest()
-            signal = loop.observe(name, args, result.ok, digest)
+            signal = loop.observe(name, sargs, result.ok, digest)
             if not result.ok and name in FALLBACK_FROM and not s.get("mission_id"):
                 await self._fallback_method(rc, tool_map, transcript, name, args, result.output)
             # Checkpoint پس از هر ابزار: Crash بعدی همین گام انجام‌شده را تکرار نمی‌کند
@@ -1163,6 +1210,36 @@ class AgentRunner:
                 transcript.append(LLMMessage("user", prompts.RECOVERY_NOTE.format(
                     reason="خطای تکراری", diagnosis=self._diagnose(result.output))))
 
+    @staticmethod
+    def _sealed(name: str, args: dict) -> dict:
+        """آرگومان حساس در pending_calls (Checkpoint) فقط رمزشده ذخیره می‌شود؛ هنگام اجرا open_secrets."""
+        keys = SENSITIVE_ARGS.get(name, ())
+        if not keys:
+            return args
+        return {k: (seal_secrets({"env": {k: v}})["env"][k] if k in keys and isinstance(v, str) and v else v)
+                for k, v in (args or {}).items()}
+
+    def _mark_sensitive(self, rc: RunCtx, cid: str, name: str, args: dict, transcript: list[LLMMessage]) -> None:
+        """فراخوانی با مقدار حساس: رونوشت (مدل و Checkpoint) و بازپخش خام ارائه‌دهنده بدون مقدار ذخیره می‌شوند."""
+        s = rc.state
+        ids = s.setdefault("sensitive_calls", [])
+        if cid not in ids:
+            ids.append(cid)
+        values = [str(args[k]) for k in SENSITIVE_ARGS.get(name, ()) if isinstance(args.get(k), str) and args[k]]
+        for m in transcript:
+            hit = False
+            for tc in m.tool_calls:
+                if tc.id == cid:
+                    tc.arguments = masked_args(name, tc.arguments)
+                    hit = True
+            if hit and m.raw and values:
+                m.raw = _strip_values(m.raw, values)
+        for c in s.get("pending_calls") or []:
+            if c.get("id") == cid:
+                c["arguments"] = self._sealed(name, open_secrets(c.get("arguments") or {}))
+        if "transcript" in s:
+            s["transcript"] = [m.to_json() for m in transcript]
+
     def _deny_call(self, rc: RunCtx, cid: str, name: str, args: dict, transcript: list[LLMMessage],
                    loop: LoopController, decision: str) -> None:
         """ردّ اجرای ابزار با شاهد «رد شد» (نه موفق) و پیام صادقانه به مدل."""
@@ -1172,11 +1249,13 @@ class AgentRunner:
         self._record_evidence(rc, cid, name, args, ToolResult(False, text))
         transcript.append(LLMMessage("tool", f"⛔ {text} راه دیگری پیشنهاد کن یا به کارفرما گزارش بده.",
                                      tool_call_id=cid, tool_name=name, is_error=True))
-        loop.observe(name, args, False)
+        loop.observe(name, masked_args(name, args) if cid in rc.state.get("sensitive_calls", []) else args, False)
 
     @staticmethod
     def _record_evidence(rc: RunCtx, cid: str, name: str, args: dict, result: ToolResult,
                          verification_required: bool = True) -> None:
+        if cid in rc.state.get("sensitive_calls", []):
+            args = masked_args(name, args)  # همان شکل ذخیره‌شده در رونوشت (امضا سازگار، بدون مقدار حساس)
         rc.state.setdefault("evidence", []).append({
             "call_id": cid, "signature": LoopController.signature(name, args),
             "tool": name, "ok": result.ok, "verified": result.verified,
@@ -1263,12 +1342,20 @@ class AgentRunner:
         return "blocked", why
 
     @staticmethod
-    def _binding(rc: RunCtx, tool: Tool, category: str, args: dict) -> str:
-        """اثرانگشت عملیات تأییدشده: ابزار + دسته + آرگومان‌های کامل + کارمند + Run (نه فقط شناسه فراخوانی)."""
+    def _binding(rc: RunCtx, tool: Tool, category: str, args: dict, legacy: bool = False) -> str:
+        """اثرانگشت عملیات تأییدشده: ابزار + دسته + آرگومان‌های کامل + کارمند + Run (نه فقط شناسه فراخوانی).
+
+        HMAC با کلید سرور: اثرانگشت ذخیره‌شده امکان حدس آفلاین آرگومان حساس (مثلاً رمز تایپ‌شده) را نمی‌دهد."""
+        import hmac
+
+        from xagent_core.security import _derive
+
         raw = json.dumps({"tool": tool.name, "category": category, "args": args, "run": str(rc.run.id),
                           "employee": str(rc.run.employee_id) if rc.run.employee_id else None},
                          sort_keys=True, ensure_ascii=False, default=str)
-        return hashlib.sha256(raw.encode()).hexdigest()
+        if legacy:
+            return hashlib.sha256(raw.encode()).hexdigest()
+        return hmac.new(_derive("xagent-approval-binding-v2"), raw.encode(), hashlib.sha256).hexdigest()
 
     async def _harness_decide(
         self, rc: RunCtx, cid: str, tool: Tool, category: str, args: dict, rules: dict, reason: str | None = None,
@@ -1285,7 +1372,7 @@ class AgentRunner:
         ).scalars().first()
         if existing is not None:
             bound = ((existing.args or {}).get("__binding") or {}).get("sig")
-            if bound and bound != sig:
+            if bound and bound != sig and bound != self._binding(rc, tool, category, args, legacy=True):
                 await self._step(rc, "approval", f"تأیید با عملیات فعلی مطابقت ندارد: {tool.label or tool.name}",
                                  status="blocked", tool_name=tool.name, detail={"category": category})
                 return "mismatch"
@@ -1315,7 +1402,8 @@ class AgentRunner:
             return d.action
         ap = Approval(
             run_id=rc.run.id, tool_call_id=cid, category=category, tool_name=tool.name,
-            args={**harness.redact(args), "__binding": {"sig": sig, "employee": str(rc.run.employee_id or "")}},
+            args={**display_args(tool.name, args, sensitive=cid in rc.state.get("sensitive_calls", [])),
+                  "__binding": {"sig": sig, "employee": str(rc.run.employee_id or "")}},
             reason=reason or d.reason,
         )
         rc.session.add(ap)
@@ -1324,7 +1412,8 @@ class AgentRunner:
             "id": str(ap.id), "run_id": str(rc.run.id),
             "conversation_id": str(rc.run.conversation_id) if rc.run.conversation_id else None,
             "category": category, "category_label": label,
-            "tool_name": tool.name, "tool_label": tool.label, "args": harness.redact(args), "reason": ap.reason,
+            "tool_name": tool.name, "tool_label": tool.label,
+            "args": display_args(tool.name, args, sensitive=cid in rc.state.get("sensitive_calls", [])), "reason": ap.reason,
             "rule_text": d.rule_text,
         })
         await notify(rc.session, f"درخواست اجازه: {tool.label or tool.name}", ap.reason, level="approval",

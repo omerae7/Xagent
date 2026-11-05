@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xagent_core import bus
 from xagent_core.db import utcnow
 from xagent_core.models import BehavioralRule, Experience, InstalledTool, MemoryRevision, SemanticFact, Skill
+from xagent_core.redact import open_secrets, seal_secrets
 
 ENTITY_MODELS: dict[str, type] = {
     "behavioral_rule": BehavioralRule,
@@ -75,12 +76,18 @@ def _jsonable(v: Any) -> Any:
 
 
 def snapshot(entity_type: str, obj: Any) -> dict[str, Any]:
-    return {f: _jsonable(getattr(obj, f, None)) for f in SNAPSHOT_FIELDS[entity_type]}
+    data = {f: _jsonable(getattr(obj, f, None)) for f in SNAPSHOT_FIELDS[entity_type]}
+    if entity_type == "tool" and isinstance(data.get("config"), dict):
+        # اسرار پیکربندی ابزار (env/headers/کلیدها) رمزشده ذخیره می‌شوند؛ Undo آن‌ها را باز می‌کند
+        data["config"] = seal_secrets(data["config"])
+    return data
 
 
 def _restore_value(entity_type: str, field: str, value: Any) -> Any:
     if field in ("routine_id", "active_version_id") and isinstance(value, str):
         return uuid.UUID(value)
+    if entity_type == "tool" and field == "config":
+        return open_secrets(value)  # Snapshotهای قدیمی متن‌ساده هم بدون تغییر بازگردانده می‌شوند
     return value
 
 

@@ -41,6 +41,7 @@ from xagent_core.models import (
     UsageEvent,
     User,
 )
+from xagent_core.redact import redact_obj, scrub
 from xagent_core.settings_store import GeneralSettings, StopLossSettings, get_setting
 from xagent_core.timeutil import get_zone, now_utc
 
@@ -60,6 +61,12 @@ async def _sse_user(request: Request) -> User | None:
         if user is not None:
             session.expunge(user)
         return user
+
+
+def sse_frame(ev: dict) -> str:
+    """یک رویداد SSE؛ داده پیش از ارسال به هر نقش (حتی کارفرما) از اسرار پاک می‌شود."""
+    data = json.loads(json.dumps(ev.get("data", {}), ensure_ascii=False, default=str))
+    return f"event: {ev.get('type', 'message')}\ndata: {json.dumps(redact_obj(data), ensure_ascii=False)}\n\n"
 
 
 @router.get("/events/stream")
@@ -103,7 +110,7 @@ async def stream(request: Request):
                     continue
                 try:
                     ev = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield f"event: {ev.get('type', 'message')}\ndata: {json.dumps(ev.get('data', {}), ensure_ascii=False, default=str)}\n\n"
+                    yield sse_frame(ev)
                 except TimeoutError:
                     yield ": ping\n\n"
         finally:
@@ -296,7 +303,8 @@ async def notifications(unread_only: bool = False, limit: int = Query(50, le=200
     stmt = select(Notification).order_by(Notification.ts.desc()).limit(limit)
     if unread_only:
         stmt = stmt.where(Notification.read.is_(False))
-    return {"items": [ser(n) for n in (await session.execute(stmt)).scalars()]}
+    return {"items": [ser(n, extra={"title": scrub(n.title or ""), "body": scrub(n.body or "")})
+                      for n in (await session.execute(stmt)).scalars()]}
 
 
 @router.post("/notifications/read-all")

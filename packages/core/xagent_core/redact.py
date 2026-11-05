@@ -28,12 +28,116 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
 _known: set[str] = set()
 _lock = threading.Lock()
 
+# ── پاک‌سازی ساختاری (JSON): کلیدهای سری، نقشه‌های env/headers و مقادیر مهروموم‌شده ──
+SECRET_KEY = re.compile(r"pass(word|wd|phrase)?$|^pass|secret|(^|[_-])token$|^token|access[_-]?token|refresh[_-]?token|"
+                        r"api[_-]?(key|hash)|apikey|authori[sz]ation|cookie|credential|(private|signing|encryption)[_-]?key|"
+                        r"bearer|session[_-]?(string|key|token)|(^|[_-])(otp|pin|cvv)$|^auth$", re.I)
+OPAQUE_MAPS = frozenset({"env", "environment", "headers", "secrets"})  # همه مقادیر این نقشه‌ها سری فرض می‌شوند
+SEALED = "$enc"  # {"$enc": "<fernet>"}: مقدار سری رمزشده در Snapshot ذخیره‌شده
 
-def register_secret(value: str | None) -> None:
+
+def _masked(v: object) -> object:
+    return MASK if isinstance(v, str) and v else v  # اسرار رشته‌اند؛ اعداد (مثلاً شمار توکن) دست‌نخورده می‌مانند
+
+
+def redact_obj(value: object, key: str | None = None, opaque: bool = False) -> object:
+    """کپی امن یک ساختار JSON برای خروجی API/رویداد: مقدار کلیدهای سری، همه مقادیر env/headers و
+    مقادیر مهروموم‌شده پنهان می‌شوند؛ ساختار و نام کلیدها برای نمایش و تصمیم‌گیری می‌ماند."""
+    if isinstance(value, dict):
+        if set(value) == {SEALED}:
+            return MASK
+        inner = opaque or (key is not None and key.lower() in OPAQUE_MAPS)
+        out = {}
+        for k, v in value.items():
+            if isinstance(v, dict | list):
+                out[k] = redact_obj(v, str(k), opaque=inner)
+            elif inner or SECRET_KEY.search(str(k)):
+                out[k] = _masked(v)
+            else:
+                out[k] = redact_obj(v, str(k))
+        return out
+    if isinstance(value, list):
+        return [redact_obj(v, key, opaque) for v in value]
+    if isinstance(value, str):
+        return _masked(value) if opaque else scrub(value)
+    return value
+
+
+def seal_secrets(value: object, key: str | None = None, opaque: bool = False) -> object:
+    """رمزنگاری مقادیر سری داخل یک ساختار پیش از ذخیره در Snapshot (برگشت‌پذیر با open_secrets برای Undo)."""
+    from .security import encrypt_secret
+
+    if isinstance(value, dict):
+        if set(value) == {SEALED}:
+            return value
+        inner = opaque or (key is not None and key.lower() in OPAQUE_MAPS)
+        out = {}
+        for k, v in value.items():
+            if isinstance(v, dict | list):
+                out[k] = seal_secrets(v, str(k), opaque=inner)
+            elif isinstance(v, str) and v and (inner or SECRET_KEY.search(str(k))):
+                out[k] = {SEALED: encrypt_secret(v).decode()}
+            else:
+                out[k] = v
+        return out
+    if isinstance(value, list):
+        return [seal_secrets(v, key, opaque) for v in value]
+    return value
+
+
+def open_secrets(value: object) -> object:
+    from .security import decrypt_secret
+
+    if isinstance(value, dict):
+        if set(value) == {SEALED}:
+            return decrypt_secret(str(value[SEALED]).encode())
+        return {k: open_secrets(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [open_secrets(v) for v in value]
+    return value
+
+
+def secret_paths(value: object, path: str = "$", key: str | None = None, opaque: bool = False):
+    """مسیر مقادیر سری متن‌ساده (نه مقدار) برای فهرست‌برداری فقط‌خواندنی سوابق تاریخی."""
+    if isinstance(value, dict):
+        if set(value) == {SEALED}:
+            return
+        inner = opaque or (key is not None and key.lower() in OPAQUE_MAPS)
+        for k, v in value.items():
+            p = f"{path}.{k}"
+            if isinstance(v, dict | list):
+                yield from secret_paths(v, p, str(k), inner)
+            elif isinstance(v, str) and v:
+                if inner:
+                    yield p, "opaque_map"
+                elif SECRET_KEY.search(str(k)):
+                    yield p, "secret_key"
+                elif scrub(v) != v:
+                    yield p, "pattern"
+    elif isinstance(value, list):
+        for n, v in enumerate(value):
+            yield from secret_paths(v, f"{path}[{n}]", key, opaque)
+    elif isinstance(value, str) and value and scrub(value) != value:
+        yield path, "pattern"
+
+
+def register_secret(value: str | None, min_len: int = 8) -> None:
     """ثبت یک مقدار سری تا هر جا در متن ظاهر شد پنهان شود (فقط مقادیر به‌اندازه کافی بلند)."""
-    if value and len(value) >= 8:
+    if value and len(value) >= max(min_len, 6):
         with _lock:
             _known.add(value)
+
+
+def scrub_known(text: str) -> str:
+    """فقط مقادیر سری ثبت‌شده (کلیدها، رمزهای تایپ‌شده) — بدون الگوهای عمومی که متن عادی را تغییر دهند."""
+    if not text or not _known:
+        return text
+    with _lock:
+        known = sorted(_known, key=len, reverse=True)
+    for v in known:
+        if v in text:
+            text = text.replace(v, MASK)
+    return text
 
 
 def scrub(text: object) -> str:

@@ -30,7 +30,7 @@ from xagent_core import bus
 from xagent_core.config import get_settings
 from xagent_core.db import session_scope, utcnow
 from xagent_core.models import Conversation, DreamReport, Run, SystemMetric
-from xagent_core.redact import install_log_scrubber
+from xagent_core.redact import install_log_scrubber, open_secrets
 from xagent_core.settings_store import DreamSettings, get_setting
 from xagent_tools import installer
 
@@ -261,7 +261,8 @@ class Worker:
             async with session_scope() as session:
                 if cmd == "install":
                     await installer.install(session, payload["source"], payload.get("ref"), payload.get("name"),
-                                            actor=payload.get("actor", "owner"), env=payload.get("env") or None)
+                                            actor=payload.get("actor", "owner"),
+                                            env=open_secrets(payload.get("env_sealed") or payload.get("env") or {}) or None)
                 elif cmd == "update":
                     await installer.update(session, uuid.UUID(payload["tool_id"]), payload.get("ref"),
                                            actor=payload.get("actor", "owner"))

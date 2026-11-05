@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 
 from xagent_core.models import AIModel, AIProvider, ConfigChange, Employee, InstalledTool
+from xagent_core.redact import scrub
 from xagent_core.settings_store import DEFAULTS, AISettings, all_settings, get_setting
 from xagent_core.text import truncate
 from xagent_tools.base import Tool, ToolContext, ToolResult, b, i, obj, s
@@ -145,7 +146,8 @@ async def change_history(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     rows = (await ctx.session.execute(select(ConfigChange).order_by(ConfigChange.created_at.desc())
                                       .limit(int(a.get("limit", 15))))).scalars().all()
     return ToolResult(True, "\n".join(
-        f"- {r.created_at:%m-%d %H:%M} | id={r.id} | {r.actor} | {r.status} | {r.summary[:140]}" for r in rows) or "تغییری ثبت نشده")
+        f"- {r.created_at:%m-%d %H:%M} | id={r.id} | {r.actor} | {r.status} | {scrub(r.summary)[:140]}" for r in rows)
+        or "تغییری ثبت نشده")
 
 
 # ───────────── ابزارهای تغییر (با Audit و Rollback) ─────────────

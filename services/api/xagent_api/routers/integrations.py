@@ -21,7 +21,7 @@ from xagent_core.audit import audit
 from xagent_core.config import get_settings
 from xagent_core.db import get_sessionmaker
 from xagent_core.models import InstalledTool, SettingKV, ToolVersion, User
-from xagent_core.redact import scrub
+from xagent_core.redact import redact_obj, scrub, seal_secrets
 from xagent_core.security import decrypt_secret, encrypt_secret
 from xagent_core.settings_store import AISettings, TelegramSettings, get_setting, set_setting
 from xagent_tools.registry import BUILTIN, GROUP_LABELS
@@ -161,9 +161,15 @@ async def tools(_: User = Depends(current_user), session: AsyncSession = Depends
     installed = (await session.execute(select(InstalledTool).order_by(InstalledTool.created_at.desc()))).scalars().all()
     builtin = [{"name": t.name, "label": t.label, "group": t.group, "group_label": GROUP_LABELS.get(t.group, t.group),
                 "category": t.category, "description": t.description} for t in BUILTIN]
-    return {"builtin": builtin, "installed": [ser(t, exclude={"config"}, extra={
+    return {"builtin": builtin, "installed": [tool_out(t, {
         "tool_count": len(t.tool_schemas or []), "tool_names": [s["name"] for s in (t.tool_schemas or [])][:30]})
         for t in installed]}
+
+
+def tool_out(t: InstalledTool, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """خروجی امن ابزار: پیکربندی (env/headers) هرگز، نشانی منبع و خطا بدون اعتبارنامه."""
+    return ser(t, exclude={"config"}, extra={**(extra or {}), "source_url": scrub(t.source_url) if t.source_url else None,
+                                             "last_error": scrub(t.last_error) if t.last_error else None})
 
 
 @router.post("/tools/install")
@@ -174,8 +180,9 @@ async def install(body: InstallIn, user: User = Depends(owner_user)):
         parse_source(body.source)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    await bus.get_redis().xadd("xagent:control", {"cmd": "install", "payload": json.dumps(
-        {**body.model_dump(), "actor": user.username})})
+    payload = {**body.model_dump(exclude={"env"}), "actor": user.username,
+               "env_sealed": seal_secrets({"env": body.env})["env"] if body.env else {}}  # اسرار در صف Redis رمزشده
+    await bus.get_redis().xadd("xagent:control", {"cmd": "install", "payload": json.dumps(payload)})
     return {"ok": True, "message": "نصب در محیط ایزوله آغاز شد؛ نتیجه در اعلان‌ها نمایش داده می‌شود."}
 
 
@@ -194,7 +201,7 @@ async def tool_action(tid: str, action: str, body: dict[str, Any] | None = None,
         t.status = "ready" if t.enabled and t.active_version_id else ("disabled" if not t.enabled else t.status)
         await record_change(session, "tool", t, "status", before, f"{action} توسط کارفرما", actor="owner", origin="panel")
         await bus.publish("tool.changed", {"id": str(t.id), "status": t.status})
-        return ser(t, exclude={"config"})
+        return tool_out(t)
     if action in ("update", "rollback"):
         await bus.get_redis().xadd("xagent:control", {"cmd": action, "payload": json.dumps(
             {"tool_id": str(t.id), "ref": body.get("ref"), "version_id": body.get("version_id"), "actor": user.username})})
@@ -206,7 +213,8 @@ async def tool_action(tid: str, action: str, body: dict[str, Any] | None = None,
 async def tool_versions(tid: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     rows = (await session.execute(select(ToolVersion).where(ToolVersion.tool_id == parse_uuid(tid))
                                   .order_by(ToolVersion.created_at.desc()))).scalars()
-    return {"items": [ser(v) for v in rows]}
+    return {"items": [ser(v, extra={"manifest": redact_obj(v.manifest), "path": v.path,
+                                    "test_output": scrub(v.test_output) if v.test_output else None}) for v in rows]}
 
 
 @router.delete("/tools/{tid}")

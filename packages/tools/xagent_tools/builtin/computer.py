@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 
 from xagent_core import bus
 from xagent_core.config import get_settings
+from xagent_core.redact import MASK, register_secret, scrub
 from xagent_core.text import truncate
 
 from ..base import Tool, ToolContext, ToolResult, b, i, obj, s
@@ -24,6 +25,27 @@ from ..sandbox import TakeoverActive
 _pw: Any = None
 _browser: Any = None
 _lock = asyncio.Lock()
+
+# فیلد حساس: مقدار آن هرگز خوانده/سریال نمی‌شود (رمز، OTP، توکن، کارت). مقدار ورودی فقط برای دکمه‌ها برچسب است.
+_SENSITIVE_FN = r"""(el) => {
+  const t = (el.getAttribute('type') || '').toLowerCase(), ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+  const hint = [el.getAttribute('name'), el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')]
+    .join(' ').toLowerCase();
+  return t === 'password' || /password|one-time-code|cc-number|cc-csc/.test(ac)
+    || (/^(input|textarea)$/i.test(el.tagName) && /pass|pwd|secret|token|otp|cvv|api.?key|رمز|گذرواژه/.test(hint));
+}"""
+_LABEL_FN = r"""(el) => {
+  const t = (el.getAttribute('type') || '').toLowerCase();
+  const own = /^(input)$/i.test(el.tagName) ? (['button', 'submit', 'reset'].includes(t) ? el.value : '')
+              : (/^(textarea|select)$/i.test(el.tagName) ? '' : el.innerText);
+  return (own || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title')
+          || el.getAttribute('name') || '').trim();
+}"""
+
+
+def _with_helpers(js: str) -> str:
+    return js.replace("__XA_SENSITIVE__", f"({_SENSITIVE_FN})").replace("__XA_LABEL__", f"({_LABEL_FN})")
+
 
 _MARK_JS = """
 () => {
@@ -37,15 +59,16 @@ _MARK_JS = """
     if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
     n += 1;
     el.setAttribute('data-xa-id', String(n));
-    const label = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder')
-                   || el.getAttribute('title') || el.getAttribute('name') || '').trim().slice(0, 80);
-    out.push({id: n, tag: el.tagName.toLowerCase(), type: el.getAttribute('type') || '', label,
+    const sensitive = __XA_SENSITIVE__(el);
+    const label = __XA_LABEL__(el).slice(0, 80);
+    out.push({id: n, tag: el.tagName.toLowerCase(), type: el.getAttribute('type') || '', label, sensitive,
               href: el.getAttribute('href') || ''});
     if (n >= 150) break;
   }
   return out;
 }
 """
+_MARK_JS = _with_helpers(_MARK_JS)
 
 
 def _cdp_url() -> str:
@@ -241,12 +264,15 @@ _DESCRIBE_JS = """
 (ref) => {
   const el = document.querySelector('[data-xa-id="' + ref + '"]');
   if (!el) return null;
-  const label = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title')
-                 || el.getAttribute('placeholder') || el.getAttribute('name') || '').trim().slice(0, 120);
+  const label = __XA_LABEL__(el).slice(0, 120);
   return {label, tag: el.tagName.toLowerCase(), type: (el.getAttribute('type') || '').toLowerCase(),
-          href: el.getAttribute('href') || '', form: !!el.closest('form')};
+          href: el.getAttribute('href') || '', form: !!el.closest('form'), sensitive: __XA_SENSITIVE__(el)};
 }
 """
+
+
+_DESCRIBE_JS = _with_helpers(_DESCRIBE_JS)
+_IS_SENSITIVE_JS = f"el => ({_SENSITIVE_FN})(el)"
 
 
 def classify_effect(info: dict[str, Any] | None, *, submit: bool = False) -> str | None:
@@ -289,7 +315,7 @@ async def _elements(page) -> str:
     els = await page.evaluate(_MARK_JS)
     lines = []
     for e in els[:120]:
-        extra = f" type={e['type']}" if e["type"] else ""
+        extra = (f" type={e['type']}" if e["type"] else "") + (" [حساس: مقدار خوانده نمی‌شود]" if e.get("sensitive") else "")
         href = f" → {e['href'][:60]}" if e["href"] and e["tag"] == "a" else ""
         lines.append(f"[{e['id']}] <{e['tag']}{extra}> {e['label']}{href}")
     return "\n".join(lines)
@@ -570,17 +596,26 @@ async def browser_type(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
         el = page.locator(target).first
         input_type = (await el.get_attribute("type") or "").lower()
         autocomplete = (await el.get_attribute("autocomplete") or "").lower()
+        sensitive = bool(await el.evaluate(_IS_SENSITIVE_JS))
+        if sensitive:
+            register_secret(str(a.get("value") or ""), min_len=6)  # هر جا (خطا/لاگ/خروجی) تکرار شود پنهان می‌شود
         if (input_type == "password" or "password" in autocomplete) and "login" not in ctx.extra.get("approved", set()):
             raise EscalateCategory("login", f"ورود رمز عبور در {urlparse(page.url).hostname}", {"url": page.url})
         if a.get("submit"):
             info = await _describe(page, a) or {}
             info["type"] = info.get("type") or input_type
             _enforce_effect(ctx, page, info, submit=True)
-        await el.fill(a["value"], timeout=15000)
-        if a.get("submit"):
-            await el.press("Enter")
-            await page.wait_for_timeout(1500)
-    return ToolResult(True, f"مقدار وارد شد{' و ارسال شد' if a.get('submit') else ''}. نشانی: {page.url}", untrusted=True)
+        try:
+            await el.fill(a["value"], timeout=15000)
+            if a.get("submit"):
+                await el.press("Enter")
+                await page.wait_for_timeout(1500)
+        except Exception as e:  # noqa: BLE001 — پیام خطا هرگز مقدار حساس را حمل نمی‌کند
+            msg = scrub(str(e)).replace(str(a.get("value") or "\0"), MASK) if sensitive else scrub(str(e))
+            return ToolResult(False, f"وارد کردن مقدار ناموفق بود: {type(e).__name__}: {truncate(msg, 400)}",
+                              {"sensitive_input": sensitive})
+    return ToolResult(True, f"مقدار{' حساس' if sensitive else ''} وارد شد{' و ارسال شد' if a.get('submit') else ''}. "
+                      f"نشانی: {page.url}", {"sensitive_input": sensitive}, untrusted=True)
 
 
 async def _visual(ctx: ToolContext, png: bytes, question: str, where: str) -> ToolResult:
