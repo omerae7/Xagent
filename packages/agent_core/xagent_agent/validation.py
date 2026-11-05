@@ -36,6 +36,11 @@ def checked_result(tool: Tool, args: dict, result: Any, *, verification_required
     if result.ok and not result.output.strip() and not result.data and not result.images:
         return ToolResult(False, "ابزار هیچ نتیجه‌ای برای بررسی برنگرداند؛ تکمیل درخواست تأیید نشد.", verified=False)
     needs_verification = requires_verification(tool, args) if verification_required is None else verification_required
+    if any(result.data.get(key) is True for key in ("uncertain", "outcome_uncertain", "replay_blocked")):
+        # Native outbox results and older adapters used `uncertain`; all paths
+        # must share the durable execution guard before another model/tool call.
+        return ToolResult(False, result.output, {**result.data, "outcome_uncertain": True},
+                          verified=False, untrusted=result.untrusted, images=result.images)
     if result.ok and (result.verified is False or (needs_verification and result.verified is not True)):
         return ToolResult(False, "اثر عملیات تأیید نشده است؛ ممکن است انجام شده باشد. "
                           "بدون بررسی نتیجه، عملیات را تکرار نکن.\n" + result.output,
@@ -46,7 +51,7 @@ def checked_result(tool: Tool, args: dict, result: Any, *, verification_required
 
 def execution_required(run: Any, state: dict, answer: str) -> bool:
     """Conservative guard for executable work, including claims on otherwise text-only turns."""
-    if run.task_id or run.routine_id or run.employee_id:
+    if run.task_id or run.routine_id:
         return True
     # The router selects broad groups by substring (e.g. «وب» in «دوباره»).
     # A short greeting does not request an external effect despite that routing hint.
@@ -101,12 +106,9 @@ def evidence_issues(state: dict, required: bool, request: str = "") -> list[str]
     if inspects and not any(e["ok"] is True and e.get("content_observed") is True for e in browser):
         issues.append("مرورگر استفاده شد ولی محتوای قابل استفاده صفحه مشاهده نشد؛ ناوبری یا فهرست تب‌ها "
                       "بررسی سایت نیست (ناوبری فقط تلاش‌شده/جزئی است)")
-    completed_tools = {e["tool"] for e in latest.values() if e["ok"] is True and e.get("verified") is not False
-                       and (not e.get("requires_verification", True) or e.get("verified") is True)}
-    for step in (state.get("plan") or {}).get("steps", []):
-        hint = step.get("tool_hint")
-        if hint not in (None, "", "auto", "none") and hint not in completed_tools:
-            issues.append(f"معیار اجرای گام برنامه با ابزار {hint} تأیید نشده است")
+    # Optional plans are not objective requirements. The transcript guard above
+    # requires every attempted call's result; objective_report independently checks
+    # effects explicitly requested by the user. Neither trusts planner tool hints.
     return issues
 
 
@@ -185,7 +187,8 @@ def objective_report(run: Any, state: dict) -> dict:
         rel = [e for e in evidence if e.get("tool") in allowed]
         if any(e.get("ok") is True and (e.get("verified") is True or e.get("tool") == "notify_owner") for e in rel):
             completed.append(obj)
-        elif any(e.get("ok") is False and e.get("verified") is None and e.get("requires_verification") for e in rel):
+        elif any(e.get("outcome") == "UNKNOWN_EFFECT" or
+                 e.get("ok") is False and e.get("verified") is None and e.get("requires_verification") for e in rel):
             unknown.append(obj)  # شاید انجام شده باشد؛ بدون بررسی تکرار نمی‌شود
         else:
             missing.append(obj)

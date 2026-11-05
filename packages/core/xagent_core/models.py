@@ -245,6 +245,35 @@ class Approval(IdMixin, Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class PermissionGrant(IdMixin, Base):
+    """Owner-created, finite and revocable; never a global category override."""
+    __tablename__ = "permission_grants"
+    owner: Mapped[str] = mapped_column(String(64), index=True)
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    source_approval_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    mission_key: Mapped[str | None] = mapped_column(String(64))
+    tool_name: Mapped[str] = mapped_column(String(128))
+    category: Mapped[str] = mapped_column(String(48))
+    scope_hash: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    policy_revision: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    max_uses: Mapped[int] = mapped_column(Integer, default=100)
+    uses: Mapped[int] = mapped_column(Integer, default=0)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _ts()
+
+
+class PermissionUse(IdMixin, Base):
+    __tablename__ = "permission_uses"
+    __table_args__ = (UniqueConstraint("grant_id", "run_id", "tool_call_id", name="uq_permission_use"),)
+    grant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("permission_grants.id"), index=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    tool_call_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = _ts()
+
+
 # ───────────────────────────── مصرف و پایش ─────────────────────────────
 
 

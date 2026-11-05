@@ -5,9 +5,22 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class ExecutionOutcome(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+    ATTEMPTED = "ATTEMPTED"
+    OBSERVED = "OBSERVED"
+    EXECUTED = "EXECUTED"
+    VERIFIED = "VERIFIED"
+    PARTIAL = "PARTIAL"
+    UNKNOWN_EFFECT = "UNKNOWN_EFFECT"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 @dataclass
@@ -20,6 +33,21 @@ class ToolResult:
     # خروجی از منبع بیرونی (وب/فایل/پیام شخص ثالث) — داده است نه دستور
     untrusted: bool = False
     images: list[tuple[str, str]] = field(default_factory=list)  # (mime, base64)
+
+    @property
+    def outcome(self) -> ExecutionOutcome:
+        """Derived from evidence, not a model/handler's claimed status.
+
+        Keep constructor and old ok/verified fields compatible. These describe
+        one operation; they do not imply completion of the user's whole objective.
+        """
+        if any(self.data.get(k) is True for k in ("outcome_uncertain", "uncertain", "replay_blocked")):
+            return ExecutionOutcome.UNKNOWN_EFFECT
+        if self.data.get("attempted") is False:
+            return ExecutionOutcome.NOT_STARTED
+        if not self.ok:
+            return ExecutionOutcome.FAILED
+        return ExecutionOutcome.VERIFIED if self.verified is True else ExecutionOutcome.OBSERVED
 
 
 @dataclass

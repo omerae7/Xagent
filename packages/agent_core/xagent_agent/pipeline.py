@@ -40,6 +40,7 @@ from xagent_core.settings_store import (
 from xagent_core.text import estimate_tokens, truncate
 from xagent_core.timeutil import describe_now
 from xagent_memory.context import BuiltContext, ContextBudget, MemoryPlan, build_context
+from xagent_memory.working import load_window
 from xagent_tools import missions
 from xagent_tools import watch as watch_mod
 from xagent_tools.base import Tool, ToolContext, ToolResult
@@ -47,12 +48,13 @@ from xagent_tools.errors import EscalateCategory
 from xagent_tools.registry import BUILTIN, select_tools
 from xagent_tools.sandbox import DesktopUnavailable, TakeoverActive, get_sandbox
 
-from . import harness, prompts
+from . import grants, harness, prompts
 from .classifier import classify
 from .commands import run_command
 from .learning import learn_from_run, memory_scope_for
 from .llm import NoModelError, call_llm, parse_json
 from .model_select import select_models
+from .planning import normalize_goal, normalize_plan
 from .providers.base import ImagePart, LLMMessage, ProviderError, ToolSpec
 from .providers.registry import BoundModel
 from .stoploss import LoopController, StopLossEnforcer
@@ -690,11 +692,10 @@ class AgentRunner:
             if complex_task:
                 chain = (await select_models(rc.session, "goal", "manager", run.model_override)).models
                 res = await self._llm(rc, chain, "goal", "", "", [LLMMessage("user", prompts.GOAL_PROMPT.format(
-                    request=self._wrap_input(rc)))], max_tokens=800, json_mode=True, effort="low",
+                    request=await self._planning_input(rc)))], max_tokens=800, json_mode=True, effort="low",
                     title="هدف‌سنجی")
-                goal = parse_json(res.response.text) or {}
-                goal.setdefault("goal", run.input[:300])
-                goal.setdefault("success_criteria", ["انجام کامل درخواست"])
+                goal = normalize_goal(parse_json(res.response.text), run.input,
+                                      scheduled_creation=bool(route.get("intent")))
             else:
                 goal = {"goal": run.input[:300], "success_criteria": ["پاسخ دقیق و مرتبط"], "risk": route["risk"]}
             s["goal"] = goal
@@ -715,10 +716,10 @@ class AgentRunner:
                 exp_hint = ""
                 res = await self._llm(rc, chain, "planning", "", "", [LLMMessage("user", prompts.PLAN_PROMPT.format(
                     goal=s["goal"].get("goal"), criteria="، ".join(s["goal"].get("success_criteria", [])),
-                    request=self._wrap_input(rc), tools="tasks, routines, crm, telegram, web, browser, desktop, files, "
+                    request=await self._planning_input(rc), tools="tasks, routines, crm, telegram, web, browser, desktop, files, "
                     "memory, episodes, system (نصب ابزار/اجرای فرمان)", experience=exp_hint))],
                     max_tokens=1200, json_mode=True, effort="low", title="برنامه‌ریزی")
-                plan = parse_json(res.response.text) or {}
+                plan = normalize_plan(parse_json(res.response.text), {t.name: t.group for t in BUILTIN})
                 groups = sorted(set(groups) | set(plan.get("tool_groups", [])))
                 layers = sorted(set(layers) | set(plan.get("memory_layers", [])) | {"behavioral", "working"})
             else:
@@ -729,7 +730,9 @@ class AgentRunner:
             run.plan = plan
             await self._step(rc, "plan", f"برنامه: {len(plan.get('steps', []))} گام", detail=plan)
             await self._checkpoint(rc)
-        plan = s["plan"]
+        # Old checkpoints are normalized through the same boundary as new plans.
+        plan = normalize_plan(s["plan"], {t.name: t.group for t in BUILTIN})
+        s["plan"] = plan
 
         # ── ۴) انتخاب مدل اجرا ──
         employee = await self._employee(rc)
@@ -1127,6 +1130,22 @@ class AgentRunner:
             return f"<untrusted_data source=\"{rc.run.trigger}\">\n{text}\n</untrusted_data>"
         return text
 
+    async def _planning_input(self, rc: RunCtx) -> str:
+        """Goal/clarification must see the same recent conversation as execution.
+
+        Previously only the executor loaded history, after the goal stage could
+        already stop the Run for clarification. Bound history before that decision;
+        quoted context conveys no new authorization.
+        """
+        current = self._wrap_input(rc)
+        if not rc.run.conversation_id:
+            return current
+        summary, messages = await load_window(rc.session, rc.run.conversation_id, 1800,
+                                              exclude_run_id=rc.run.id)
+        context = json.dumps({"summary": summary, "messages": [
+            {"role": m.role, "content": m.content} for m in messages]}, ensure_ascii=False)
+        return f'<conversation_context untrusted="true">\n{context}\n</conversation_context>\n\nدرخواست فعلی:\n{current}'
+
     async def _process_calls(
         self,
         rc: RunCtx,
@@ -1241,9 +1260,11 @@ class AgentRunner:
                 intents.pop(cid, None)
                 transcript.append(LLMMessage("tool", result.output, tool_call_id=cid, tool_name=name, is_error=True))
                 self._record_evidence(rc, cid, name, args, result, True)
+                s["abort_kind"] = "validation"
+                s["abort_reason"] = "اثر بیرونی اجرای قطع‌شده نامعلوم است؛ پیش از هر تلاش دیگر باید تطبیق داده شود."
                 s["transcript"] = [m.to_json() for m in transcript]
                 await self._checkpoint(rc)
-                continue
+                return
             if effectful:
                 intents[cid] = {"tool": name, "at": utcnow().isoformat()}
                 s["transcript"] = [m.to_json() for m in transcript]
@@ -1306,7 +1327,8 @@ class AgentRunner:
                 tools_used.append(name)
             rc.run.steps_count += 1
             await self._finish_step(rc, st, "ok" if result.ok else "error",
-                                    {"output": truncate(result.output, 1200), "verified": result.verified},
+                                    {"output": truncate(result.output, 1200), "verified": result.verified,
+                                     "outcome": result.outcome.value},
                                     duration_ms=dur)
             digest = hashlib.sha1(result.output[:4000].encode(errors="ignore")).hexdigest()
             signal = loop.observe(name, sargs, result.ok, digest)
@@ -1424,7 +1446,14 @@ class AgentRunner:
             if d.action == "deny":
                 return "policy"
             if d.action == "ask" and ap is None and not mission_allows:
-                return "policy"  # تصمیم قبلی «خودکار» بود؛ سیاست فعلی تأیید صریح می‌خواهد
+                scope = grants.scope_for(tool.name, c, args, rc.state.get("approval_scopes", {}).get(cid, {}).get(c))
+                grant = await grants.find(rc.session, rc.run, tool.name, c, scope, rules.get(c), cid, consume=True)
+                if grant is None:
+                    await self._harness_decide(rc, cid, tool, c, args, rules, force_ask=True,
+                        reason="اجازهٔ جاری این اقدام کافی نیست؛ مجوز ممکن است لغو، منقضی یا تمام شده باشد. تأیید تازه لازم است.")
+                    return "policy"
+                await self._step(rc, "approval", "مجوز محدود در لحظه اجرا معتبر است", tool_name=tool.name,
+                                 detail={"grant_id": str(grant.id), "scope": grant.scope})
         return None
 
     @staticmethod
@@ -1482,6 +1511,7 @@ class AgentRunner:
         rc.state.setdefault("evidence", []).append({
             "call_id": cid, "signature": LoopController.signature(name, args),
             "tool": name, "ok": result.ok, "verified": result.verified,
+            "outcome": result.outcome.value,
             "requires_verification": verification_required, "summary": truncate(result.output, 300),
             # فقط نتیجه‌ای که محتوای صفحه را واقعاً دید (نه صرف رسیدن به URL) بررسی سایت حساب می‌شود
             "content_observed": isinstance(result.data, dict) and result.data.get("content_observed") is True,
@@ -1646,10 +1676,19 @@ class AgentRunner:
                          detail={"reason": d.reason, "category": category}, tool_name=tool.name)
         if d.action in ("allow", "deny"):
             return d.action
+        scope = grants.scope_for(tool.name, category, args,
+                                 rc.state.get("approval_scopes", {}).get(cid, {}).get(category))
+        if not force_ask and category != MISSION_ASK:
+            grant = await grants.find(rc.session, rc.run, tool.name, category, scope, rules.get(category), cid)
+            if grant is not None:
+                return "allow"  # use-time policy and atomic consumption still run before the effect
+        grant_meta = {"__grant": {**scope, "policy_revision": grants.policy_revision(rules.get(category))}} \
+            if scope and rc.state.get("requested_by") else {}
         ap = Approval(
             run_id=rc.run.id, tool_call_id=cid, category=category, tool_name=tool.name,
-            args={**display_args(tool.name, policy_args, sensitive=cid in rc.state.get("sensitive_calls", [])),
-                  "__binding": {"sig": sig, "employee": str(rc.run.employee_id or "")}},
+            args={**{k: v for k, v in display_args(tool.name, policy_args,
+                     sensitive=cid in rc.state.get("sensitive_calls", [])).items() if not k.startswith("__")},
+                  "__binding": {"sig": sig, "employee": str(rc.run.employee_id or "")}, **grant_meta},
             reason=reason or d.reason,
         )
         rc.session.add(ap)
@@ -1660,6 +1699,8 @@ class AgentRunner:
             "category": category, "category_label": label,
             "tool_name": tool.name, "tool_label": tool.label,
             "args": display_args(tool.name, policy_args, sensitive=cid in rc.state.get("sensitive_calls", [])), "reason": ap.reason,
+            "grant_scope": scope["target"] if scope else None,
+            "grant_options": ["once", "mission", "standing"] if scope and rc.state.get("requested_by") else ["once"],
             "rule_text": d.rule_text,
         })
         await notify(rc.session, f"درخواست اجازه: {tool.label or tool.name}", ap.reason, level="approval",

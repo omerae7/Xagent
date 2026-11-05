@@ -385,6 +385,8 @@ async def release_session(key: Any) -> None:
 _EFFECTS: list[tuple[str, re.Pattern[str]]] = [
     ("payment", re.compile(r"\b(pay|payment|checkout|buy|purchase|place order|subscribe|donate)\b|پرداخت|خرید|تسویه|"
                            r"ثبت سفارش|سفارش نهایی|اشتراک", re.I)),
+    ("login", re.compile(r"\b(log[ -]?in|sign[ -]?in|authenticate|authentication|oauth)\b|"
+                         r"ورود|وارد حساب|احراز هویت", re.I)),
     ("web_irreversible", re.compile(r"\b(delete|remove|erase|destroy|confirm|submit order|close account|deactivate|"
                                     r"unsubscribe|transfer|cancel (subscription|order)|change (password|email))\b|"
                                     r"حذف|پاک ?کن|تأیید نهایی|تایید نهایی|غیرفعال|انتقال|لغو اشتراک|تغییر رمز", re.I)),
@@ -418,7 +420,7 @@ _INFO_FN = _with_helpers(_INFO_FN)
 _DESCRIBE_JS = _with_helpers(_DESCRIBE_JS).replace("__XA_INFO_FN__", _INFO_FN)
 _INFO_ALL_JS = f"els => els.slice(0, 25).map({_INFO_FN})"
 _IS_SENSITIVE_JS = f"el => ({_SENSITIVE_FN})(el)"
-_SEVERITY = {"payment": 3, "web_irreversible": 2, "external_message": 1}
+_SEVERITY = {"payment": 4, "login": 3, "web_irreversible": 2, "external_message": 1}
 
 
 def classify_effect(info: dict[str, Any] | None, *, submit: bool = False) -> str | None:
@@ -789,14 +791,31 @@ async def browser_type(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
     await _guard()
     async with _op_lock(ctx):
         page = await _page(ctx)
-        target = _target(a)
-        el = page.locator(target).first if a.get("ref") else _locator(page, a).first
+        # Text to be entered is never a page-text locator. Only use editable DOM
+        # controls, and refuse ambiguous/stale targets before any effect.
+        if a.get("ref") or a.get("selector"):
+            candidate = page.locator(_target(a))
+        elif a.get("label"):
+            candidate = page.get_by_role("textbox", name=a["label"], exact=True).or_(
+                page.get_by_label(a["label"], exact=True))
+        else:
+            candidate = page.locator("input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, "
+                                     "[contenteditable=true], [contenteditable=plaintext-only]")
+        candidates = []
+        for item in await candidate.all():
+            if await item.is_visible() and await item.is_editable():
+                candidates.append(item)
+        if len(candidates) != 1:
+            return ToolResult(False, "فیلد قابل ویرایش یکتا پیدا نشد؛ ابتدا browser_read و سپس ref یا label دقیق بده.",
+                              {"error": "ambiguous_target" if candidates else "missing_target", "attempted": False},
+                              verified=False)
+        el = candidates[0]
         input_type = (await el.get_attribute("type") or "").lower()
         autocomplete = (await el.get_attribute("autocomplete") or "").lower()
         sensitive = bool(await el.evaluate(_IS_SENSITIVE_JS))
         if sensitive:
             register_secret(str(a.get("value") or ""), min_len=6)  # هر جا (خطا/لاگ/خروجی) تکرار شود پنهان می‌شود
-        info = await _describe(page, a) or {}
+        info = await el.evaluate(_INFO_FN)
         if input_type == "password" or "password" in autocomplete:
             _enforce_category(ctx, page, "login", info)
         if a.get("submit"):
@@ -896,8 +915,10 @@ TOOLS = [
     Tool("browser_click", "کلیک روی عنصر با ref (از فهرست عناصر)، selector یا متن.",
          obj({"ref": i("شماره عنصر"), "selector": s("selector"), "text": s("متن عنصر")}), browser_click, "browser",
          category="desktop_control", label="کلیک در مرورگر"),
-    Tool("browser_type", "وارد کردن متن در فیلد (ref/selector) و ارسال اختیاری. ورود رمز عبور نیازمند مجوز لاگین است.",
-         obj({"ref": i("شماره عنصر"), "selector": s("selector"), "value": s("متن"), "submit": b("فشردن Enter"),
+    Tool("browser_type", "وارد کردن متن در فیلد ref/selector/label؛ بدون هدف فقط فیلد یکتای قابل ویرایش. "
+         "value متن ورودی است، نه selector. ارسال اختیاری و لاگین جداگانه مجوز می‌خواهند.",
+         obj({"ref": i("شماره عنصر"), "selector": s("CSS selector فیلد، نه متن پیام"),
+              "label": s("نام دسترس‌پذیر دقیق input یا contenteditable"), "value": s("متن"), "submit": b("فشردن Enter"),
               "expect_text": s("متن دقیق رسید تازه و قابل مشاهده پس از ارسال؛ بدون آن ارسال تأیید نمی‌شود")},
              ["value"]), browser_type, "browser", category="desktop_control", label="تایپ در مرورگر"),
     Tool("browser_screenshot", "گرفتن تصویر از صفحه مرورگر و تحلیل آن با مدل بینایی.",

@@ -318,6 +318,26 @@ async def get_harness(_: User = Depends(current_user), session: AsyncSession = D
     ]}
 
 
+@router.get("/permissions")
+async def list_permissions(user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
+    from xagent_core.models import PermissionGrant
+    rows = (await session.execute(select(PermissionGrant).where(PermissionGrant.owner == user.username)
+                                  .order_by(PermissionGrant.created_at.desc()).limit(200))).scalars()
+    return {"items": [ser(g, exclude={"scope_hash", "policy_revision"}) for g in rows]}
+
+
+@router.post("/permissions/{gid}/revoke")
+async def revoke_permission(gid: str, user: User = Depends(owner_user), session: AsyncSession = Depends(get_session)):
+    from xagent_core.models import PermissionGrant
+    g = await session.get(PermissionGrant, parse_uuid(gid), with_for_update=True)
+    if g is None or g.owner != user.username:
+        raise HTTPException(404, "مجوز پیدا نشد")
+    if g.revoked_at is None:
+        g.revoked_at = utcnow()
+        await audit(session, user.username, "permission.revoked", str(g.id), {})
+    return {"ok": True}
+
+
 @router.put("/harness/{category}")
 async def put_harness(category: str, body: HarnessIn, user: User = Depends(owner_user),
                       session: AsyncSession = Depends(get_session)):

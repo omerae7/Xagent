@@ -144,14 +144,20 @@ async def stream(request: Request):
                     yield f"event: resync\ndata: {json.dumps({'reason': 'overflow'})}\n\n"
                     continue
                 getter = asyncio.ensure_future(queue.get())
-                done, _ = await asyncio.wait({getter, task}, timeout=15 if not degraded else 1,
-                                             return_when=asyncio.FIRST_COMPLETED)
+                # Authentication has its own deadline; an idle Redis queue must
+                # never delay revocation checks until the next keepalive/event.
+                timeout = max(0.01, min(1 if degraded else 15, SSE_REAUTH_SECONDS - (loop.time() - last_auth)))
+                try:
+                    done, _ = await asyncio.wait({getter, task}, timeout=timeout,
+                                                 return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    if not getter.done():
+                        getter.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await getter
                 if getter in done:
                     yield sse_frame(getter.result())
                 else:
-                    getter.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await getter
                     if not done:
                         yield ": ping\n\n"
         finally:

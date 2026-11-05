@@ -233,7 +233,14 @@ def test_missing_result_and_unrelated_success_cannot_satisfy_plan():
     state = {"plan": {"steps": [{"tool_hint": "telegram_send"}]}, "evidence": [
         {"tool": "file_write", "ok": True, "verified": True},
     ], "transcript": [{"role": "assistant", "tool_calls": [{"id": "missing", "name": "telegram_send"}]}]}
-    assert len(evidence_issues(state, True)) == 2
+    assert evidence_issues(state, True) == ["فراخوانی ابزار بدون نتیجه ثبت‌شده وجود دارد"]
+    from types import SimpleNamespace
+
+    from xagent_agent.validation import objective_report
+    # The actual user's send objective remains mandatory even though optional
+    # model hints no longer prescribe which execution method must be used.
+    run = SimpleNamespace(input="reply to @alice", trigger="chat", routine_id=None)
+    assert objective_report(run, state)["missing"] == ["message_sent"]
     state["evidence"].append({"tool": "telegram_send", "call_id": "missing", "ok": False, "verified": False})
     assert evidence_issues(state, True)
 

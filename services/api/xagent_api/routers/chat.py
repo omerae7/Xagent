@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from xagent_agent.classifier import detect_command
@@ -41,6 +41,8 @@ def ser_approval(a: Approval, extra: dict | None = None) -> dict:
         "tool_label": tool.label if tool else a.tool_name,
         # اثرانگشت اتصال تأیید داخلی است و نمایش داده نمی‌شود
         "args": {k: v for k, v in (a.args or {}).items() if not str(k).startswith("__")},
+        "grant_scope": ((a.args or {}).get("__grant") or {}).get("target"),
+        "grant_options": ["once", "mission", "standing"] if (a.args or {}).get("__grant") else ["once"],
         **(extra or {}),
     })
 MAX_UPLOAD = 50 * 1024 * 1024
@@ -65,6 +67,9 @@ class ConvPatch(BaseModel):
 class DecisionIn(BaseModel):
     decision: str = Field(pattern="^(approve|deny|revoke)$")
     note: str | None = None
+    scope: str = Field(default="once", pattern="^(once|mission|standing)$")
+    days: int = Field(default=30, ge=1, le=90)
+    max_uses: int = Field(default=100, ge=1, le=1000)
 
 
 class ResumeIn(BaseModel):
@@ -134,7 +139,7 @@ async def delete_conversation(cid: str, user: User = Depends(owner_user),
 
 
 @router.get("/conversations/{cid}/messages")
-async def list_messages(cid: str, before: str | None = None, limit: int = Query(60, le=200),
+async def list_messages(cid: str, before: str | None = None, limit: int = Query(60, ge=1, le=200),
                         _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     conv = await session.get(Conversation, parse_uuid(cid))
     if conv is None:
@@ -142,9 +147,13 @@ async def list_messages(cid: str, before: str | None = None, limit: int = Query(
     stmt = select(Message).where(Message.conversation_id == conv.id)
     if before:
         ref = await session.get(Message, parse_uuid(before))
-        if ref:
-            stmt = stmt.where(Message.created_at < ref.created_at)
-    rows = list((await session.execute(stmt.order_by(Message.created_at.desc()).limit(limit))).scalars().all())
+        if ref is None or ref.conversation_id != conv.id:
+            raise HTTPException(404, "نشانگر گفتگو معتبر نیست")
+        stmt = stmt.where(tuple_(Message.created_at, Message.id) < tuple_(ref.created_at, ref.id))
+    rows = list((await session.execute(stmt.order_by(Message.created_at.desc(), Message.id.desc())
+                                       .limit(limit + 1))).scalars().all())
+    has_more = len(rows) > limit
+    rows = rows[:limit]
     rows.reverse()
     run_ids = {m.run_id for m in rows if m.run_id}
     runs = {}
@@ -165,6 +174,7 @@ async def list_messages(cid: str, before: str | None = None, limit: int = Query(
     return {
         "conversation": ser(conv),
         "items": [ser(m, exclude={"tsv"}) for m in rows],
+        "has_more": has_more,
         "runs": runs,
         "active_run": ser(active) if active else None,
         "pending_approvals": pending,
@@ -389,6 +399,13 @@ async def decide(aid: str, body: DecisionIn, user: User = Depends(owner_user),
     if a is None:
         raise HTTPException(404, "درخواست یافت نشد")
     d = await approvals.decide(session, a, body.decision, user.username, body.note, channel="panel")
+    if d.ok and body.decision == "approve" and body.scope != "once":
+        from xagent_agent import grants
+        try:
+            await grants.create(session, a, user.username, body.scope, days=body.days, max_uses=body.max_uses)
+        except ValueError as exc:
+            await session.rollback()
+            raise HTTPException(422, str(exc)) from exc
     await session.commit()
     if not d.ok:
         raise HTTPException(409, d.message)

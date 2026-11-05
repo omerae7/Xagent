@@ -91,25 +91,27 @@ async def test_A5_revoked_token_closes_stream_and_resync_is_sent(app_client, mon
     from xagent_api.routers import live
 
     monkeypatch.setattr(live, "SSE_REAUTH_SECONDS", 0.3)
-    async with live_api() as base, httpx.AsyncClient(base_url=base, timeout=15) as client:
-        await _login(client)
-        async with client.stream("GET", "/api/events/stream") as resp:
-            chunks = []
-            async for text in resp.aiter_text():
-                chunks.append(text)
-                if "event: resync" in "".join(chunks) and len(chunks) == 1 or len(chunks) == 2:
-                    # ابطال همه نشست‌ها (افزایش token_version) در میانه جریان
-                    async with session_scope() as s:
-                        u = (await s.execute(select(User).where(User.username == "admin"))).scalar_one()
-                        u.token_version += 1
-                if "event: auth" in text:
-                    break
-            joined = "".join(chunks)
-        assert "event: resync" in joined, "پس از اتصال، رویداد همگام‌سازی دوباره ارسال نشد"
-        assert "revoked" in joined, "جریان پس از ابطال توکن باز ماند"
-    # app_client جلسه قدیمی را استفاده می‌کند؛ برای تست‌های بعدی دوباره وارد می‌شویم
-    r = await app_client.post("/api/auth/login", json={"username": "admin", "password": "Test-Password-123"})
-    app_client.cookies.set("xa_token", r.json()["token"])
+    try:
+        async with live_api() as base, httpx.AsyncClient(base_url=base, timeout=15) as client:
+            await _login(client)
+            async with client.stream("GET", "/api/events/stream") as resp:
+                chunks = []
+                async for text in resp.aiter_text():
+                    chunks.append(text)
+                    if "event: resync" in "".join(chunks) and len(chunks) == 1 or len(chunks) == 2:
+                        # ابطال همه نشست‌ها (افزایش token_version) در میانه جریان
+                        async with session_scope() as s:
+                            u = (await s.execute(select(User).where(User.username == "admin"))).scalar_one()
+                            u.token_version += 1
+                    if "event: auth" in text:
+                        break
+                joined = "".join(chunks)
+            assert "event: resync" in joined, "پس از اتصال، رویداد همگام‌سازی دوباره ارسال نشد"
+            assert "revoked" in joined, "جریان پس از ابطال توکن باز ماند"
+    finally:
+        # app_client جلسه قدیمی را استفاده می‌کند؛ برای تست‌های بعدی دوباره وارد می‌شویم
+        r = await app_client.post("/api/auth/login", json={"username": "admin", "password": "Test-Password-123"})
+        app_client.cookies.set("xa_token", r.json()["token"])
 
 
 async def test_health_is_bounded_and_reports_worker_readiness(app_client):
