@@ -6,6 +6,7 @@ import hashlib
 from typing import Any
 
 from xagent_core import inbox
+from xagent_core.models import MissionAction
 from xagent_core.text import truncate
 
 from .. import missions
@@ -38,11 +39,19 @@ def _definitely_not_sent(e: Exception) -> bool:
     return type(e).__module__.startswith("telethon.errors") and "Timeout" not in type(e).__name__
 
 
-async def _reconcile(br: Any, chat: str, text: str) -> bool:
-    """تطبیق با مقصد: آیا پیام خروجی با همین متن در گفتگو دیده می‌شود؟ (بهترین تلاش؛ بدون ادعای قطعیت)"""
+async def _reconcile(br: Any, chat: str, text: str, receipt: dict | None = None) -> bool:
+    """Only a persisted receipt ID identifies the uncertain operation.
+
+    An older identical message or an incoming sender named «من» is not proof.
+    Without a recorded ID, leave the effect unknown for explicit reconciliation.
+    """
+    mid = valid_receipt(receipt)
+    if mid is None:
+        return False
     try:
         for m in await br.recent(chat, 15):
-            if m.get("sender") == "من" and (m.get("text") or "").strip() == text.strip():
+            if (m.get("out") is True and valid_receipt({"message_id": m.get("id")}) == mid
+                    and (m.get("text") or "").strip() == text.strip()):
                 return True
     except Exception:  # noqa: BLE001
         return False
@@ -65,12 +74,21 @@ async def telegram_send(ctx: ToolContext, a: dict[str, Any]) -> ToolResult:
         key, mission_id=mission_id, routine_id=ctx.extra.get("routine_id"), run_id=ctx.run_id,
         action="telegram_reply" if ref else "telegram_send", target=str(a["chat"]), ref=ref,
         detail={"text": truncate(text, 300)})
+    previous = await ctx.session.get(MissionAction, aid) if aid is not None and verdict in {"done", "uncertain"} else None
+    receipt = previous.detail if previous is not None else None
     if verdict == "done":
-        return ToolResult(True, "این پیام قبلاً ارسال شده است؛ ارسال تکراری انجام نشد.", {"duplicate": True}, verified=True)
+        mid = valid_receipt(receipt)
+        if mid is None:
+            return ToolResult(False, "رکورد قبلی رسید معتبر ندارد؛ ارسال تکرار نشد و تکمیل قابل تأیید نیست.",
+                              {"outcome_uncertain": True, "historical_receipt_missing": True})
+        return ToolResult(True, "این پیام قبلاً ارسال شده است؛ ارسال تکراری انجام نشد.",
+                          {"duplicate": True, "message_id": mid}, verified=True)
     if verdict == "uncertain":
-        if aid is not None and await _reconcile(br, str(a["chat"]), text):
-            await missions.outbox_mark(aid, "reconciled", {"by": "recent_history"})
-            return ToolResult(True, "ارسال قبلی در تاریخچه گفتگو تأیید شد؛ دوباره ارسال نشد.", {"reconciled": True}, verified=True)
+        if aid is not None and await _reconcile(br, str(a["chat"]), text, receipt):
+            mid = valid_receipt(receipt)
+            await missions.outbox_mark(aid, "reconciled", {"by": "receipt_history", "message_id": mid})
+            return ToolResult(True, "رسید ثبت‌شده با پیام خروجی مقصد تطبیق داده شد؛ دوباره ارسال نشد.",
+                              {"reconciled": True, "message_id": mid}, verified=True)
         await inbox.post(ctx.session, kind="error", severity="important",
                          title=f"نتیجه ارسال پیام به {a['chat']} نامشخص است",
                          body="ارسال قبلی ممکن است انجام شده باشد؛ برای جلوگیری از پیام تکراری دوباره ارسال نشد. "

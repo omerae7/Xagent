@@ -326,6 +326,7 @@ class TelegramBridge:
             sender = await m.get_sender()
             out.append({
                 "id": m.id,
+                "out": bool(m.out),
                 "date": jalali_str(m.date) if m.date else "",
                 "sender": "من" if m.out else (getattr(sender, "first_name", None) or getattr(sender, "title", "?")),
                 "text": m.message or ("[رسانه]" if m.media else ""),
