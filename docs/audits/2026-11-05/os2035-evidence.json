@@ -1,0 +1,128 @@
+{
+  "baseline": {
+    "sha": "c3257dcc375c93af38260902a83462304cebc588",
+    "passed": 461,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 295.17
+  },
+  "release": {
+    "source_commit": "06220f56c05491e5841c85acd1dd077d55ab95fb",
+    "passed": 547,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 345.72,
+    "new_cases": 86,
+    "removed_baseline_cases": 0
+  },
+  "desktop": [
+    {
+      "choice": "chrome",
+      "health": {
+        "ok": true,
+        "display": ":1",
+        "chromium_cdp": true,
+        "takeover": false,
+        "display_ready": true,
+        "desktop_ready": true,
+        "browser_cdp": true,
+        "browser_version": "Chrome/157.0.8103.38",
+        "git": true,
+        "node": true,
+        "uv": true,
+        "mcp_servers": []
+      },
+      "startup_seconds": 18.491,
+      "single_sample_process_stats": {
+        "rss_kib_sum": 1541260,
+        "lifetime_cpu_percent_sum": 8.1,
+        "processes": 13
+      },
+      "checks": [
+        "graphical CDP",
+        "draft survives reconnect",
+        "cookie survives restart",
+        "actual desktop screenshot",
+        "takeover rejects input",
+        "loopback test ports",
+        "hung browser fails readiness while daemon stays live"
+      ]
+    },
+    {
+      "choice": "chromium",
+      "health": {
+        "ok": true,
+        "display": ":1",
+        "chromium_cdp": true,
+        "takeover": false,
+        "display_ready": true,
+        "desktop_ready": true,
+        "browser_cdp": true,
+        "browser_version": "Chrome/156.0.8078.79",
+        "git": true,
+        "node": true,
+        "uv": true,
+        "mcp_servers": []
+      },
+      "startup_seconds": 22.949,
+      "single_sample_process_stats": {
+        "rss_kib_sum": 1348776,
+        "lifetime_cpu_percent_sum": 8.2,
+        "processes": 12
+      },
+      "checks": [
+        "graphical CDP",
+        "draft survives reconnect",
+        "cookie survives restart",
+        "actual desktop screenshot",
+        "takeover rejects input",
+        "loopback test ports",
+        "hung browser fails readiness while daemon stays live"
+      ]
+    }
+  ],
+  "bundle": {
+    "baseline_js_bytes": 964915,
+    "current_js_bytes": 968006,
+    "difference_bytes": 3091,
+    "difference_percent": 0.32,
+    "method": "sum uncompressed Vite JavaScript chunks; includes lazy noVNC, excludes fonts and CSS; not first-load or runtime benchmark",
+    "timelines": {
+      "input_steps": 1000,
+      "default_rendered_steps": 6,
+      "expanded_steps": 1000
+    }
+  },
+  "reference_sources_hash_verified": true,
+  "live_paid_models_used": false,
+  "live_telegram_used": false,
+  "vps_modified": false,
+  "npm_runtime_audit": {
+    "high": 3,
+    "critical": 0,
+    "exploitable_in_app_proven": false
+  },
+  "github_api": "Forbidden; api.github.com network access blocked; Git remote is separate",
+  "final_ci": "At documentation commit creation: not yet dispatched. Verify exact delivered HEAD in GitHub Actions; immutable run URLs are recorded in the final delivery response.",
+  "environment": {
+    "python": "3.12.14",
+    "node": "v24.22.1",
+    "packages": {
+      "fastapi": "0.162.0",
+      "sqlalchemy": "2.0.57",
+      "asyncpg": "0.32.0",
+      "redis": "8.1.0",
+      "pydantic": "2.14.2",
+      "httpx": "0.28.1",
+      "anthropic": "2.5.0",
+      "mcp": "2.3.0",
+      "playwright": "1.64.1",
+      "telethon": "1.45.0",
+      "croniter": "6.2.4",
+      "pytest": "9.2.0",
+      "pytest-asyncio": "1.4.1.post1",
+      "ruff": "0.17.3"
+    }
+  },
+  "caddy_configuration_matches_tracked_source": true
+}
