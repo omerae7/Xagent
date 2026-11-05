@@ -1,0 +1,23 @@
+{
+  "name": "X Agent — کارمند دیجیتال",
+  "short_name": "X Agent",
+  "description": "پنل مدیریت ایجنت هوشمند ۲۴ساعته",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#060a16",
+  "theme_color": "#060a16",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    { "name": "گفتگو", "url": "/chat" },
+    { "name": "وظایف", "url": "/tasks" }
+  ]
+}

@@ -1,0 +1,152 @@
+Xagent OS2035 — verification checkpoint 2026-11-05
+Repository: https://github.com/omerae7/Xagent
+Branch: ccr-345833d2-sca9ob
+Baseline: c3257dcc375c93af38260902a83462304cebc588
+Validated source/tests: 0dac265d8db1dc24646b709db473f8f3c11d90ed
+Production source unchanged since 06220f56c05491e5841c85acd1dd077d55ab95fb
+Working tree was initially clean. Complete non-shallow repository; git fsck connectivity passed.
+
+Executed baseline: 461 passed, 0 failed, 0 skipped, 295.17 seconds.
+Baseline scope: command started from clean c325; Python source remained unchanged during
+the run. Frontend design work overlapped part of the long run, so this command alone is
+not an immutable visual baseline. Original pre-edit built assets were separately checked
+in Chromium: outage screen, recovery, disconnect banner without logout, recovery after
+disconnect, and 401 login all matched expected outcomes. Original screenshot uses those
+pre-edit assets. Standalone check: /workspace/xagent-os2035/pristine_ui_baseline.py;
+result: /workspace/xagent-os2035/pristine-ui-baseline.log. This limited original-UI check
+is not an exhaustive baseline UI audit.
+Executed final source/tests: 548 passed, 0 failed, 0 skipped, 349.25 seconds.
+Original testcase identity set retained: 461/461. Added cases: 87. Removed cases: 0.
+Final command (disposable local services, no production secrets):
+PATH=/workspace/xagent-followup-4da3581/bin:$PATH XAGENT_TEST_CHROME=/usr/bin/chromium XAGENT_UI_ARTIFACT_DIR=/workspace/xagent-os2035 PYTHONDONTWRITEBYTECODE=1 /workspace/xagent-audit-venv/bin/pytest -q -rs --tb=short --junitxml=/workspace/xagent-os2035/takeover-full.xml
+The PATH supplies real PostgreSQL CLI wrappers for the owned disposable test container.
+
+Targeted checks executed:
+- Planner/evidence/context/typing contract + original execution validation: 58 passed.
+- Editable fields + original browser continuity: 19 passed before later added cases; final suite contains all additions.
+- Scoped permissions and original continuity: 32 passed before final additions; final suite covers all additions.
+- Native uncertainty/SSE/permissions: 16 passed.
+- Receipt reconciliation/native delivery/scheduled replies: 23 passed.
+- Safe UI-action recovery/real DOM/planning/component controls: 43 passed.
+- Responsive/axe checks are included in the final full run, not counted as separate additional passed cases.
+
+Real graphical Docker browser command:
+/workspace/xagent-audit-venv/bin/python tests/desktop_browser.py --image xagent-os2035-desktop:latest --report /workspace/xagent-os2035/desktop-final-results.json
+Both Chrome and Chromium passed actual CDP, draft reconnect, cookie restart, screenshot,
+takeover, loopback ports, display readiness, and controlled hung-browser 503 checks.
+Desktop final test image: sha256:911d0e4741de6025a8b2909f10fd392d7a4163a52c3f5e8a25cbc848d291fef4
+Built from tracked Dockerfile with the managed environment's ephemeral proxy-CA wrapper;
+CA mounted as BuildKit secret and removed in each network layer, never committed/copied into final image.
+
+Caddy: python tests/caddy_tls.py --image xagent-web-sni-test
+IP, domain, explicit override: no-SNI TLS/routing and restart passed.
+System certificate trust rejected the internal CA as expected; explicit CA trust passed.
+Tested Caddyfile matched tracked infra/caddy/Caddyfile byte-for-byte.
+No production/public-IP reachability check or VPS deployment was performed.
+
+Static/build:
+ruff check packages services tests infra/desktop/agentd.py — passed
+python -m compileall -q packages services infra/desktop/agentd.py tests — passed
+bash -n installer/updater/control/browser/updater-E2E shell scripts — passed
+npm run build (TypeScript + Vite) — passed
+npm runtime audit — 3 high, 0 critical; exploitability in this app not established
+axe-core 4.14.0 — development/test dependency only; no runtime framework added
+Ten pinned reference-source/test/license snapshots hash-checked; upstream test suites not executed.
+
+Negative reproductions preserved outside the repository in /workspace/xagent-os2035:
+alignment-before.log, planner-before.log, browser-before.log, readiness-before.log,
+uncertainty-before-unit.log, uncertainty-before-native.log (15 controlled local sends),
+history-before.log, receipt-before.log, action-proof-before.log, axe-details.json.
+Full intermediate logs retained: full.log (500 passed/16 failed), final.log (519/2),
+release.log (529/1), verified.log (531/0), frozen.log (533/0), delivery.log (542/0),
+final-delivery.log (544/1), ship.log (547/0).
+The 16-failure run started with idle SSE revocation timeout; a test-session cleanup defect
+caused the subsequent 15 authentication failures. Cleanup now runs in finally.
+The final single-failure run exposed mock browser recovery's dependence on a fixture oracle;
+real post-recovery tool observation and precise NOT_STARTED recovery replaced that shortcut.
+No skipped test is counted as passing; no paid model or real Telegram account was used.
+
+Not executed locally: full updater/systemd/chown E2E under privileged isolated host,
+full backend/web Docker image builds (CI containers job is the separate gate), live paid providers,
+live MTProto, public VPS/browser trust, mobile OS IME, screen-reader usability or a 24/7 soak.
+Graphical desktop and Caddy containers were disposable and cleaned up by their test scripts.
+
+Git commits:
+49755d2c8cf310bec0c45ea585fe326cb0233485 — execution evidence, scoped permissions, history
+ff09eeb71c1f88f5bf98486260854ef3f18df806 — graphical readiness
+0f7852da893d45d8877bb9d0bb9f73dc921597a8 — OS2035 interface and connected panel tests
+6042a7e33a880eccccf108ab84d06c4f736b086b — receipt-bound reconciliation
+06220f56c05491e5841c85acd1dd077d55ab95fb — UI action objectives and safe observed recovery
+
+PR #2 was confirmed Draft from GitHub public HTML.
+GitHub API check returned: Get https://api.github.com/repos/omerae7/Xagent/pulls/2: Forbidden
+Web session is not authenticated. Need API egress, then verify App Pull requests: read/write.
+Git remote authentication is separate; push/remote verification and CI recorded in delivery appendix.
+
+Additional test integrity verification:
+- Inherited browser fixture bypassed the takeover guard; a negative real owner-API test exposed it.
+- Guard bypass removed; starting test Redis owner state is isolated and restored instead.
+- Actual owner API -> Redis -> browser guard -> no field effect -> return -> verified field effect.
+- Targeted 39 passed in 59.77s; full 548 passed, 0 failed, 0 skipped.
+- Checkpoint 397eec6 CI push 42071197477 and PR 42071209794 completed successfully, tests and containers.
+- Final test-only commit: 0dac265d8db1dc24646b709db473f8f3c11d90ed.
+- Updated report/final delivered HEAD CI must be independently checked; see final delivery response.
+
+Exact files changed versus baseline, including documentation/evidence (no deletions):
+M	apps/web/package-lock.json
+M	apps/web/package.json
+M	apps/web/src/components/chat.tsx
+M	apps/web/src/components/layout/Shell.tsx
+M	apps/web/src/components/markdown.tsx
+A	apps/web/src/components/ui/ExecutionStatus.tsx
+A	apps/web/src/components/viz/Orbit.tsx
+M	apps/web/src/pages/Chat.tsx
+M	apps/web/src/pages/Dashboard.tsx
+M	apps/web/src/pages/Desktop.tsx
+M	apps/web/src/pages/Settings.tsx
+M	apps/web/src/styles/index.css
+M	apps/web/src/styles/tokens.css
+M	compose.yaml
+A	docs/audits/2026-11-05/codex-os2035-engineering.md
+A	docs/audits/2026-11-05/os2035-evidence.json
+A	docs/audits/2026-11-05/os2035-inventory.csv
+A	docs/audits/2026-11-05/os2035-pr-body.md
+A	docs/audits/2026-11-05/os2035-verification.txt
+A	docs/audits/2026-11-05/os2035/baseline-chat.png
+A	docs/audits/2026-11-05/os2035/chat-dark-desktop.png
+A	docs/audits/2026-11-05/os2035/chat-dark-mobile.png
+A	docs/audits/2026-11-05/os2035/chat-light-desktop.png
+A	docs/audits/2026-11-05/os2035/chat-light-mobile.png
+M	infra/desktop/agentd.py
+A	packages/agent_core/xagent_agent/grants.py
+M	packages/agent_core/xagent_agent/manifest.py
+M	packages/agent_core/xagent_agent/pipeline.py
+A	packages/agent_core/xagent_agent/planning.py
+M	packages/agent_core/xagent_agent/validation.py
+M	packages/core/xagent_core/models.py
+M	packages/tools/xagent_tools/base.py
+M	packages/tools/xagent_tools/builtin/computer.py
+M	packages/tools/xagent_tools/builtin/telegram.py
+A	services/api/migrations/versions/0008_scoped_permission_grants.py
+M	services/api/xagent_api/routers/chat.py
+M	services/api/xagent_api/routers/live.py
+M	services/api/xagent_api/routers/settings.py
+M	services/worker/xagent_worker/telegram.py
+M	tests/autonomy_helpers.py
+M	tests/desktop_browser.py
+M	tests/test_autonomy_acceptance.py
+M	tests/test_execution_validation.py
+M	tests/test_followup_browser_continuity.py
+M	tests/test_forensic_s1_markdown.py
+M	tests/test_master_worker.py
+A	tests/test_os2035_browser.py
+A	tests/test_os2035_effects.py
+A	tests/test_os2035_endtoend.py
+A	tests/test_os2035_execution_ui.py
+A	tests/test_os2035_history.py
+A	tests/test_os2035_permissions.py
+A	tests/test_os2035_planning.py
+A	tests/test_os2035_readiness.py
+A	tests/test_os2035_reconciliation.py
+A	tests/test_os2035_telegram.py
+A	tests/test_os2035_ui.py

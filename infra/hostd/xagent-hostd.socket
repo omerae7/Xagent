@@ -1,0 +1,11 @@
+[Unit]
+Description=X Agent — سوکت کارگزار فرمان میزبان (فقط سوکت یونیکس، بدون پورت شبکه)
+
+[Socket]
+ListenStream=/opt/xagent/run/hostd/hostd.sock
+SocketMode=0666
+# دسترسی با مجوز پوشه محدود می‌شود: /opt/xagent/run/hostd = root:1001 با مجوز 0750 (فقط کانتینر API)
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

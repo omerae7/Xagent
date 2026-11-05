@@ -1,0 +1,274 @@
+[
+  {
+    "project": "hermes-agent",
+    "repository": "https://github.com/NousResearch/hermes-agent",
+    "revision": "d0001c5ba236a31ebcc679acc38516f05a9847fa",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+      },
+      {
+        "path": "agent/context_compressor.py",
+        "sha256": "2a4fcfe558e7319cf26842c7898a671140c0b5f2d06da33245e6eced391acd43"
+      },
+      {
+        "path": "agent/context_compressor_prune.py",
+        "sha256": "567abd766f6963fde1a1a9d0863fd2c6fb42c9cfd37ee9036577dedbc40fad6a"
+      },
+      {
+        "path": "tests/agent/test_413_compression.py",
+        "sha256": "5c7d63850035310e9712902ecb8728feccf767a9dcb988eadef3dc441a79a443"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "openclaw",
+    "repository": "https://github.com/openclaw/openclaw",
+    "revision": "de04fbe0caa9332999bdcc28d5d4e049672afb16",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "9efd316ecf1c4c60f6fd5d26433142fff2b6794d7d328e9bc6179b29bf9c82a4"
+      },
+      {
+        "path": "src/acp/approval-classifier.test.ts",
+        "sha256": "884f6bdc8ac0c6f347b68033959ffd819050e8c7a2d5e5d271db8cdea1e26617"
+      },
+      {
+        "path": "src/acp/approval-classifier.ts",
+        "sha256": "43f7f63430335e48a5b5184c6a417050009af0bac7311f5dee28a32bd2696509"
+      },
+      {
+        "path": "src/acp/control-plane/session-actor-queue.ts",
+        "sha256": "8c8db89577845e374d626e4762c32d3dbfec0e89b55a77256b885cde69c2a9f3"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "agent-zero",
+    "repository": "https://github.com/agent0ai/agent-zero",
+    "revision": "ba9b67df0f54ac78106ae85c552ef5d2458f7c9a",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "23844ed5fb9976b15e6c0be1b617918cb1c32e13e8d70b74100dae08d40fbf23"
+      },
+      {
+        "path": "agent.py",
+        "sha256": "fd7fa584f2cdf7bf483a10542735853ffe65cacf9e2a701009f853d488b40b2e"
+      },
+      {
+        "path": "helpers/tool.py",
+        "sha256": "cd95509c4ceb2cca1e8cdd5c496b6d66257c3ef5b9b6025c5e8bdfd020d1a2cc"
+      },
+      {
+        "path": "tests/test_browser_tool_output.py",
+        "sha256": "08a41ce0c54b96f98a00da9b9d7151a9a5318381586f223e695c84ed59248140"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "paperclip",
+    "repository": "https://github.com/paperclipai/paperclip",
+    "revision": "3a090b815b9f84873720fa2d0b9bbc114e5054e1",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "7f8a27f0979bded50e240caa8c8c29f3088ddf87032cb83e5a9732bff91d18b4"
+      },
+      {
+        "path": "server/src/services/budget-admission-controls.ts",
+        "sha256": "7b6cdec567ddd817ea91ac7e7fb74ff7b3e8dd0ea696477d3b4cbd751a3c3ec3"
+      },
+      {
+        "path": "server/src/services/budget-live-usage.test.ts",
+        "sha256": "4d1cfe2eb67fe104a2d03926a313e3dc343df32afec81c9a7b1e82c5a0d00ae0"
+      },
+      {
+        "path": "server/src/services/budget-reservations.ts",
+        "sha256": "8131c286e816d3ad9ff06661d2596d6786e045214570f763f9429ee3356497e0"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "n8n",
+    "repository": "https://github.com/n8n-io/n8n",
+    "revision": "7a1577667ead44c456b8353f05339045f0a4c006",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE.md",
+        "sha256": "d2f621f59aa4c10eab79b6333e59d9d3d5b53307dcfd16dbd75e40e679e84965"
+      },
+      {
+        "path": "packages/cli/src/executions/__tests__/execution-recovery.service.integration.test.ts",
+        "sha256": "01ce1203c4c8ec8915eca22c8d62a8aad51b850d9187cc780f5279f5aed4b215"
+      },
+      {
+        "path": "packages/cli/src/executions/execution-recovery.service.ts",
+        "sha256": "6f3d258d72601bb435c017f34ac579f9e86a88a88f8f5011019bf0251d61e55b"
+      },
+      {
+        "path": "packages/core/src/execution-engine/scheduled-task-manager.ts",
+        "sha256": "055f1dcb574d3b22b9bcdd77990a03ae86239de304581b23f7e0fb143b5cae16"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "dify",
+    "repository": "https://github.com/langgenius/dify",
+    "revision": "5253ee2f08203429c479792e40bff19c3137287b",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "232cf91474932d5110ed304e53b6b742a58463857c571fae803fdf2ac36d7bb3"
+      },
+      {
+        "path": "api/core/plugin/impl/model_runtime.py",
+        "sha256": "2fadb5ed0393cdf124a79e0721f92332d022f880bb96fda0dc2f216973235545"
+      },
+      {
+        "path": "api/core/workflow/workflow_tool_node.py",
+        "sha256": "dbd2fd4fa998ac59194f18fbd9542b6cad181513ac3791e5787a85ef88b258dd"
+      },
+      {
+        "path": "api/tests/e2e_tests/contracts/core/workflow/graph_engine/test_parallel_human_input_join_resume.py",
+        "sha256": "abe5477aaa497e18800288cf3a53e3a4fa9d1bf1c6285fc185a15e5f8581ec76"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "ui-tars",
+    "repository": "https://github.com/bytedance/UI-TARS-desktop",
+    "revision": "3ac2cb8d946d78d5ff92ad17b318eaafa18c178c",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      {
+        "path": "apps/ui-tars/src/main/agent/operator.test.ts",
+        "sha256": "f2e00f25c256b740b80fad0fb66811934ab0b48febc140eb2a85e77267deaf0d"
+      },
+      {
+        "path": "apps/ui-tars/src/main/agent/operator.ts",
+        "sha256": "c9b68bf166e568bad234b5c8a7d2cf7e62f110b5c978cefc1154016a263b41a2"
+      },
+      {
+        "path": "multimodal/gui-agent/agent-sdk/src/GUIAgent.ts",
+        "sha256": "6d4deef312826f0fb536f1b811f85c414e34bd8b12064d9f31bc7df3e648151e"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "browser-use",
+    "repository": "https://github.com/browser-use/browser-use",
+    "revision": "b49a68e4060acb226da8f784194fef301c53a6d7",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "135c57671b0ee957669b05a0ca00cc06f645496d351e2e732832c6e276da9a5e"
+      },
+      {
+        "path": "browser_use/browser/profile.py",
+        "sha256": "5b42a8285bab5116c08ec61cad643ed71b546cc9c82cfd77a7d7929330b40a47"
+      },
+      {
+        "path": "browser_use/browser/session.py",
+        "sha256": "524ec4547e5f9d81dac9ac3d7dcb705e5c6e9aec1255f6316d29cdaa1b19e822"
+      },
+      {
+        "path": "tests/ci/test_browser_session.py",
+        "sha256": "0c5a6bf580d66f1f0482b1da3043701b1531a9986c6cff850691ba095b390510"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "crewai",
+    "repository": "https://github.com/crewAIInc/crewAI",
+    "revision": "6bd60b223101a11f7ac675706ff1ebb03314c95d",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "28868731966f4aa37f02879839aabc797137e27ddde4e274ef9cf965f9a71774"
+      },
+      {
+        "path": "lib/crewai/src/crewai/task.py",
+        "sha256": "ce24a7dfb6c9fddca234c028c2432e5fd2b4c92bb45a8f36b93b714a96cce3cb"
+      },
+      {
+        "path": "lib/crewai/src/crewai/tools/agent_tools/delegate_work_tool.py",
+        "sha256": "997ee1a9a5e69a8be543197a7e11869034d68457f9ed6a51556e610204fcd69a"
+      },
+      {
+        "path": "lib/crewai/src/crewai/utilities/guardrail.py",
+        "sha256": "efd1fe0d12e9bb557416216fc8ee44a9d0aebf50c6755ba84fa48da54e2ce78a"
+      },
+      {
+        "path": "lib/crewai/tests/test_hallucination_guardrail.py",
+        "sha256": "43766ba277c4f2f3dee506aee437ba535622423cd218e03c03481167e8b85487"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "deer-flow",
+    "repository": "https://github.com/bytedance/deer-flow",
+    "revision": "4a53a36e32a7245e4ac2d5e80115ce7e31f8bd6c",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "b23dff4d4bac8d17b6efaaa7e88c2b730149c4dda45699ce676b719cfdffe7e1"
+      },
+      {
+        "path": "backend/packages/harness/deerflow/agents/middlewares/subagent_limit_middleware.py",
+        "sha256": "04f1faab2bc4210919464c73246f8afb169e9ef44e9f2bfd4205d9a057acd73e"
+      },
+      {
+        "path": "backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py",
+        "sha256": "241b8e72a99085930021ee5a336fde200e78482a42e267cd01f9e31acc3d60ae"
+      },
+      {
+        "path": "backend/packages/harness/deerflow/agents/middlewares/tool_error_handling_middleware.py",
+        "sha256": "01a3ed76bc9602b3d1d3914495fb9c5cd2a07551431f315cf39f42ef4232618a"
+      },
+      {
+        "path": "backend/tests/test_subagent_limit_middleware.py",
+        "sha256": "633bca7cb955003487fbd69e0685a2fb620889c1ce6804b6cf3c6270df588bd6"
+      }
+    ],
+    "upstream_tests_executed": false
+  },
+  {
+    "project": "playwright",
+    "repository": "https://github.com/microsoft/playwright",
+    "revision": "71350712ca049af48d50f8d23441c6ac82a21da0",
+    "retrieved_sources": [
+      {
+        "path": "LICENSE",
+        "sha256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb"
+      },
+      {
+        "path": "docs/src/browser-contexts.md",
+        "sha256": "f9e36e74a5173fcd48a2ca22d4ee957f050b2e09c3e9b57887070efc43198b15"
+      },
+      {
+        "path": "docs/src/browsers.md",
+        "sha256": "5ced381f22f3c8017688150d0a09849192f2ae65dea6d98d77c57726d6f55e8b"
+      },
+      {
+        "path": "docs/src/chrome-extensions-js-python.md",
+        "sha256": "e3ca84135587aa3c82c06385cbfb9b5aad107b899e695db59790d3f9ac3cc4b4"
+      }
+    ],
+    "upstream_tests_executed": false
+  }
+]

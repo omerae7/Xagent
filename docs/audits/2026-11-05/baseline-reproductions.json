@@ -1,0 +1,45 @@
+{
+  "simple_failed_tool_accepted": {
+    "passed": true,
+    "mode": "deterministic"
+  },
+  "complex_invalid_evaluator_accepted": {
+    "passed": true
+  },
+  "browser_without_desktop_service": [
+    {
+      "key": "browser",
+      "label": "مرورگر Chrome ایجنت (کلیک، تایپ، خواندن، اسکرین‌شات) و دسکتاپ",
+      "detail": "قابل مشاهده و Takeover در صفحه دسکتاپ",
+      "how": "",
+      "load": "browser, desktop"
+    }
+  ],
+  "expired_exhausted_event_routine": {
+    "run_count": 2,
+    "new_runs": 1
+  },
+  "terminal_run_crash_before_settlement": {
+    "routine_status": "active",
+    "success_count": 0,
+    "spent_usd": "0.000000"
+  },
+  "event_expiry_sweep_status": "active",
+  "working_memory_budget": {
+    "budget": 100,
+    "actual_estimated_tokens": 10001
+  },
+  "inbox_failure_acknowledged": {
+    "pending_count": 0,
+    "database_status": "new"
+  },
+  "http_login_status": 200,
+  "http_health_status": 200,
+  "http_dashboard_status": 200,
+  "sse_pool_connections": {
+    "before": 0,
+    "open_streams": 8,
+    "checked_out": 8
+  },
+  "health_with_eight_streams": "timed out after 1s"
+}

@@ -1,0 +1,122 @@
+/*
+ * X Agent — زبان طراحی «شیشه موسمی» (Monsoon Glass)
+ * ------------------------------------------------
+ * هوای آبی مه‌آلود موسمی (#E9ECEF → #98AFC7 → #305282)، پنل‌های شیشه مات با لبه نور سفید،
+ * خط‌نگاره‌های نازک (۱px) با گره‌های دایره‌ای کوچک که کار واقعی ایجنت را توضیح می‌دهند.
+ * روشن = صبح مه‌آلود پشت پنجره؛ تاریک = شب «لومن» با خطوط یخی درخشان.
+ * رنگ‌ها سه‌تایی RGB برای شفافیت Tailwind.
+ */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: 235 241 246;
+  --bg-2: 218 232 241;
+  --surface: 255 255 255;
+  --surface-2: 245 248 252;
+  --border: 48 82 130;
+  --border-alpha: 0.14;
+  --text: 20 34 55;
+  --muted: 70 87 113;
+  --primary: 34 80 117;
+  --on-primary: 255 255 255;
+  --accent: 108 92 214;
+  --cyan: 20 116 138;
+  --success: 24 124 96;
+  --warning: 166 96 10;
+  --danger: 188 50 82;
+
+  /* آسمان موسمی (سه توقف گرادیان مرجع) */
+  --sky-1: 233 236 239;
+  --sky-2: 152 175 199;
+  --sky-3: 48 82 130;
+
+  /* شیشه */
+  --glass: 255 255 255;
+  --glass-a: 0.78;
+  --glass-strong-a: 0.96;
+  --glass-edge: 255 255 255;
+  --glass-edge-a: 0.75;
+  --glass-shadow: 31 52 86;
+
+  /* صحنه (مغز، هیرو): آبی عمیق که خط‌نگاره سفید روی آن خوانا است */
+  --stage-1: 30 53 86;
+  --stage-2: 48 82 130;
+  --stage-3: 79 113 154;
+  --stage-ink: 255 255 255;
+  --line-art: 255 255 255;
+  --glow: 196 222 255;
+
+  --r-panel: 26px;
+  --r-ctl: 12px;
+  --space-unit: 4px;
+  --space-page: clamp(12px, 2vw, 28px);
+  --blur-surface: 18px;
+  --blur-mobile: 10px;
+  --elevation-1: 0 8px 28px -20px rgb(var(--glass-shadow) / .22);
+  --elevation-2: 0 24px 70px -32px rgb(var(--glass-shadow) / .32);
+  --text-small: .75rem;
+  --text-body: .90625rem;
+  --text-heading: clamp(1.45rem, 2.5vw, 2.1rem);
+  --line-body: 1.85;
+  --motion-fast: 150ms;
+  --motion-normal: 240ms;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --status-planned: 91 105 123;
+  --status-running: 54 75 162;
+  --status-executed: 28 104 134;
+  --status-verified: 19 111 83;
+  --status-approval: 145 83 8;
+  --status-partial: 123 83 148;
+  --status-unknown: 129 72 116;
+  --status-failed: 169 39 65;
+  --status-blocked: 145 83 8;
+  --status-cancelled: 91 105 123;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: 9 18 29;
+  --bg-2: 14 29 43;
+  --surface: 20 35 51;
+  --surface-2: 28 45 63;
+  --border: 170 196 240;
+  --border-alpha: 0.13;
+  --text: 232 238 248;
+  --muted: 152 167 192;
+  --primary: 150 192 255;
+  --on-primary: 8 18 36;
+  --accent: 184 168 255;
+  --cyan: 112 214 230;
+  --success: 92 214 168;
+  --warning: 245 190 92;
+  --danger: 255 132 156;
+
+  --sky-1: 8 13 24;
+  --sky-2: 16 28 50;
+  --sky-3: 32 52 88;
+
+  --glass: 20 35 51;
+  --glass-a: 0.86;
+  --glass-strong-a: 0.98;
+  --glass-edge: 190 214 255;
+  --glass-edge-a: 0.14;
+  --glass-shadow: 0 0 0;
+
+  --stage-1: 9 16 30;
+  --stage-2: 18 33 58;
+  --stage-3: 30 52 88;
+  --stage-ink: 236 243 255;
+  --line-art: 207 227 255;
+  --glow: 160 190 255;
+  --status-planned: 172 187 204;
+  --status-running: 172 187 255;
+  --status-executed: 125 212 238;
+  --status-verified: 111 224 182;
+  --status-approval: 255 204 126;
+  --status-partial: 215 175 249;
+  --status-unknown: 244 171 216;
+  --status-failed: 255 156 176;
+  --status-blocked: 255 204 126;
+  --status-cancelled: 172 187 204;
+}

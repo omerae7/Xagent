@@ -1,0 +1,355 @@
+Tested code commit: 4afa6fa1fdeb92e0509d9e8416cfb43175c3d284
+Baseline: 4da35815352efd32afae85a7c404d912df7857ac
+All services/accounts/data in these tests are disposable/synthetic. No paid API calls.
+
+=== baseline (full output) ===
+........................................................................ [ 16%]
+........................................................................ [ 33%]
+........................................................................ [ 50%]
+.........ss............................................................. [ 67%]
+........................................................................ [ 84%]
+................................................................         [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_forensic_s5_rollback_preserve.py:60: ابزارهای PostgreSQL محلی در دسترس نیست
+SKIPPED [1] tests/test_forensic_s5_rollback_preserve.py:86: ابزارهای PostgreSQL محلی در دسترس نیست
+422 passed, 2 skipped in 246.65s (0:04:06)
+
+=== negative tab lifecycle ===
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______________ test_finished_run_keeps_visible_page_and_reuses_it ______________
+tests/test_followup_browser_continuity.py:47: in test_finished_run_keeps_visible_page_and_reuses_it
+    assert not page.is_closed(), "finishing a Run closed its visible browser tab"
+E   AssertionError: finishing a Run closed its visible browser tab
+E   assert not True
+E    +  where True = is_closed()
+E    +    where is_closed = <Page url='http://127.0.0.1:51967/editor'>.is_closed
+_____________ test_escalated_approval_resumes_exact_browser_effect _____________
+tests/test_followup_browser_continuity.py:87: in test_escalated_approval_resumes_exact_browser_effect
+    assert not page.is_closed(), 'final answer closed the observed form'
+E   AssertionError: final answer closed the observed form
+E   assert not True
+E    +  where True = is_closed()
+E    +    where is_closed = <Page url='http://127.0.0.1:51967/editor'>.is_closed
+=========================== short test summary info ============================
+FAILED tests/test_followup_browser_continuity.py::test_finished_run_keeps_visible_page_and_reuses_it
+FAILED tests/test_followup_browser_continuity.py::test_escalated_approval_resumes_exact_browser_effect
+2 failed in 7.59s
+
+=== negative exact baseline approval pipeline ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_escalated_approval_resumes_exact_browser_effect[normal] _________
+tests/test_followup_browser_continuity.py:129: in test_escalated_approval_resumes_exact_browser_effect
+    assert await page.input_value('#draft') == 'synthetic payload', 'valid approval did not resume typing'
+E   AssertionError: valid approval did not resume typing
+E   assert '' == 'synthetic payload'
+E
+E     - synthetic payload
+=========================== short test summary info ============================
+FAILED tests/test_followup_browser_continuity.py::test_escalated_approval_resumes_exact_browser_effect[normal]
+1 failed in 7.12s
+
+=== negative original approval transactions ===
+FFFFF                                                                    [100%]
+=================================== FAILURES ===================================
+_____________ test_duplicate_callbacks_have_one_committed_decision _____________
+tests/test_followup_approval_transactions.py:37: in test_duplicate_callbacks_have_one_committed_decision
+    assert sum(d.ok for d in (a, b)) == 1
+E   assert 2 == 1
+E    +  where 2 = sum(<generator object test_duplicate_callbacks_have_one_committed_decision.<locals>.<genexpr> at 0x7f3e23c9e680>)
+_____________ test_simultaneous_distinct_cards_do_not_lose_wakeup ______________
+tests/test_followup_approval_transactions.py:44: in test_simultaneous_distinct_cards_do_not_lose_wakeup
+    assert sum(d.requeue == rid for d in decisions) == 1
+E   assert 0 == 1
+E    +  where 0 = sum(<generator object test_simultaneous_distinct_cards_do_not_lose_wakeup.<locals>.<genexpr> at 0x7f3e2225dcb0>)
+__________ test_late_approval_never_requeues_terminal_run[succeeded] ___________
+tests/test_followup_approval_transactions.py:52: in test_late_approval_never_requeues_terminal_run
+    assert result.requeue is None
+E   AssertionError: assert UUID('<synthetic>') is None
+E    +  where UUID('<synthetic>') = Decision(ok=True, message='ثبت شد', approval=<xagent_core.models.Approval object at 0x7f3e2214dbb0>, requeue=UUID('<synthetic>'), conflict=False).requeue
+__________ test_late_approval_never_requeues_terminal_run[cancelled] ___________
+tests/test_followup_approval_transactions.py:52: in test_late_approval_never_requeues_terminal_run
+    assert result.requeue is None
+E   AssertionError: assert UUID('<synthetic>') is None
+E    +  where UUID('<synthetic>') = Decision(ok=True, message='ثبت شد', approval=<xagent_core.models.Approval object at 0x7f3e2214eb10>, requeue=UUID('<synthetic>'), conflict=False).requeue
+____________ test_late_approval_never_requeues_terminal_run[failed] ____________
+tests/test_followup_approval_transactions.py:52: in test_late_approval_never_requeues_terminal_run
+    assert result.requeue is None
+E   AssertionError: assert UUID('<synthetic>') is None
+E    +  where UUID('<synthetic>') = Decision(ok=True, message='ثبت شد', approval=<xagent_core.models.Approval object at 0x7f3e2214fc80>, requeue=UUID('<synthetic>'), conflict=False).requeue
+=========================== short test summary info ============================
+FAILED tests/test_followup_approval_transactions.py::test_duplicate_callbacks_have_one_committed_decision
+FAILED tests/test_followup_approval_transactions.py::test_simultaneous_distinct_cards_do_not_lose_wakeup
+FAILED tests/test_followup_approval_transactions.py::test_late_approval_never_requeues_terminal_run[succeeded]
+FAILED tests/test_followup_approval_transactions.py::test_late_approval_never_requeues_terminal_run[cancelled]
+FAILED tests/test_followup_approval_transactions.py::test_late_approval_never_requeues_terminal_run[failed]
+5 failed, 4 deselected in 4.41s
+
+=== negative MCP ===
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+______ test_protocol_response_is_not_mutation_receipt[annotations0-None] _______
+tests/test_followup_mcp_evidence.py:18: in test_protocol_response_is_not_mutation_receipt
+    assert result.verified is verified
+E   AssertionError: assert True is None
+E    +  where True = ToolResult(ok=True, output='MCP response text', data={}, verified=True, untrusted=True, images=[]).verified
+______ test_protocol_response_is_not_mutation_receipt[annotations1-None] _______
+tests/test_followup_mcp_evidence.py:18: in test_protocol_response_is_not_mutation_receipt
+    assert result.verified is verified
+E   AssertionError: assert True is None
+E    +  where True = ToolResult(ok=True, output='MCP response text', data={}, verified=True, untrusted=True, images=[]).verified
+=========================== short test summary info ============================
+FAILED tests/test_followup_mcp_evidence.py::test_protocol_response_is_not_mutation_receipt[annotations0-None]
+FAILED tests/test_followup_mcp_evidence.py::test_protocol_response_is_not_mutation_receipt[annotations1-None]
+2 failed, 1 passed in 7.26s
+
+=== negative capability probe ===
+FFF.                                                                     [100%]
+=================================== FAILURES ===================================
+______________ test_probe_validates_actual_cdp_shape[None-False] _______________
+tests/test_followup_capability_probe.py:19: in test_probe_validates_actual_cdp_shape
+    assert result['ok'] is expected
+E   assert True is False
+____________ test_probe_validates_actual_cdp_shape[payload1-False] _____________
+tests/test_followup_capability_probe.py:19: in test_probe_validates_actual_cdp_shape
+    assert result['ok'] is expected
+E   assert True is False
+____________ test_probe_validates_actual_cdp_shape[payload2-False] _____________
+tests/test_followup_capability_probe.py:19: in test_probe_validates_actual_cdp_shape
+    assert result['ok'] is expected
+E   assert True is False
+=========================== short test summary info ============================
+FAILED tests/test_followup_capability_probe.py::test_probe_validates_actual_cdp_shape[None-False]
+FAILED tests/test_followup_capability_probe.py::test_probe_validates_actual_cdp_shape[payload1-False]
+FAILED tests/test_followup_capability_probe.py::test_probe_validates_actual_cdp_shape[payload2-False]
+3 failed, 1 passed in 3.52s
+
+=== negative bounded recovery ===
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+___________ test_execution_stops_without_unbounded_recovery[denied] ____________
+tests/test_followup_execution_bounds.py:41: in test_execution_stops_without_unbounded_recovery
+    assert len(calls) <= (4 if mode == 'denied' else 1), len(calls)
+E   AssertionError: 54
+E   assert 54 <= 4
+E    +  where 54 = len([1, 1, 1, 1, 1, 1, ...])
+__________ test_execution_stops_without_unbounded_recovery[uncertain] __________
+tests/test_followup_execution_bounds.py:41: in test_execution_stops_without_unbounded_recovery
+    assert len(calls) <= (4 if mode == 'denied' else 1), len(calls)
+E   AssertionError: 4
+E   assert 4 <= 1
+E    +  where 4 = len([1, 1, 1, 1])
+____________ test_unverified_result_keeps_evidence_and_uncertainty _____________
+tests/test_followup_execution_bounds.py:52: in test_unverified_result_keeps_evidence_and_uncertainty
+    assert not settled.ok and settled.data.get('outcome_uncertain') is True
+E   AssertionError: assert (not False and None is True)
+E    +  where False = ToolResult(ok=False, output='اثر عملیات تأیید نشده است؛ ممکن است انجام شده باشد. بدون بررسی نتیجه، عملیات را تکرار نکن.\nProtocol OK', data={}, verified=None, untrusted=False, images=[]).ok
+E    +  and   None = <built-in method get of dict object at 0x7f2a382fa0c0>('outcome_uncertain')
+E    +    where <built-in method get of dict object at 0x7f2a382fa0c0> = {}.get
+E    +      where {} = ToolResult(ok=False, output='اثر عملیات تأیید نشده است؛ ممکن است انجام شده باشد. بدون بررسی نتیجه، عملیات را تکرار نکن.\nProtocol OK', data={}, verified=None, untrusted=False, images=[]).data
+=========================== short test summary info ============================
+FAILED tests/test_followup_execution_bounds.py::test_execution_stops_without_unbounded_recovery[denied]
+FAILED tests/test_followup_execution_bounds.py::test_execution_stops_without_unbounded_recovery[uncertain]
+FAILED tests/test_followup_execution_bounds.py::test_unverified_result_keeps_evidence_and_uncertainty
+3 failed in 8.16s
+
+=== positive deterministic model-call counts ===
+BOUND_METRIC mode=denied model_calls=4 effects=0
+.BOUND_METRIC mode=uncertain model_calls=1 effects=1
+..
+3 passed in 4.92s
+
+=== final full pytest ===
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 94%]
+..........................                                               [100%]
+458 passed in 281.38s (0:04:41)
+
+=== graphical Chrome/Chromium real results ===
+[
+  {
+    "choice": "chrome",
+    "health": {
+      "ok": true,
+      "display": ":1",
+      "chromium_cdp": true,
+      "takeover": false,
+      "browser_cdp": true,
+      "browser_version": "Chrome/157.0.8103.38",
+      "git": true,
+      "node": true,
+      "uv": true,
+      "mcp_servers": []
+    },
+    "startup_seconds": 10.241,
+    "single_sample_process_stats": {
+      "rss_kib_sum": 1534592,
+      "lifetime_cpu_percent_sum": 7.2,
+      "processes": 13
+    },
+    "checks": [
+      "graphical CDP",
+      "draft survives reconnect",
+      "cookie survives restart",
+      "actual desktop screenshot",
+      "takeover rejects input",
+      "loopback test ports"
+    ]
+  },
+  {
+    "choice": "chromium",
+    "health": {
+      "ok": true,
+      "display": ":1",
+      "chromium_cdp": true,
+      "takeover": false,
+      "browser_cdp": true,
+      "browser_version": "Chrome/156.0.8078.79",
+      "git": true,
+      "node": true,
+      "uv": true,
+      "mcp_servers": []
+    },
+    "startup_seconds": 20.471,
+    "single_sample_process_stats": {
+      "rss_kib_sum": 1348460,
+      "lifetime_cpu_percent_sum": 8.2,
+      "processes": 12
+    },
+    "checks": [
+      "graphical CDP",
+      "draft survives reconnect",
+      "cookie survives restart",
+      "actual desktop screenshot",
+      "takeover rejects input",
+      "loopback test ports"
+    ]
+  }
+]
+
+=== frontend build ===
+ets/Timeline-CDlG7971.js              3.58 kB │ gzip:  1.73 kB
+dist/assets/Dream-Dn7tg9lm.js                 5.33 kB │ gzip:  2.48 kB
+dist/assets/Desktop-mmymViKS.js               6.76 kB │ gzip:  3.03 kB
+dist/assets/charts-BrPtF4iZ.js                7.35 kB │ gzip:  2.90 kB
+dist/assets/Desk-DcX4DUM6.js                  7.63 kB │ gzip:  3.46 kB
+dist/assets/Tools-DovhWSV8.js                 8.82 kB │ gzip:  3.75 kB
+dist/assets/Chat-CsKmSrF5.js                 12.28 kB │ gzip:  5.19 kB
+dist/assets/CRM-DDDYntWm.js                  12.89 kB │ gzip:  4.39 kB
+dist/assets/Usage-ClQ5w0Sz.js                15.11 kB │ gzip:  5.39 kB
+dist/assets/Routines-CpDWSs9E.js             18.27 kB │ gzip:  6.91 kB
+dist/assets/chat-lb4Pb4J5.js                 18.32 kB │ gzip:  6.87 kB
+dist/assets/Tasks-3Xb3XZ-R.js                18.81 kB │ gzip:  6.94 kB
+dist/assets/Memory-uqiO6il8.js               20.00 kB │ gzip:  6.42 kB
+dist/assets/Dashboard-Bc4Oatm_.js            22.42 kB │ gzip:  8.61 kB
+dist/assets/Control-Dwx_zzT5.js              37.30 kB │ gzip: 12.02 kB
+dist/assets/query-WyC4H1p4.js                44.89 kB │ gzip: 13.76 kB
+dist/assets/Settings-sZ1kT0Zk.js             52.23 kB │ gzip: 16.65 kB
+dist/assets/index-BevfkbgJ.js                62.73 kB │ gzip: 19.43 kB
+dist/assets/motion-CkK1n_XU.js              113.13 kB │ gzip: 37.21 kB
+dist/assets/react-C8EYCwjz.js               156.56 kB │ gzip: 51.25 kB
+dist/assets/vnc-C0hDpzmX.js                 287.09 kB │ gzip: 76.75 kB
+✓ built in 4.64s
+
+=== updater E2E blocked ===
+Schema فعلی: 0007
+chown: changing ownership of '/workspace/xagent-followup-4da3581/updater-e2e/home/data/control': Operation not permitted
+chown: changing ownership of '/workspace/xagent-followup-4da3581/updater-e2e/home/data': Operation not permitted
+
+=== Caddy real TLS results ===
+{"site": "https://127.0.0.1", "override": "", "no_sni_tls_and_routing": "passed", "system_ca_trust": "rejected as expected", "explicit_ca_trust": "passed", "restart": "passed"}
+{"site": "agent.test", "override": "", "no_sni_tls_and_routing": "passed", "system_ca_trust": "rejected as expected", "explicit_ca_trust": "passed", "restart": "passed"}
+{"site": "https://127.0.0.1", "override": "127.0.0.1", "no_sni_tls_and_routing": "passed", "system_ca_trust": "rejected as expected", "explicit_ca_trust": "passed", "restart": "passed"}
+Tracked Caddyfile SHA256 equals image /etc/caddy/Caddyfile SHA256:
+7c06ed07b99c5923ae37af1fbdbeaf4d92f1c07546e3bd44d22015c546dfda55
+=== installed test dependencies ===
+{
+  "fastapi": "0.162.0",
+  "starlette": "1.10.0",
+  "sqlalchemy": "2.0.57",
+  "asyncpg": "0.32.0",
+  "alembic": "1.20.1",
+  "redis": "8.1.0",
+  "pydantic": "2.14.2",
+  "httpx": "0.28.1",
+  "httpx2": "2.16.0",
+  "anthropic": "2.5.0",
+  "mcp": "2.3.0",
+  "playwright": "1.64.1",
+  "telethon": "1.45.0",
+  "croniter": "6.2.4",
+  "pytest": "9.2.0",
+  "pytest-asyncio": "1.4.1.post1",
+  "ruff": "0.17.3"
+}
+Static: ruff check packages services tests -> All checks passed; compileall, bash -n and Compose config passed.
+
+=== Remote verification and CI ===
+Remote branch and fetched tree verified equal to 03bd818acb4a60b425a0dbf96f5fc71e4c035e1b.
+https://github.com/omerae7/Xagent/actions/runs/42032132694 — push run #198 completed successfully.
+https://github.com/omerae7/Xagent/actions/runs/42032142077 — PR run #199 completed successfully.
+Both tests and containers jobs completed successfully. Source code equals tested commit 4afa6fa1fdeb92e0509d9e8416cfb43175c3d284.
+PR metadata update blocked: API/GraphQL 403; unauthenticated web session; official issue-edit form HTTP 422; description marker absent; Draft remains visible.
+Disposable graphical containers and their volumes cleaned; previously stopped PostgreSQL/Redis test containers restored to stopped state.
+
+=== Final-review conditional-domain regression ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_escalated_approval_resumes_exact_browser_effect[policy_change] ______
+tests/test_followup_browser_continuity.py:123: in test_escalated_approval_resumes_exact_browser_effect
+    assert await page.evaluate('window.sends || 0') == 0
+E   assert 1 == 0
+=========================== short test summary info ============================
+FAILED tests/test_followup_browser_continuity.py::test_escalated_approval_resumes_exact_browser_effect[policy_change]
+1 failed in 7.09s
+
+=== Adjacent policy/scope/redaction tests ===
+........................................                                 [100%]
+40 passed in 42.83s
+
+=== Final source test run ===
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 94%]
+...........................                                              [100%]
+459 passed in 283.38s (0:04:43)
+
+Final tested source commit: bcffc956b1818b01d8f8bb870a667c03e8a3aaf4
+Baseline 424 + new regressions 35 = 459 passed; zero failed/skipped.
+Cloud connection diagnosis: network_policy restricted, package_managers preset, api.github.com absent from effective_allowed_hosts; outbound_identities/secrets empty. Add explicit HTTPS egress rule for api.github.com and ensure repository-scoped GitHub Pull requests Read and write. Future checkout ref is still main in reusable Cloud settings; active workspace branch is correct. No Cloud settings were written.
+
+=== Duplicate-call negative and distinct-ID positive control ===
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_duplicate_tool_call_ids_are_rejected_before_database_effects[True] ____
+tests/test_followup_execution_bounds.py:104: in test_duplicate_tool_call_ids_are_rejected_before_database_effects
+    assert count == (0 if duplicate else 2), f'durable database effects: {count}'
+E   AssertionError: durable database effects: 2
+E   assert 2 == 0
+=========================== short test summary info ============================
+FAILED tests/test_followup_execution_bounds.py::test_duplicate_tool_call_ids_are_rejected_before_database_effects[True]
+1 failed, 1 passed, 3 deselected in 5.02s
+
+=== Duplicate-call adjacent regression ===
+................................................                         [100%]
+48 passed in 11.14s
+
+=== Final complete suite ===
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 46%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 93%]
+.............................                                            [100%]
+461 passed in 290.79s (0:04:50)
+
+Final tested source commit: 181bd1b37893972f4f883756b3d95deee6e37c81; baseline 424 + new 37 = 461; zero failures/errors/skips.
